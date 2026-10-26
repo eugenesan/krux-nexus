@@ -1,0 +1,9 @@
+[submodule "linux"]
+	path = linux
+	url = https://github.com/eugenesan/android_kernel_lge_hammerhead
+[submodule "krux"]
+	path = krux
+	url = https://github.com/eugenesan/krux.git
+[submodule "micropython"]
+	path = micropython
+	url = https://github.com/eugenesan/micropython.git
