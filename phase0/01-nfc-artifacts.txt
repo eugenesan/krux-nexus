@@ -1,0 +1,24 @@
+/vendor/bin/hw/android.hardware.nfc@1.0-service
+    size  : 10724
+    sha256: 3404605fcf353e71e34969050a4b0cf9aff83aca50173f55bebe75248c57f8de
+/vendor/lib/hw/android.hardware.nfc@1.0-impl-bcm.so
+    size  : 12132
+    sha256: b08d90d210f173a233fe70f3c7fbd594f061740ae5639e646eb4a7deff836e71
+/vendor/lib/hw/nfc_nci.bcm2079x.default.so
+    size  : 107608
+    sha256: 5c11343eb7098ed55e96c31d28472a9be20234de195b6a038d50ba6d9686245f
+/vendor/etc/init/android.hardware.nfc@1.0-service.rc
+    size  : 173
+    sha256: c439e52ffec775d9716a57a207dea467be30eef225ccfc46fa3d8ced2c5d46d5
+/system/vendor/etc/libnfc-nci-20791b05.conf
+    size  : 3497
+    sha256: 4782204296b892a20aab64ddc5a857df6d806405ccd1ffc6eb926ee551460953
+/system/etc/libnfc-nci.conf
+    size  : 4518
+    sha256: 9967fc48a04a6260ffad98db7dcd6e894a821c3abe591b0cb7478b554f704f1d
+/vendor/firmware/bcm2079x-b5_firmware.ncd
+    size  : 10101
+    sha256: 282fb468fe77f06cc8b1df8c9f41eceedd9d4a8ceadd9ec2a1f0a9f43fa59270
+/vendor/firmware/bcm2079x-b5_pre_firmware.ncd
+    size  : 571
+    sha256: 65444ecd4d213f4598029e46a46438540358cc2ea715aea37fe02664b0bfd51f

@@ -1,0 +1,245 @@
+# Air-gap kernel profile: LGE hammerhead (Nexus 5), MSM8974, kernel 3.4.113 CAF
+#
+# Derived from /proc/config.gz of the SHIPPED build
+#   lineage-23.2-20260926-UNOFFICIAL-hammerhead_gms_go_2gb-signed.zip
+#   kernel version 3.4.113-g11370a8eb99, built 2026-09-26
+#
+# One symbol per line. Bare CONFIG_ prefix optional. Comments allowed.
+#   apply-defconfig.py <defconfig> tools/profiles/hammerhead.list -i --check
+#
+# "NOT FOUND" in the tool output is expected and harmless for the symbols
+# marked [absent] below -- they are from newer kernels than this 3.4 CAF tree.
+
+# ===========================================================================
+# Wi-Fi
+# ===========================================================================
+# The Broadcom BCM4339 stack, built into the kernel (=y, not a module).
+# Removing cfg80211 removes the entire nl80211 userspace API, so wpa_supplicant
+# and hostapd have nothing to bind to and every radio-scanning API dies.
+CONFIG_BCMDHD
+CONFIG_BCMDHD_SDIO
+CONFIG_BCM4339
+# String options of the bcmdhd driver: the firmware + NVRAM paths. They survive
+# in the defconfig even after CONFIG_BCMDHD=n, so strip them explicitly.
+CONFIG_BCMDHD_FW_PATH
+CONFIG_BCMDHD_NVRAM_PATH
+CONFIG_DHD_USE_STATIC_BUF
+CONFIG_DHD_USE_SCHED_SCAN
+CONFIG_DHD_SET_RANDOM_MAC_VAL
+CONFIG_WLAN
+CONFIG_CFG80211
+CONFIG_CFG80211_DEFAULT_PS
+CONFIG_CFG80211_INTERNAL_REGDB
+CONFIG_CFG80211_WEXT
+CONFIG_WIRELESS
+# Wireless Extensions: /proc/net/wireless plus the SIOCSIWSCAN/SIOCSIWPRIV
+# ioctls that every "wifi scanner" app uses. Remove.
+CONFIG_WEXT_CORE
+CONFIG_WEXT_PROC
+CONFIG_NL80211_TESTMODE
+CONFIG_BCMFMAC
+CONFIG_LIBRA_SDIOIF
+# [absent in this kernel]
+CONFIG_CFG80211_MAC80211
+CONFIG_CFG80211_P2P
+CONFIG_CFG80211_TSM
+CONFIG_WIRELESS_EXT
+
+# ===========================================================================
+# Bluetooth
+# ===========================================================================
+# IMPORTANT: CONFIG_BT_HCIUART is already off on this device. The HCI transport
+# is Broadcom userspace libbt over UART10. So removing the kernel CONFIG_BT
+# tree is NECESSARY BUT NOT SUFFICIENT -- /vendor/firmware/bcm4335c0.hcd and
+# the bluetooth_loader / libbt-vendor userspace must also go. See
+# build/README.md sections L2 and L4.
+CONFIG_LGE_BLUETOOTH
+CONFIG_BT
+CONFIG_BT_RFCOMM
+CONFIG_BT_RFCOMM_TTY
+CONFIG_BT_BNEP
+CONFIG_BT_BNEP_MC_FILTER
+CONFIG_BT_BNEP_PROTO_FILTER
+CONFIG_BT_HIDP
+CONFIG_BT_MSM_SLEEP
+# RFCOMM = OBEX file transfer; BNEP = PAN IP over BT. Both are classic
+# air-gap exfiltration channels and are worth naming in your threat model.
+CONFIG_BT_HCISMD
+CONFIG_BT_HCIBTUSB
+CONFIG_BT_HCIBTSDIO
+CONFIG_BT_HCIUART
+CONFIG_BT_HCIVHCI
+# [absent in this kernel]
+CONFIG_AF_BLUETOOTH
+CONFIG_AF_RXRPC
+
+# ===========================================================================
+# NFC -- REMOVED FROM THIS PROFILE 2026-10-18
+# ===========================================================================
+# These three used to be listed here, which contradicted build/README.md ("NFC
+# is deliberately kept") and would have deleted the driver that the standalone
+# payload just proved working:
+#
+#     open("/dev/bcm2079x", O_RDWR|O_NOCTTY) -> poll() POLLIN -> 6 bytes
+#     read, response beginning 10 60
+#
+# That was never a live fault only because this profile had never been built
+# into a kernel that had booted.
+#
+# NOTE: apply-defconfig.py's --allow flag does NOT protect a symbol. It only
+# prints "allowed to stay on"; strip_defconfig() removes every symbol the
+# profile lists, allow-list or not. So a symbol we must keep has to be ABSENT
+# from this file. The check in build-kernel.sh asserts they stay set.
+#
+# CONFIG_NFC
+# CONFIG_NFC_BCM2079X
+# CONFIG_NFC_DEVICES
+
+# ===========================================================================
+# Cellular / modem  -- CORRECTED 2026-10-13
+# ===========================================================================
+# The finding that used to sit here was wrong. It said the Nexus 5 has no
+# cellular modem, on the grounds that /dev/mdm was absent and
+# CONFIG_MSM_PIL_MODEM was unset. Both observations were misread:
+#
+#   * /dev/mdm is the wrong node. This kernel exposes /dev/subsys_modem.
+#     /vendor/etc/ueventd.rc still declares a stale /dev/mdm rule from the
+#     older CAF blobs, which is what makes it look like the driver is missing.
+#   * CONFIG_MSM_PIL_MODEM is not a real Kconfig symbol.
+#
+# The modem IS there. Measured, as root, on the live device:
+#   pil-q6v5-mss bound, /dev/subsys_modem, /dev/smdcntl0..7,
+#   /firmware/image/modem.mdt + b00..b24 (20 files), rmnet0..8,
+#   gsm.sim.state=LOADED with AT&T 310280 read over UIM,
+#   init.svc.vendor.ril-daemon running, me.phh.ims for VoLTE.
+# It has never registered, but "never registered" is not "cannot transmit".
+# Full account in README.md section 6.2 and REVERT.md.
+#
+# ---------------------------------------------------------------------------
+# TIER 1 -- remove these. Tier 1 alone is the control.
+# ---------------------------------------------------------------------------
+# The single most important line in this file.
+#
+# CONFIG_MSM_PIL is the Processor Interface Layer framework, and it has three
+# independent children. Only one of them is the baseband:
+#
+#   CONFIG_MSM_PIL_MSS_QDSP6V5  ->  the MSS/baseband processor. Removing THIS
+#                                  means the modem firmware in /firmware/image
+#                                  is never loaded and the baseband never
+#                                  comes out of reset. Verified bound on the
+#                                  device as /sys/bus/platform/drivers/pil-q6v5-mss.
+#   CONFIG_MSM_PIL_LPASS_QDSP6V5->  the LPASS audio DSP (adsp.*). KEEP IT or
+#                                  you lose audio.
+#   CONFIG_MSM_PIL_VENUS        ->  the Venus GPU core. KEEP IT or you lose
+#                                  hardware video acceleration, if not more.
+#
+# Do NOT remove CONFIG_MSM_PIL itself: the two keepers are selected through it,
+# and --check will fail the build if anything downstream still wants it.
+CONFIG_MSM_PIL_MSS_QDSP6V5
+
+# rmnet is the Qualcomm cellular data path. CONFIG_MSM_RMNET_BAM creates
+# rmnet0..7 and rev_rmnet0..8 at boot; they carry nothing today, but with the
+# baseband gone they will never carry anything.
+CONFIG_MSM_RMNET_BAM
+CONFIG_MSM_RMNET
+CONFIG_MSM_RMNET_USB
+
+# Brings up the modem subsystem plumbing and its on-device test facility.
+CONFIG_MODEM_SUPPORT
+CONFIG_MDM9607
+CONFIG_MDM9607_SLIM
+
+# ---------------------------------------------------------------------------
+# TIER 2 -- OPTIONAL, and there is a real reason to leave these alone.
+# ---------------------------------------------------------------------------
+# CONFIG_MSM_SMD and the IPC router underneath it are NOT modem-private. The
+# same SMD channel carries QMI for WLAN, GNSS, sensors and the DSP. Stripping
+# them is tidier but puts GPS, sensors and possibly Wi-Fi firmware loading at
+# risk for no security gain -- once the baseband firmware is not loaded,
+# nothing can talk to it regardless of which transport symbols exist.
+#
+# Enable this tier only if you have a way to test GPS and sensors afterwards,
+# and expect to bisect. It is commented out here deliberately.
+#
+# CONFIG_MSM_SMD
+# CONFIG_MSM_SMD_PKG4
+# CONFIG_MSM_SMD_QMI
+# CONFIG_MSM_SMD_PKT
+# CONFIG_MSM_SMD_NMEA
+# CONFIG_MSM_IPC_ROUTER_SMD_XPRT
+# CONFIG_MSM_QMI_INTERFACE
+# CONFIG_MSM_SUBSYSTEM_RESTART
+# CONFIG_MSM_RESET_MODEM
+
+# DO NOT REMOVE CONFIG_QSEECOM: it backs the keystore and the lock screen.
+# CONFIG_RMNET_SMD_CTL_CHANNEL and CONFIG_RMNET_SMD_DATA_CHANNEL are STRING
+# symbols (device paths), not booleans -- `# ... is not set` is not a valid
+# state for them, and they are already empty ("") on the device. Listing them
+# made audit_config() report them as re-enabled forever. Removed from the
+# removal list; see the live config, standalone/kernelcaps/android-kconfig.
+# CONFIG_RMNET_SMD_CTL_CHANNEL
+# CONFIG_RMNET_SMD_DATA_CHANNEL
+CONFIG_USB_NET_QMI_WWAN
+
+# ===========================================================================
+# USB networking / tethering
+# ===========================================================================
+# Complete list from the shipped kconfig. Each is a way to get packets out of
+# the device through an attached USB host.
+#
+# NOTE ON ADB: on this device adb runs over the USB *gadget function*
+# (/dev/android_usb/android0 via configfs ffs.adb), NOT over RNDIS or a netdev.
+# There is no usb0 or adb0 interface. Removing USB_NET_RNDIS_HOST therefore
+# does NOT break adb. Verified: /sys/class/net contains no usb netdev.
+CONFIG_USB_NET_AX8817X
+CONFIG_USB_NET_CDC_EEM
+CONFIG_USB_NET_CDCETHER
+CONFIG_USB_NET_CDC_NCM
+CONFIG_USB_NET_CDC_SUBSET
+CONFIG_USB_NET_CX82310_ETH
+CONFIG_USB_NET_DM9601
+CONFIG_USB_NET_GL620A
+CONFIG_USB_NET_INT51X1
+CONFIG_USB_NET_KALMIA
+CONFIG_USB_NET_MCS7830
+CONFIG_USB_NET_NET1080
+CONFIG_USB_NET_PLUSB
+CONFIG_USB_NET_RNDIS_HOST
+CONFIG_USB_NET_SMSC75XX
+CONFIG_USB_NET_SMSC95XX
+CONFIG_USB_NET_ZAURUS
+CONFIG_USB_HSO
+CONFIG_USB_IPHETH
+CONFIG_USB_SIERRA_NET
+# [absent in this kernel]
+CONFIG_USB_NET_NEWMI
+CONFIG_USB_NET_CDC_MBIM
+CONFIG_USB_NET_AMAZON
+
+# ===========================================================================
+# Bridging / tethering plumbing
+# ===========================================================================
+CONFIG_BRIDGE
+CONFIG_BRIDGE_IGMP_SNOOPING
+CONFIG_BRIDGE_NETFILTER
+CONFIG_BRIDGE_NF_EBTABLES
+CONFIG_BRIDGE_EBT_BROUTE
+
+# ===========================================================================
+# Other IP tunnelling found on the running device (/sys/class/net/sit0)
+# ===========================================================================
+CONFIG_IPIP
+CONFIG_SIT
+
+# ===========================================================================
+# Deliberately KEPT
+# ===========================================================================
+#   CONFIG_RFKILL, CONFIG_RFKILL_PM, CONFIG_RFKILL_LEDS
+#       Pure software switch. With no driver behind it, rfkill can only ever
+#       report "blocked". Keeping it means airgap.sh verify still has something
+#       to read, and there is zero attack surface in leaving it on.
+#
+#   CONFIG_MSM_PIL, CONFIG_MSM_PIL_LPASS_QDSP6V5, _MSS_, _VENUS
+#       Audio / camera DSPs. Unrelated to radios despite the name.
+#
+# Exceptions can be passed at the command line: --allow CONFIG_RFKILL

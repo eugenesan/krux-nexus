@@ -1,0 +1,34 @@
+== opening /dev/bcm2079x ==
+   OK, fd=4
+
+== power/wake ioctl reachability ==
+  (these may legitimately fail on some driver revisions --
+   the point is to see WHICH ones work, not to assume)
+    ioctl POWER_CTL              arg=0x1  -> OK
+    ioctl WAKE_CTL               arg=0x1  -> OK
+    ioctl SET_CLIENT_ADDR        arg=0x1  -> OK
+    ioctl SET_WAKE_ACTIVE_STATE  arg=0x1  -> OK
+
+== listening 30s (chip powered on, nothing sent by us) ==
+  Expectation from the source: the chip may stay silent, because
+  userial_linux.c sends the DM/PRM firmware sequence before it
+  listens. Silence here is NOT necessarily a bug -- read the notes
+  at the end.
+
+
+  [  1] read 6 bytes
+      0000  10 60 00 02 00 01                                |.`....|
+      framing: HCIT_TYPE_NFC (command), 4-byte header, declared len=2, actual body=2 (MATCH)
+
+.............................chip powered off on exit
+
+== done: 1 packet(s) in 30s ==
+
+How to read this result:
+  packets > 0 and framing MATCHES -> the transport contract holds,
+        and Phase 3 can build on it directly.
+  packets > 0 but framing MISMATCHES -> the driver delivers raw
+        bytes, not HCIT packets. Worth knowing early: the port's
+        framing layer may belong in userspace instead.
+  0 packets -> expected if the chip needs the DM/PRM firmware
+        sequence first. Next step is porting nfc_hal_dm.c.

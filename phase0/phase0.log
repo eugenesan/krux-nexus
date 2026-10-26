@@ -1,0 +1,32 @@
+=== A. identity: what exactly is running ===
+
+=== B. NFC: the reference stack (hashes matter -- this is what we port) ===
+
+=== C. NFC runtime state written by the HAL at init ===
+
+=== D. NFC HAL strings: the ioctl + protocol surface we must reimplement ===
+
+=== E. does the HAL binary carry symbols we can read? ===
+
+=== F. display facts + a reference framebuffer dump ===
+
+=== G. touch: evdev capabilities (what a userspace reader gets) ===
+
+=== H. what a minimal rootfs will need, and nothing else ===
+
+=== A. identity: what exactly is running ===
+
+=== B. NFC: the reference stack (hashes matter -- this is what we port) ===
+
+=== C. NFC runtime state written by the HAL at init ===
+
+=== D. NFC HAL strings: the ioctl + protocol surface we must reimplement ===
+
+=== E. does the HAL binary carry symbols we can read? ===
+
+=== F. display facts + a reference framebuffer dump ===
+
+=== G. touch: evdev capabilities (what a userspace reader gets) ===
+
+=== H. what a minimal rootfs will need, and nothing else ===
+

@@ -1,0 +1,195 @@
+# Air-gap profile: Pixel 8 (shiba) — Tensor G2 / Exynos 5300, kernel 6.1 KLEAF
+#
+# EVERY symbol below is annotated with where it was verified. Tags:
+#   [gki:NNN]     verified present in kernel/common/arch/arm64/configs/gki_defconfig
+#   [zuma:NNN]    verified present in kernel/devices/google/zuma/zuma_defconfig
+#   [shusky]      verified present in shusky_defconfig (25 lines, read verbatim)
+#   [loadlist]    NOT in any defconfig — resolves via *.modules.load. You must
+#                 edit the load list, not a defconfig.
+#   [KLEAF]       out-of-tree kernel_module() target. CONFIG comes from the
+#                 module's own Kbuild KBUILD_OPTIONS. NOT controllable by a
+#                 defconfig. Spelling is from a secondary source — confirm in
+#                 your own checkout before relying on it.
+#   [ABSENT]      verified to exist in NEITHER defconfig. Listed only so you
+#                 do not waste time hunting for it.
+#
+# Verified this session against lineage-23.2 and Google KLEAF branch
+# android-gs-shusky-6.1-android16.
+#
+# ===========================================================================
+# READ THIS FIRST -- Pixel 8 is architecturally different from hammerhead
+# ===========================================================================
+# On hammerhead the radio drivers are IN-TREE, so editing the defconfig is
+# sufficient. On Pixel 8 they are NOT.
+#
+# kernel/devices/google/shusky/Kconfig.ext.shusky (read verbatim) sources ONLY:
+#     private/google-modules/radio/samsung/s5300/Kconfig   <- modem
+#     private/google-modules/touch/{common,fts/ftm5,sec}/Kconfig
+#
+# There is NO wifi, bluetooth or nfc Kconfig source at all. Those drivers are
+# KLEAF Bazel kernel_module() targets in kernel/devices/google/shusky/BUILD.bazel
+# (kernel_module_group, verified at these lines):
+#     :103  //private/google-modules/bluetooth/broadcom:bluetooth.broadcom
+#     :105  //private/google-modules/nfc
+#     :112  //private/google-modules/wlan/bcm4398:bcmdhd4398
+#     :113  //private/google-modules/wlan/wlan_ptracker
+#
+#   >>> A defconfig profile ALONE WILL NOT REMOVE Wi-Fi, BT or NFC HERE. <<<
+#
+# Options, in order of effort:
+#   (a) CHEAPEST, Wi-Fi only: delete the line
+#         modprobe|bcmdhd4398.ko
+#       from device/google/shusky-kernels/6.1/insmod_cfg/init.insmod.shiba.cfg
+#       `blocklist bcmdhd4398` is ALREADY in vendor_dlkm.blocklist.shusky
+#       (verified verbatim), so the module never autoloads and one deleted
+#       line stops Wi-Fi completely. No kernel rebuild required.
+#   (b) delete the BUILD.bazel kernel_module_group entries
+#   (c) edit each module's Kbuild KBUILD_OPTIONS
+#
+# ===========================================================================
+# WIFI -- Broadcom BCM4398 over PCIe ch1. NOT MediaTek.
+# ===========================================================================
+# VERIFIED: proprietary-files-vendor.txt has 27 bcmdhd/bcm references and ZERO
+# MediaTek references. Driver is wlan/bcm4398/bcmdhd4398 over pcie_1.
+# Wi-Fi is on pcie_1; the modem is on pcie_0. They are independent.
+CONFIG_CFG80211                # [zuma:5]  =m
+CONFIG_MAC80211                # [zuma:9]  =m
+CONFIG_NL80211_TESTMODE        # [zuma:6]  =y
+# [ABSENT] CONFIG_WEXT_CORE / CONFIG_WEXT_PROC — verified NOT in gki or zuma.
+#   Unlike hammerhead there is NO Wireless Extensions surface here.
+#   (Also impossible in principle: CONFIG_BCMDHD_WEXT is
+#    `depends on BCMDHD && CFG80211 = n`, and CFG80211 is a module.)
+# [KLEAF] CONFIG_BCMDHD, CONFIG_BCMDHD_PCIE, CONFIG_BCM4398,
+#         CONFIG_DHD_OF_SUPPORT, CONFIG_BROADCOM_WIFI_RESERVED_MEM,
+#         CONFIG_DHD_USE_STATIC_BUF, CONFIG_DHD_USE_SCHED_SCAN,
+#         CONFIG_WLAN_REGION_CODE, CONFIG_WLAIBSS, CONFIG_WL_RELMCAST,
+#         CONFIG_BCMDHD_PREALLOC_MEMDUMP, CONFIG_BCMDHD_OOB_HOST_WAKE,
+#         CONFIG_BCMDHD_GET_OOB_STATE, CONFIG_DHD_SET_RANDOM_MAC_VAL,
+#         CONFIG_BCMDHD_{FW,NVRAM,CLM,TXCAP,MAP}_PATH, CONFIG_WLAN_TRACKER
+
+# ===========================================================================
+# BLUETOOTH -- Broadcom "nitrous" + vendor userspace HCI
+# ===========================================================================
+# VERIFIED from proprietary-files-vendor.txt + vendor_dlkm.modules.load:
+#   vendor/bin/hw/android.hardware.bluetooth-service.bcmbtlinux  (userspace HCI)
+#   extra/private/google-modules/bluetooth/broadcom/nitrous.ko   (power/GPIO)
+# There is NO BT firmware blob in vendor/firmware/ — the firmware is in the
+# Broadcom Wi-Fi die. So there is no "delete the .hcd" shortcut here; the
+# vendor HCI service must go instead.
+CONFIG_BT                      # [gki:290] =m
+CONFIG_BT_RFCOMM               # [gki:291] =m   OBEX file transfer = exfil path
+CONFIG_BT_RFCOMM_TTY           # [gki:292] =y
+CONFIG_BT_HIDP                 # [gki:293] =m
+CONFIG_BT_HCIBTSDIO            # [gki:294] =m
+CONFIG_BT_HCIUART              # [gki:295] =m
+CONFIG_BT_HCIUART_LL           # [gki:296] =y
+CONFIG_BT_HCIUART_BCM          # [gki:297] =y
+CONFIG_BT_HCIUART_QCA          # [gki:298] =y   vestigial; no Qualcomm BT on Tensor
+CONFIG_RFKILL                  # [gki:299] =m   KEEP - see below
+# [KLEAF] CONFIG_NITROUS -> nitrous.ko. Power/GPIO only; NOT an HCI driver.
+# [loadlist] kernel/drivers/bluetooth/{hci_uart,btsdio,btbcm,btqca}.ko
+# [loadlist] kernel/net/bluetooth/{bluetooth,rfcomm/rfcomm,hidp/hidp}.ko
+#
+# NAME TRAP: CONFIG_EXYNOS_BTS is the "Bus Traffic Shaper", a DVFS governor.
+# It has NOTHING to do with Bluetooth. Removing it thinking otherwise costs
+# power management and buys no security. (It is not in gki_defconfig either.)
+#
+# KEEP CONFIG_RFKILL: bcmdhd and nitrous register rfkill from the kernel and
+# there is no rfkill devicetree node at all on this platform, so rfkill is a
+# pure software switch over drivers you have removed. Same reasoning as
+# hammerhead. Pass --allow CONFIG_RFKILL if your flow rejects it.
+
+# ===========================================================================
+# NFC -- STMicroelectronics ST21NFC + ST54/ST33 eSE. NOT NXP.
+# ===========================================================================
+# VERIFIED: vendor/etc/libnfc-hal-st.conf, st21nfc.ko, st54spi.ko, st33spi.ko.
+# com.nxp.mifare.xml is copied by zuma/common.mk but is vestigial Google
+# config with no NXP driver behind it.
+CONFIG_NFC                     # [gki:300] =m
+# [KLEAF] CONFIG_NFC_ST21NFC, CONFIG_NFC_ST21NFC_NO_CRYSTAL,
+#         CONFIG_ESE_ST54, CONFIG_ESE_ST33
+# [loadlist] kernel/net/nfc/nfc.ko
+
+# ===========================================================================
+# CELLULAR -- Samsung Exynos 5300 over PCIe ch0 + SHM IPC. NO MHI, NO rmnet.
+# ===========================================================================
+# *** CONTRAST WITH HAMMERHEAD: the Pixel 8 modem is REAL and FUNCTIONAL. ***
+# VERIFIED: vendor/bin/hw/rild_exynos, vendor/etc/fstab.modem,
+# vendor/etc/init/rild_exynos.rc, pcie_power.rc, shared_modem_platform,
+# libsitril*.so, and ZERO MHI references anywhere in the vendor blob list.
+#
+# shusky_defconfig is 25 lines and is ENTIRELY modem + touch. Its modem half,
+# read verbatim:
+CONFIG_EXYNOS_MODEM_IF                # [shusky] =m  menuconfig, gateway symbol
+CONFIG_SEC_MODEM_S5100                # [shusky] =m  S51xx family; s5300 variant
+CONFIG_SHM_IPC                        # [shusky] =m
+CONFIG_CP_PKTPROC                     # [shusky] =m
+CONFIG_CP_PKTPROC_UL                  # [shusky] =m
+CONFIG_MODEM_IF_QOS                   # [shusky] =m
+CONFIG_CPIF_AP_SUSPEND_DURING_VOICE_CALL # [shusky] =y
+CONFIG_CPIF_TP_MONITOR                # [shusky] =m
+CONFIG_LINK_DEVICE_PCIE_IOCC          # [shusky] =y
+CONFIG_LINK_DEVICE_PCIE_IOMMU         # [shusky] =y
+CONFIG_CH_EXTENSION                   # [shusky] =m
+CONFIG_CP_THERMAL                     # [shusky] =m
+#
+# PCIe host + IOMMU:
+CONFIG_GOOGLE_MODEMCTL         # [zuma:193] =m
+CONFIG_EXYNOS_PCIE_IOMMU       # [zuma:67]  =m
+CONFIG_PCI_EXYNOS_GS           # [zuma:89]  =m
+CONFIG_PCI_EXYNOS_CAL_ZUMA     # [zuma:90]  =m
+#
+# *** PREFERRED OVER ALL OF THE ABOVE: *** the modem is on pcie_0 and Wi-Fi on
+# pcie_1 (zuma-board-pcie.dtsi:10-22 vs :31-41), so disabling the modem needs
+# no kernel change at all:
+#     &pcie_0 { status = "disabled"; };
+#     &cpif   { status = "disabled"; };
+# See build/shiba.md section 4.
+#
+# *** ORDERING HAZARD: *** Kconfig.ext.shusky unconditionally does
+#   source ".../radio/samsung/s5300/Kconfig"
+# If you delete that source line while CONFIG_EXYNOS_MODEM_IF is still set
+# anywhere, kconfig errors and the BUILD DIES. Remove the source and the
+# defconfig lines together, or neither.
+#
+# [ABSENT] CONFIG_MHI / CONFIG_MHI_PCI -- the Exynos 5300 modem does not use
+#   MHI. Verified: zero MHI matches across gki_defconfig, zuma_defconfig,
+#   shusky_defconfig, and the vendor blob list. Do not go looking for it.
+# [ABSENT] CONFIG_EXYNOS_CPIF_IOMMU -- referenced by Kbuild:34 but never
+#   declared in any Kconfig. Referencing it is a no-op.
+
+# ===========================================================================
+# USB networking / tethering
+# ===========================================================================
+# [ABSENT from defconfig] — these resolve ONLY via the module load list
+# (verified in system_dlkm.modules.load). Editing defconfigs will NOT remove
+# them; you must edit the load list.
+# [loadlist] kernel/drivers/net/usb/rtl8150.ko       (no CONFIG symbol found)
+# [loadlist] kernel/drivers/net/usb/r8152.ko         (no CONFIG symbol found)
+# [loadlist] kernel/drivers/net/usb/asix.ko          (no CONFIG symbol found)
+# [loadlist] kernel/drivers/net/usb/ax88179_178a.ko  (no CONFIG symbol found)
+# [loadlist] kernel/drivers/net/usb/cdc_ether.ko     (no CONFIG symbol found)
+# [loadlist] kernel/drivers/net/usb/cdc_ncm.ko       (no CONFIG symbol found)
+# [loadlist] kernel/drivers/net/usb/cdc_eem.ko
+CONFIG_USB_NET_DRIVERS         # [gki:363] =m
+CONFIG_USB_NET_CDC_EEM         # [gki:367] =m
+CONFIG_USB_NET_AQC111          # [gki:371] =m
+# [ABSENT] CONFIG_USB_NET_RNDIS_HOST — verified not in gki or zuma defconfig.
+#   adb rides the USB gadget function on this device, so no RNDIS is involved.
+CONFIG_PPP                     # [gki:357] =m
+CONFIG_PPP_MPPE                # [gki:360] =m
+CONFIG_BRIDGE                  # [gki:251] =y
+
+# ===========================================================================
+# Deliberately KEPT -- and one that looks removable but must not be
+# ===========================================================================
+#   CONFIG_RFKILL=m  -- keep. See the Bluetooth section.
+#   CONFIG_TOUCHSCREEN_* -- shusky_defconfig is half touchscreen. Unrelated.
+#   CONFIG_NETFILTER and CONFIG_IP_NF_* / IP6_NF_* (gki_defconfig:171-249)
+#       -- KEEP ALL. You need netfilter: it is what airgap.sh's egress lock
+#          runs on. Do not strip it reasoning "networking = wireless". That
+#          single mistake would disable the control that is actually keeping
+#          packets in. Networking is not wireless.
+#   CONFIG_EXYNOS_BTS -- DVFS governor, despite the name.
+#
+# Exceptions can be passed on the command line: --allow CONFIG_RFKILL

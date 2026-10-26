@@ -1,0 +1,4 @@
+/data/local/tmp/ispif_cfg_0_t9_s368.bin
+/data/local/tmp/ispif_cfg_1_t2_s368.bin
+/data/local/tmp/ispif_cfg_2_t3_s368.bin
+/data/local/tmp/ispif_cfg_3_t4_s368.bin

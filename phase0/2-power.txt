@@ -1,0 +1,13 @@
+chip powered off on exit
+== opening /dev/bcm2079x ==
+   OK, fd=4
+
+== power/wake ioctl reachability ==
+  (these may legitimately fail on some driver revisions --
+   the point is to see WHICH ones work, not to assume)
+    ioctl POWER_CTL              arg=0x1  -> OK
+    ioctl WAKE_CTL               arg=0x1  -> OK
+    ioctl SET_CLIENT_ADDR        arg=0x1  -> OK
+    ioctl SET_WAKE_ACTIVE_STATE  arg=0x1  -> OK
+
+== powered on, stopping here ==

@@ -1,0 +1,18 @@
+add device 1: /dev/input/event1
+  bus:      0000
+  vendor    0000
+  product   0000
+  version   0000
+  name:     "touch_dev"
+  location: ""
+  id:       ""
+  version:  1.0.1
+  events:
+    ABS (0003): 002f  : value 0, min 0, max 9, fuzz 0, flat 0, resolution 0
+                0030  : value 0, min 0, max 15, fuzz 0, flat 0, resolution 0
+                0035  : value 0, min 0, max 1079, fuzz 0, flat 0, resolution 0
+                0036  : value 0, min 0, max 1919, fuzz 0, flat 0, resolution 0
+                0039  : value 0, min 0, max 65535, fuzz 0, flat 0, resolution 0
+                003a  : value 0, min 0, max 255, fuzz 0, flat 0, resolution 0
+  input props:
+    INPUT_PROP_DIRECT

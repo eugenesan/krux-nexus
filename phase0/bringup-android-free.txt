@@ -1,0 +1,28 @@
+== open /dev/bcm2079x ==
+   OK fd=3
+
+== BRINGUP ==
+
+step 1: reset (wake off -> power off -> 10ms -> power on)
+
+step 2: wait for the chip's Core Reset notification
+  core reset ntf: 6 bytes
+      0000  10 60 00 02 00 01                                |.`....|
+      HCIT type: NFC (0x10)
+      NCI: MT_NTF  PBF=0  CID=0x0  GID=CORE(0x00)  OID=0x00  len=2  (got 2) MATCH
+      --> CORE_RESET notification (power-up)
+
+step 3: send GET_BUILD_INFO (10 2F 04 00)
+  wrote 4 bytes: 10 2f 04 00 
+
+step 4: read the response
+  reply to GET_BUILD_INFO: 40 bytes
+      0000  10 4f 04 24 00 44 65 63 20 32 32 20 32 30 31 32  |.O.$.Dec 22 2012|
+      0010  31 34 3a 35 33 3a 35 30 01 05 0d 46 05 1b 79 20  |14:53:50...F..y |
+      0020  07 32 30 37 39 31 42 35                          |.20791B5|
+      HCIT type: NFC (0x10)
+      NCI: MT_RSP  PBF=0  CID=0xf  GID=PROP(0x0F)  OID=0x04  len=36  (got 36) MATCH
+      --> response to GET_BUILD_INFO
+
+-- bringup REACHED THE RESPONSE --
+chip powered off

@@ -1,0 +1,4 @@
+date            : 2026-10-18T17:21:59Z
+build.fingerprint: google/hammerhead/hammerhead:6.0.1/M4B30Z/3437181:user/release-keys
+kernel           : Linux localhost 3.4.113-🇺🇦-ge4e483b4ef6 #315 SMP PREEMPT Sat Sep 26 23:54:08 EEST 2026 armv7l Toybox
+cmdline          : console=ttyHSL0,115200,n8 androidboot.hardware=hammerhead user_debug=31 msm_watchdog_v2.enable=1 androidboot.bootdevice=msm_sdcc.1 loop.max_part=7 uart_console=enable gpt=enable lge.kcal=0|0|0|x lge.rev=rev_11 androidboot.laf androidboot.emmc=true androidboot.serialno=0879524b0068abca androidboot.bootloader=HHZ20h androidboot.baseband=msm bootreason=power_on androidboot.hardware.sku=D820 androidboot.hardware.ddr=hynix androidboot.hardware.display=orise androidboot.revision=11

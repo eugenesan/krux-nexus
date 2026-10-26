@@ -1,0 +1,7 @@
+  /dev/graphics/fb0        crw-rw---- root graphics 29, 0 /dev/graphics/fb0
+  /dev/input/event1        crw-rw---- root input 13, 65 /dev/input/event1
+  /dev/bcm2079x            crw-rw---- nfc nfc 10, 65 /dev/bcm2079x
+  /dev/ttyHSL0             crw------- root root 247, 0 /dev/ttyHSL0
+  /dev/ttyHS99             crw-rw---- bluetooth bluetooth 248, 99 /dev/ttyHS99
+  /dev/ion                 crw-rw-r-- system system 10, 95 /dev/ion
+  /dev/kgsl-3d0            crw-rw-rw- system system 245, 0 /dev/kgsl-3d0

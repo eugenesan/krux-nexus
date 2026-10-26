@@ -1,0 +1,116 @@
+# The camera, for Krux.
+#
+# This is the counterpart to hammerhead.list (which removes radio) and
+# hammerhead-keep.list (which restores the adb channel). It states, as
+# intent, the exact camera configuration of the kernel that is *known to
+# work on this device*.
+#
+# WHY THIS FILE EXISTS
+# -------------------
+# The values below were read out of the running kernel's /proc/config.gz
+# (the installed e4e483b4ef6 kernel, 1242 options), which is the kernel the
+# ROM's own Camera app works with. Every symbol named here exists in our
+# tree -- verified: MSM_CSI30_HEADER, MSM_CSI22_HEADER, OIS_CONTROLLER,
+# OIS_ROHM_BU24205GWL, OIS_ONSEMI_LC898111A, MSMB_JPEG, MSM_VIDC_V4L2,
+# IMX179, MT9M114B, MSM_CPP, MSM_CCI, MSM_CSIPHY, MSM_CSID, MSM_ISPIF,
+# MSM_ISPIF_V1, MSM_ACTUATOR, MSM_EEPROM, MSM_CAMERA_SENSOR and MSMB_CAMERA
+# are all present in standalone/vendor/android_kernel_lge_hammerhead. So our
+# tree is the same CAF generation as the ROM's kernel, and the configuration
+# transfers verbatim.
+#
+# The sensors are independent booleans, not a `choice`, so both the rear and
+# the front sensor can be on at once.
+#
+# THE ARCHITECTURE, in one paragraph
+# ----------------------------------
+# camera_v2 has no userspace support of its own. Every V4L2 request on a
+# sensor node is posted as an event to a userspace "imaging server" and the
+# kernel BLOCKS until that server acknowledges it. On Android that server is
+# /vendor/bin/mm-qcamera-daemon. We are writing our own (see
+# STANDALONE-FINDINGS.md §15, §16), so this file is the kernel half of
+# that work.
+#
+# The device nodes are /dev/video0 (msm-config, the config node the imaging
+# server subscribes to), /dev/video1 (msm-sensor, rear = imx179) and
+# /dev/video2 (msm-sensor, front = mt9m114b). Their char-device major is
+# allocated at runtime by alloc_chrdev_region(), so they CANNOT be baked
+# into the initramfs cpio like fb0/event1/bcm2079x -- CONFIG_DEVTMPFS has to
+# be on instead. See build/README.md.
+#
+# SYNTAX
+# ------
+#   CONFIG_FOO=y   force on
+#   CONFIG_FOO=n   force off
+#   CONFIG_FOO     force on (a bare name means "=y")
+
+# ---- the stack ---------------------------------------------------------
+# MSMB_CAMERA is the menu that gates all of the camera_v2 sub-drivers;
+# everything below depends on it.
+CONFIG_MSMB_CAMERA=y
+
+# the sensor framework and the sensors themselves.
+# The rear camera is a Sony IMX179 (8MP, binned to 5MP) -- v4l-subdev11 on
+# the live device. The front is an OmniVision MT9M114B -- v4l-subdev12.
+CONFIG_MSM_CAMERA_SENSOR=y
+CONFIG_IMX179=y
+CONFIG_MT9M114B=y
+
+# the pipeline: CSI physical layer, CSI decoder, ISP interface, and the
+# post-processor.
+CONFIG_MSM_CSIPHY=y
+CONFIG_MSM_CSID=y
+CONFIG_MSM_ISPIF=y
+CONFIG_MSM_CPP=y
+CONFIG_MSM_CCI=y
+CONFIG_MSM_EEPROM=y
+
+# the actuator (autofocus) and the optical image stabilisation chips.
+#
+# NB there is NO CONFIG_MSM_ACTUATOR in camera_v2. The autofocus driver is
+# camera_v2/sensor/actuator/msm_actuator.c, it matches the "qcom,actuator"
+# DT compatible, and it is built by camera_v2/sensor/Makefile as part of
+# MSMB_CAMERA -- there is no separate Kconfig symbol for it. (MSM_ACTUATOR
+# does exist, but only in camera_v1, which is gated on CONFIG_MSM_CAMERA and
+# is off.) The live kernel's config has no MSM_ACTUATOR either, and the live
+# device still has an "msm_actuator" subdev, which is how we know it comes
+# in with MSMB_CAMERA.
+CONFIG_OIS_CONTROLLER=y
+CONFIG_OIS_ROHM_BU24205GWL=y
+CONFIG_OIS_ONSEMI_LC898111A=y
+
+# the JPEG engine, for 8974.
+CONFIG_MSMB_JPEG=y
+
+# ---- sensors we do not have -------------------------------------------
+# These are for other boards. They are independent booleans, so nothing
+# stops them being switched on, and each one is an I2C driver that the
+# camera would try to probe on the camera bus. Off, deliberately.
+CONFIG_MT9M114=n
+CONFIG_IMX135=n
+CONFIG_OV2720=n
+CONFIG_OV8825=n
+CONFIG_OV9724=n
+CONFIG_S5K3L1YX=n
+
+# ---- the two CSI header flavours --------------------------------------
+# Only one applies to a given platform: 2.0 for 8960/8930/8064, 2.2 for
+# 8610, 3.0 for 8064. The live kernel has 3.0 on and the other two off, and
+# we copy that exactly.
+CONFIG_MSM_CSI30_HEADER=y
+CONFIG_MSM_CSI20_HEADER=n
+CONFIG_MSM_CSI22_HEADER=n
+
+# ---- what we deliberately do NOT want ----------------------------------
+# camera_v1 is the old native-API stack. It has no imx179 (its sensor list
+# is imx072/imx074/mt9d11x/mt9p012/ov5640/ov7692/s5k3e2fx/...), so it
+# cannot drive this phone's camera at all. Off.
+CONFIG_MSM_CAMERA=n
+CONFIG_MSM_CAMERA_V4L2=n
+
+# The ISP-interface variant that only applies to MSM_CSI22_HEADER platforms.
+CONFIG_MSM_ISPIF_V1=n
+
+# Debug printk in the camera drivers: large, and it is a lot of log on a
+# device with no console.
+CONFIG_MSMB_CAMERA_DEBUG=n
+CONFIG_MSM_CAMERA_DEBUG=n

@@ -1,0 +1,6 @@
+chip powered off on exit
+== opening /dev/bcm2079x ==
+   OK, fd=4
+
+== device looks openable; changing nothing ==
+   Use --power or --listen to actually drive the chip.

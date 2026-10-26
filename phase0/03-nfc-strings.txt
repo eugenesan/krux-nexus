@@ -1,0 +1,140 @@
+-- /vendor/lib/hw/nfc_nci.bcm2079x.default.so --
+%s '%s' (%d) is %sa known bad patch file
+%s Cannot find patchfile '%s'
+%s Downloading patchfile %s (size: %u) format=%u
+%s No patchfile defined
+%s Setting I2C fix to %s (size: %u)
+%s Unable to buffer to hold patchram (%u bytes)
+%s Unable to get buffer to i2c fix (%u bytes)
+%s Unable to open i2c fix patchfile %s
+%s Unable to open patchfile %s
+%s fail reading i2c fix; actual len=%zu; expected len=%u
+%s fail reading patchram
+%s found patchfile %s
+%s: No patchfile specified or disabled. Proceeding to post-download procedure...
+%s: Patch download failed
+%s: enter; gPowerOffMode=%d
+%s: fail close linux_cb.sock_power_control; errno=%d
+%s: invalid patch...skipping patch download
+%s: patch authentication failed
+%s: re-init; don't download firmware
+/dev/bcm2079x
+/dev/tty
+/dev/ttyUSB
+BCM2079x: retrying reset, attempt %d/%d
+BCMI2CNFC_ADDRESS
+DO_GLOBAL_RESET
+Delay after PreI2C patch download...proceeding to download firmware patch
+Downloading I2C fix...
+Downloading patch for power_mode %i.
+Downloading patch version: %i.%i (previous version in NVM: %i.%i)...
+FW_PATCH
+FW_PRE_PATCH
+Got unexpected SECURE_PATCH_DOWNLOAD NTF
+HAL_NfcPowerCycle
+HAL_NfcPowerCycle ()
+HAL_NfcPrmDownloadContinue
+HAL_NfcPrmDownloadContinue ():state = %d, patch_data_len=%d
+HAL_NfcPrmDownloadStart
+HAL_NfcPrmDownloadStart ()
+HAL_NfcPrmSetI2cPatch
+HAL_NfcPrmSetI2cPatch ()
+HAL_NfcPrmSetSpdNciCmdPayloadSize: new message size during download: %i
+HaiPowerCycle
+I2C patch fix required.
+Invalid i2c fix: invalid number of patches (%i)
+Invalid i2c fix: unexpected end of patch
+Invalid patch file header.
+Invalid response from NFCC during patch download (opcode=0x%02X)
+NFC_HAL_TASK got NFC_HAL_TASK_EVT_POWER_CYCLE
+NVM Patch info: flags=0x%04x,   Ver=%i.%i, PatchMask=0x%08x
+NVM patch version is %d.%d
+No previous patch detected. Downloading patch %i.%i
+POST_POWER_OFF_DELAY
+POWER_CONTROL_DRIVER
+POWER_OFF_MODE
+POWER_ON_DELAY
+PRE_POWER_OFF_DELAY
+Patch authentication failed
+Patch download failed, reason code=0x%X (%s)
+Patch download skipped. NVM patch (version %i.%i) is the same than the patchfile 
+Patch download skipped: Mismatched Project ID (NVM ProjId: 0x%04x, Patchfile ProjId: 0x%04x)
+-- /vendor/lib/hw/android.hardware.nfc@1.0-impl-bcm.so --
+_ZN7android2spINS_8hardware3nfc4V1_018INfcClientCallbackEED2Ev
+_ZN7android4hidl4base4V1_05IBase11linkToDeathERKNS_2spINS_8hardware20hidl_death_recipientEEEy
+_ZN7android4hidl4base4V1_05IBase13unlinkToDeathERKNS_2spINS_8hardware20hidl_death_recipientEEE
+_ZN7android8hardware3nfc4V1_014implementation3Nfc10powerCycleEv
+_ZN7android8hardware3nfc4V1_014implementation3Nfc4openERKNS_2spINS2_18INfcClientCallbackEEE
+_ZN7android8hardware3nfc4V1_04INfc11linkToDeathERKNS_2spINS0_20hidl_death_recipientEEEy
+_ZN7android8hardware3nfc4V1_04INfc13unlinkToDeathERKNS_2spINS0_20hidl_death_recipientEEE
+-- /vendor/bin/hw/android.hardware.nfc@1.0-service --
+-- /vendor/lib/hw/nfc_nci.bcm2079x.default.so --
+%s '%s' (%d) is %sa known bad patch file
+%s Cannot find patchfile '%s'
+%s Downloading patchfile %s (size: %u) format=%u
+%s No patchfile defined
+%s Setting I2C fix to %s (size: %u)
+%s Unable to buffer to hold patchram (%u bytes)
+%s Unable to get buffer to i2c fix (%u bytes)
+%s Unable to open i2c fix patchfile %s
+%s Unable to open patchfile %s
+%s fail reading i2c fix; actual len=%zu; expected len=%u
+%s fail reading patchram
+%s found patchfile %s
+%s: No patchfile specified or disabled. Proceeding to post-download procedure...
+%s: Patch download failed
+%s: enter; gPowerOffMode=%d
+%s: fail close linux_cb.sock_power_control; errno=%d
+%s: invalid patch...skipping patch download
+%s: patch authentication failed
+%s: re-init; don't download firmware
+/dev/bcm2079x
+/dev/tty
+/dev/ttyUSB
+BCM2079x: retrying reset, attempt %d/%d
+BCMI2CNFC_ADDRESS
+DO_GLOBAL_RESET
+Delay after PreI2C patch download...proceeding to download firmware patch
+Downloading I2C fix...
+Downloading patch for power_mode %i.
+Downloading patch version: %i.%i (previous version in NVM: %i.%i)...
+FW_PATCH
+FW_PRE_PATCH
+Got unexpected SECURE_PATCH_DOWNLOAD NTF
+HAL_NfcPowerCycle
+HAL_NfcPowerCycle ()
+HAL_NfcPrmDownloadContinue
+HAL_NfcPrmDownloadContinue ():state = %d, patch_data_len=%d
+HAL_NfcPrmDownloadStart
+HAL_NfcPrmDownloadStart ()
+HAL_NfcPrmSetI2cPatch
+HAL_NfcPrmSetI2cPatch ()
+HAL_NfcPrmSetSpdNciCmdPayloadSize: new message size during download: %i
+HaiPowerCycle
+I2C patch fix required.
+Invalid i2c fix: invalid number of patches (%i)
+Invalid i2c fix: unexpected end of patch
+Invalid patch file header.
+Invalid response from NFCC during patch download (opcode=0x%02X)
+NFC_HAL_TASK got NFC_HAL_TASK_EVT_POWER_CYCLE
+NVM Patch info: flags=0x%04x,   Ver=%i.%i, PatchMask=0x%08x
+NVM patch version is %d.%d
+No previous patch detected. Downloading patch %i.%i
+POST_POWER_OFF_DELAY
+POWER_CONTROL_DRIVER
+POWER_OFF_MODE
+POWER_ON_DELAY
+PRE_POWER_OFF_DELAY
+Patch authentication failed
+Patch download failed, reason code=0x%X (%s)
+Patch download skipped. NVM patch (version %i.%i) is the same than the patchfile 
+Patch download skipped: Mismatched Project ID (NVM ProjId: 0x%04x, Patchfile ProjId: 0x%04x)
+-- /vendor/lib/hw/android.hardware.nfc@1.0-impl-bcm.so --
+_ZN7android2spINS_8hardware3nfc4V1_018INfcClientCallbackEED2Ev
+_ZN7android4hidl4base4V1_05IBase11linkToDeathERKNS_2spINS_8hardware20hidl_death_recipientEEEy
+_ZN7android4hidl4base4V1_05IBase13unlinkToDeathERKNS_2spINS_8hardware20hidl_death_recipientEEE
+_ZN7android8hardware3nfc4V1_014implementation3Nfc10powerCycleEv
+_ZN7android8hardware3nfc4V1_014implementation3Nfc4openERKNS_2spINS2_18INfcClientCallbackEEE
+_ZN7android8hardware3nfc4V1_04INfc11linkToDeathERKNS_2spINS0_20hidl_death_recipientEEEy
+_ZN7android8hardware3nfc4V1_04INfc13unlinkToDeathERKNS_2spINS0_20hidl_death_recipientEEE
+-- /vendor/bin/hw/android.hardware.nfc@1.0-service --

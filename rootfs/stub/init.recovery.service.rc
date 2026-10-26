@@ -1,0 +1,24 @@
+on boot
+
+# For starting recovery on 5.0 and newer
+#
+# The port's firmware: this service is what the device runs.  The stub
+# decides: the volume up key gives TWRP (the original binary is kept
+# as /sbin/recovery.stock), otherwise the firmware takes the display
+# and the touch screen.
+#
+# The service is called "krux", NOT "recovery", and that name matters.
+# TWRP's own user interface is the service "recovery"; the stub stops
+# it with "setprop ctl.stop recovery" before it starts the firmware.
+# If the stub *were* the service "recovery", that stop would kill the
+# stub itself -- init would kill the service's process group, which is
+# the firmware the stub had just started -- and then init would
+# restart the service, and the whole thing would loop, blanking the
+# panel every 140 ms.
+#
+# TWRP's binary is renamed to /sbin/recovery.stock by
+# build-stub-ramdisk.sh, and the stub runs it directly when the volume
+# up key is held, so the service "recovery" is left stopped.
+
+service krux /sbin/krux-init
+    seclabel u:r:recovery:s0

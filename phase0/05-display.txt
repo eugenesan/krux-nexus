@@ -1,0 +1,8 @@
+fb0        : crw-rw---- 1 root graphics 29,   0 1973-01-05 17:27 /dev/graphics/fb0
+name       : mdssfb_90000
+stride     : 4352
+bpp        : 32
+virtual_size: 1080,5760
+NOTE: stride 4352 != 1920*4. The framebuffer is padded; a blit that
+      assumes width*4 will be skewed. The port must honour stride.
+fb0-top.bin: 278528 bytes (one 64-row band)

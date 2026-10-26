@@ -1,0 +1,18 @@
+nfc.initialized      : true
+hal service          : running
+hal pid              : 656
+device node          : crw-rw---- 1 nfc nfc 10,  65 1973-01-05 17:27 /dev/bcm2079x
+i2c binding          : /sys/devices/f9967000.i2c/i2c-0/0-0077
+--- /data/nfc (written by the HAL; the port must reproduce this) ---
+/data/nfc:
+total 32
+drwxrwx---  3 nfc    nfc    4096 2026-10-18 09:43 .
+drwxrwx--x 53 system system 4096 2026-10-18 09:44 ..
+-rw-------  1 nfc    nfc    7904 2026-10-18 09:43 event_log.binpb
+drwxrwx---  2 nfc    nfc    4096 1972-09-21 20:31 param
+
+/data/nfc/param:
+total 16
+drwxrwx--- 2 nfc nfc 4096 1972-09-21 20:31 .
+drwxrwx--- 3 nfc nfc 4096 2026-10-18 09:43 ..
+--- /data/nfc/param ---

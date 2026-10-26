@@ -1,0 +1,11 @@
+=== date ===
+Sun Oct 18 12:03:26 MST 2026
+=== kernel ===
+Linux localhost 3.4.113-🇺🇦-ge4e483b4ef6 #315 SMP PREEMPT Sat Sep 26 23:54:08 EEST 2026 armv7l Toybox
+=== nfc service prop (may say running even while frozen) ===
+running
+=== HAL frozen? ===
+  pid 7905 state T
+=== does the frozen HAL still hold /dev/bcm2079x? ===
+1
+  (1 = yes, 0 = no; either is fine, our open() is independent)

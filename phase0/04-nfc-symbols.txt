@@ -1,0 +1,18 @@
+-- dynsym count --
+434
+-- any bcm/i2c symbol names --
+    96: 00009abd     8 OBJECT  GLOBAL DEFAULT   12 NFC_HAL_DM_BCM43341B0_STR
+   161: 00011799    68 FUNC    GLOBAL DEFAULT   14 HAL_NfcPrmSetI2cPatch
+   181: 00020074     1 OBJECT  GLOBAL DEFAULT   23 bcmi2cnfc_client_addr
+   253: 00010dcd   180 FUNC    GLOBAL DEFAULT   14 nfc_hal_prm_spd_download_i2c_fix
+   290: 00009aad     8 OBJECT  GLOBAL DEFAULT   12 NFC_HAL_DM_BCM20791B3_STR
+   328: 00020075     1 OBJECT  GLOBAL DEFAULT   23 bcmi2cnfc_read_multi_packets
+   361: 00009ab5     8 OBJECT  GLOBAL DEFAULT   12 NFC_HAL_DM_BCM20791B4_STR
+   366: 00009ac8     8 OBJECT  GLOBAL DEFAULT   12 NFC_HAL_PRM_BCM20791B3_STR
+-- needed shared libs --
+ 0x00000001 (NEEDED)             Shared library: [libcutils.so]
+ 0x00000001 (NEEDED)             Shared library: [liblog.so]
+ 0x00000001 (NEEDED)             Shared library: [libc++.so]
+ 0x00000001 (NEEDED)             Shared library: [libc.so]
+ 0x00000001 (NEEDED)             Shared library: [libm.so]
+ 0x00000001 (NEEDED)             Shared library: [libdl.so]

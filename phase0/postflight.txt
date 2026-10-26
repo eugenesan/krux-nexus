@@ -1,0 +1,21 @@
+=== nfc.initialized ===
+true
+=== HAL state ===
+  7905 T
+=== recent nfc log ===
+10-18 12:03:29.553  7889  7889 D NfcService: applyScreenState: screenState = ON_UNLOCKED
+10-18 12:03:29.554  7889  7889 D NfcService: applyScreenState: screenState != mScreenState=1
+10-18 12:03:29.554  7889  7889 D NfcService: handleMessage: MSG_APPLY_SCREEN_STATE ON_UNLOCKED
+10-18 12:03:29.557  7889  7889 D NfcService: applyRouting
+10-18 12:03:29.575  7889  7911 D NfcService: applyRouting
+10-18 12:03:35.576  7889  9297 E NfcService: run: Watchdog triggered, release lock before aborting
+10-18 12:03:35.577  7889  9297 E NfcService: run: Watchdog triggered, aborting
+10-18 12:03:36.521  9341  9341 F DEBUG   :       #01 pc 0000cb3f  /apex/com.android.nfcservices/lib/libbase.so (android::base::DefaultAborter(char const*)+6) (BuildId: 36700165c08fe69bc2921f59aa5cccb2)
+10-18 12:03:36.521  9341  9341 F DEBUG   :       #02 pc 0000e165  /apex/com.android.nfcservices/lib/libbase.so (android::base::SetAborter(std::__1::function<void (char const*)>&&)::$_0::__invoke(char const*)+48) (BuildId: 36700165c08fe69bc2921f59aa5cccb2)
+10-18 12:03:36.521  9341  9341 F DEBUG   :       #05 pc 0008f59f  /apex/com.android.nfcservices/lib/libnfc_nci_jni.so (android::nfcManager_doAbort(_JNIEnv*, _jobject*, _jstring*)+30) (BuildId: 5802e18e5f5cb8d61224f7b8b99893f6)
+10-18 12:03:36.522  9341  9341 F DEBUG   :       #08 pc 001068e6  /apex/com.android.nfcservices/priv-app/NfcNciApex@BP4A.251205.006/NfcNciApex.apk (com.android.nfc.NfcService$WatchDogThread.run+210)
+10-18 12:03:36.783  9351  9351 E com.android.nfc: Failed to madvise file /data/dalvik-cache/arm/apex@com.android.nfcservices@priv-app@NfcNciApex@BP4A.251205.006@NfcNciApex.apk@classes.vdex for size:4096: Bad file descriptor
+10-18 12:03:36.789  9351  9351 D nativeloader: Configuring clns-shared-9 for other apk /apex/com.android.nfcservices/priv-app/NfcNciApex@BP4A.251205.006/NfcNciApex.apk. target_sdk_version=36, uses_libraries=, library_path=/apex/com.android.nfcservices/priv-app/NfcNciApex@BP4A.251205.006/lib/arm:/system/lib:/system/system_ext/lib, permitted_path=/data:/mnt/expand:/data/user_de/0/com.android.nfc:/apex/com.android.nfcservices/priv-app/NfcNciApex@BP4A.251205.006:/system/lib:/system/system_ext/lib
+10-18 12:03:36.795  9351  9351 D nativeloader:   com_android_nfcservices: libnfc_nci_jni.so
+10-18 12:03:36.869  9351  9351 I NfcService: Starting NFC service
+10-18 12:03:36.889  9351  9351 D nativeloader: Load libnfc_nci_jni.so using class loader ns clns-shared-9 (caller=/apex/com.android.nfcservices/priv-app/NfcNciApex@BP4A.251205.006/NfcNciApex.apk): ok
