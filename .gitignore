@@ -1,0 +1,30 @@
+# build outputs
+tools/out/
+tools/out.build.log
+*.o
+*.ko
+
+# camera probe binaries
+cam/*.arm32
+cam/imaging[0-9]*
+cam/regs
+cam/sensordump
+cam/camprobe*
+
+# micropython build
+kruxport/micropython-arm32
+
+# rootfs build artifacts
+rootfs/stock/
+rootfs/standalone/ramdisk.cpio
+rootfs/standalone/ramdisk.cpio.gz
+*.img
+
+# reference artifacts (large, not tracked)
+artifacts/
+
+# misc
+*.pyc
+__pycache__/
+
+sync.sh
