@@ -174,7 +174,8 @@ info() { echo "   ..  $*"; }
 # ================================================================ 1. locate
 step "1. locate the kernel tree"
 if [ -z "$TREE" ]; then
-    for c in "$here/../standalone/vendor/android_kernel_lge_hammerhead" \
+    for c in "$here/../linux" \
+             "$here/../standalone/vendor/android_kernel_lge_hammerhead" \
              "$here/../android_kernel_lge_hammerhead" \
              "$here/../kernel" \
              "$here/../../android_kernel_lge_hammerhead" \
@@ -226,8 +227,8 @@ ok "${DEFCONFIG#$TREE/}"
 step "3. find the toolchain"
 if [ -z "$PREBUILTS" ]; then
     # The AOSP prebuilt lives with the other toolchains now.
-    for c in "$here/../standalone/vendor/toolchain" "$$here/../standalone/vendor/toolchain/prebuilts" \
-             "$TREE/../prebuilts" "$HOME/prebuilts" "$TREE/prebuilts"; do
+    for c in "$here/../linux" "$here/../standalone/vendor/toolchain" "$$here/../standalone/vendor/toolchain/prebuilts" \
+             "$TREE/../prebuilts" "$HOME/prebuilts" "$TREE/prebuilts" /usr; do
         [ -d "$c" ] && { PREBUILTS="$(cd "$c" && pwd)"; break; }
     done
 fi

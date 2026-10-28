@@ -20,7 +20,7 @@
 
 # The kernel's build tree (ours, in the project) and its object tree
 # (rebuilt, on tmpfs).  The build script is build/build-kernel.sh.
-: "${KERNEL_TREE:=$PROJECT/standalone/vendor/android_kernel_lge_hammerhead}"
+: "${KERNEL_TREE:=$PROJECT/linux}"
 : "${KERNEL_OUT:=/tmp/opencode/ko-cap}"
 
 # The firmware's build tree (rebuilt, on tmpfs) and the armel sysroot

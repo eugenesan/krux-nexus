@@ -168,7 +168,7 @@ tag, finish everything else, and leave the final card test to when you have one.
 
 Phase 0–5 run on the **stock shipping kernel**. Nothing above needs it changed.
 
-When you get there, `standalone/tools/profiles/hammerhead.list` already exists and is
+When you get there, `tools/profiles/hammerhead.list` already exists and is
 already correct for this device: it strips `BCMDHD`/`CFG80211`/`WEXT_*`,
 `BT_RFCOMM`/`BT_BNEP`/`BT_HIDP` and `MSM_PIL_MSS_QDSP6V5`, and explicitly
 **keeps `CONFIG_NFC_BCM2079X`**. `build/build-kernel.sh` drives it.
