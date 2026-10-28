@@ -124,7 +124,7 @@ symbol. `TAMPER_SYSCALL_TABLE` is the option that hides it from
 
 ### The kernel tree we hold is NOT the tree these came from
 
-`standalone/vendor/android_kernel_lge_hammerhead` contains **no KernelSU
+`vendor/android_kernel_lge_hammerhead` contains **no KernelSU
 anywhere** — `grep -rn 'config KSU' --include='Kconfig*'` returns zero hits.
 The ROM was therefore built from a patched tree we do not have. This matters:
 **reasoning about the running drivers from our tree is unsound**, and that
@@ -137,13 +137,13 @@ error produced a wrong conclusion twice.
 file does not work here (the CAF payload resists gzip/xz/bzip2/lzma/lz4/zstd,
 and the kernel tree's own `scripts/extract-vmlinux` additionally requires an
 ELF vmlinux, which CAF does not emit). Captures live in
-`standalone/kernelcaps/`.
+`kernelcaps/`.
 
 | config | options |
 |---|---|
-| ROM zip kernel | 1237 (`standalone/kernelcaps/android-kconfig`) |
-| recovery kernel | 1213 (`standalone/kernelcaps/twrp-kconfig`) |
-| installed Android kernel | 1242 (`standalone/kernelcaps/android-kconfig`) — **has KSU** |
+| ROM zip kernel | 1237 (`kernelcaps/android-kconfig`) |
+| recovery kernel | 1213 (`kernelcaps/twrp-kconfig`) |
+| installed Android kernel | 1242 (`kernelcaps/android-kconfig`) — **has KSU** |
 
 `work/dev/kconfig` (1237) is the ROM zip kernel's config. Expanding each
 defconfig and diffing against a live config:
@@ -154,7 +154,7 @@ defconfig and diffing against a live config:
 | `hammerhead_defconfig` | 203 |
 
 `lineageos_hammerhead_defconfig` is the device's base. Expansions kept in
-`standalone/kernelcaps/defconfig-expansions/`.
+`kernelcaps/defconfig-expansions/`.
 
 ### functionfs is off everywhere
 
@@ -175,7 +175,7 @@ and cannot be retrofitted onto an existing image.
 
 `fastboot boot` hands the image to the stock bootloader, which loads kernel and
 ramdisk at the addresses **in the header**. Wrong addresses boot to nothing,
-silently. `standalone/rootfs/bootimg.py` round-trips byte-identically and
+silently. `rootfs/bootimg.py` round-trips byte-identically and
 refuses to invent a field.
 
 ```
@@ -269,7 +269,7 @@ sets it whenever `MACH_MSM8974_HAMMERHEAD=y`, which is true in every kernel
 here.
 
 Constants come from the kernel's own header, vendored at
-`standalone/rootfs/standalone/include/linux/reboot.h`, and
+`rootfs/include/linux/reboot.h`, and
 `verify-constants.py` checks that vendored copy against the tree plus every
 other hand-transcribed value (24 checks).
 
@@ -282,7 +282,7 @@ other hand-transcribed value (24 checks).
 | AOSP prebuilt | **gcc 4.9.x 20150123** | `prebuilts/gcc-androideabi-4.9/bin/` |
 | distro cross | gcc 15.2.0 | `arm-linux-gnueabihf-gcc` on `PATH` |
 | AOSP clang | r614150 | `prebuilts/clang-linux-x86/clang-r614150` |
-| buildroot host | gcc 15.3.0 | `standalone/rootfs/build/host/` (7.6 GB, regenerable) |
+| buildroot host | gcc 15.3.0 | `rootfs/build/host/` (7.6 GB, regenerable) |
 
 The kernels actually running were built with **gcc 16.2.0** (ROM zip) and
 **Arm GNU 15.2.Rel1** (recovery) — neither is in the project. The ROM author
@@ -295,8 +295,8 @@ reports Linaro for the Android kernel; the device itself reports gcc 16.2.0.
 | `prebuilts/gcc-androideabi-4.9` | 136 MB | **yes** | the working toolchain. `bin/arm-linux-androidkernel-gcc` is a symlink to `arm-linux-androideabi-gcc`, whose wrapper resolves its real compiler by its own filename (`real-` + basename of the readlink target) — so the alias works, and `real-arm-linux-androideabi-gcc` is what actually runs. The tree is **not** in a system location, so the build must put its directory on `PATH` itself |
 | `prebuilts/clang-linux-x86` | **8.3 GB** | **no** | neither running kernel used clang (gcc 16.2.0 and Arm GNU 15.2.Rel1). `build-kernel.sh` has an LLVM path, but the gcc path is the one in use. This is the single largest reclaimable item in the project |
 | `rootfs/arm-linux-androideabi-4.9` | 422 MB | **no** | an **incomplete** copy of the same AOSP 4.9 prebuilt: `bin/` holds 34 binutils/gcov/gprof binaries but **no gcc driver**, and nothing in the project references it (`build-kernel.sh` only searches `$PREBUILTS/…`, and `$PREBUILTS` is the project-root `prebuilts/`, not `rootfs/`) |
-| `rootfs/buildroot` | 1.4 GB | moved | buildroot **source** (2026.09). Relocated to `standalone/buildroot` so everything build-related sits under `standalone/` |
-| `standalone/rootfs/build` | 7.6 GB | no | buildroot **output** — host toolchain and target. Regenerable, and the host gcc there (15.3.0) is not used by the kernel build |
+| `rootfs/buildroot` | 1.4 GB | moved | buildroot **source** (2026.09). Relocated to `buildroot` so everything build-related sits under `` |
+| `rootfs/build` | 7.6 GB | no | buildroot **output** — host toolchain and target. Regenerable, and the host gcc there (15.3.0) is not used by the kernel build |
 
 The `rootfs/arm-linux-androideabi-4.9` case is the one to watch: it looks
 complete enough to use and it is not. It has binutils but no compiler, so
@@ -400,7 +400,7 @@ airgap-standalone.log.md            the full log, 69 entries
 STANDALONE-FINDINGS.md              this file
 CONTINUE-PROMPT.md                  how to pick this up again
 
-standalone/
+
   kernelcaps/                       live config captures + defconfig expansions
   patches/                          our kernel-tree patches (0001 f_fs, 0002 ov5640)
   vendor/krux/                     Krux @ 9b3a431 -- read, not assumed
@@ -417,7 +417,7 @@ standalone/
     micropython/                     MicroPython at 9a3a0c0 (63 MB)
   rootfs/
     bootimg.py                      verified boot.img packer/unpacker
-    standalone/                     the payload that passes all seven stages
+                         the payload that passes all seven stages
       main.c                        the whole thing, heavily commented
       include/linux/reboot.h        vendored from the kernel tree
       font5x7.h                     generated by gen-font.py
@@ -428,7 +428,7 @@ standalone/
 
 ### The payload
 
-`standalone/rootfs/standalone/` builds to a **4.8 KB** initramdisk whose `init`
+`rootfs/` builds to a **4.8 KB** initramdisk whose `init`
 is a freestanding ARM binary — no libc, no `/bin/sh`. Seven stages:
 
 ```
@@ -452,7 +452,7 @@ and removes the entire class of error.
 ## 11. Build and flash
 
 ```sh
-cd standalone/rootfs/standalone
+cd rootfs/standalone
 python3 gen-font.py                    # regenerate font5x7.h
 python3 verify-constants.py            # 24 checks, exit 1 on any mismatch
 arm-linux-gnueabihf-gcc -O2 -static -nostdlib -ffreestanding \
@@ -460,9 +460,9 @@ arm-linux-gnueabihf-gcc -O2 -static -nostdlib -ffreestanding \
     -mfloat-abi=soft -marm -march=armv7-a -mtune=cortex-a9 -Iinclude -o init main.c
 
 cd ..
-python3 bootimg.py pack stock/unpacked standalone/ramdisk.cpio.gz \
+python3 bootimg.py pack stock/unpacked ramdisk.cpio.gz \
     stock/boot-standalone2.img           # recovery kernel
-python3 bootimg.py pack <rom-unpacked>  standalone/ramdisk.cpio.gz \
+python3 bootimg.py pack <rom-unpacked>  ramdisk.cpio.gz \
     stock/boot-standalone-romkernel.img  # ROM zip kernel
 ```
 
@@ -594,7 +594,7 @@ CONFIG_MSM_CAMERA_AF_FOXCONN=y     (auto-selected; the hammerhead AF module)
 `make drivers/media/platform/msm/camera_v1/` now succeeds — **20 objects,
 exit 0** — after a two-line fix to `ov5640.c` (it was missing
 `<linux/module.h>` and `<linux/gpio.h>`; see
-`standalone/patches/0002-camera-ov5640-missing-includes.patch`).
+`patches/0002-camera-ov5640-missing-includes.patch`).
 
 One hygiene item: enabling `MSM_CAMERA` also turns on `MT9D112`, `MT9P012`,
 `MT9P012_KM`, `MT9T013` and `S5K3E2FX`, because they are `default y` in
@@ -631,11 +631,11 @@ the code.
 | # | item | where | risk |
 |---|---|---|---|
 | 1 | kernel config: `MSM_CAMERA`, `OV5640`, other sensors off | `tools/profiles/hammerhead-keep.list` (needs an "enable" side that the stripper now has) | low — compiles today |
-| 2 | camera patches: `ov5640.c` includes | `standalone/patches/0002-*` | done |
-| 3 | device nodes `/dev/config0`, `/dev/control0`, `/dev/frame0` | `standalone/tools/devnodes.py` — **no devtmpfs**, so they must be baked into the cpio like fb0/event1/bcm2079x | low, but the *numbers* (node 0,1,2,3) are chosen by the driver, so they must be right |
+| 2 | camera patches: `ov5640.c` includes | `patches/0002-*` | done |
+| 3 | device nodes `/dev/config0`, `/dev/control0`, `/dev/frame0` | `tools/devnodes.py` — **no devtmpfs**, so they must be baked into the cpio like fb0/event1/bcm2079x | low, but the *numbers* (node 0,1,2,3) are chosen by the driver, so they must be right |
 | 4 | hammerhead camera config (GPIOs, regulators, clocks, I2C) | new file, or pushed from userspace | **medium** — wrong values = no frames, and there is no easy way to probe them without a working capture |
 | 5 | native-API capture client (C, static) | new | medium — the ioctl sequence and the VFE/ISP parameter block are the fiddly part |
-| 6 | get raw YUV frames out, convert, blit to the framebuffer | extends `standalone/rootfs/standalone/main.c` | low — and the framebuffer is a *perfect* observable: we can literally see the camera image on the panel |
+| 6 | get raw YUV frames out, convert, blit to the framebuffer | extends `rootfs/main.c` | low — and the framebuffer is a *perfect* observable: we can literally see the camera image on the panel |
 | 7 | MicroPython/C binding for Krux | depends on 5 | medium |
 | 8 | **QR decoding performance on a Cortex-A9** | Krux side | **unknown, and the real risk** — the decoder, not the camera, is the bottleneck |
 
@@ -667,7 +667,7 @@ Built 2026-10-19. Command:
 
 ```sh
 ./build/build-kernel.sh \
-  --tree "$PWD/standalone/vendor/android_kernel_lge_hammerhead" \
+  --tree "$PWD/vendor/android_kernel_lge_hammerhead" \
   --out /tmp/opencode/ko
 ```
 
@@ -678,7 +678,7 @@ Result: `zImage` 5,938,864 bytes, **1101 options, zero errors**.
 | base | `arch/arm/configs/lineageos_hammerhead_defconfig` (chosen by explicit list, not a glob) |
 | toolchain | AOSP gcc 4.9.x 20150123, `prebuilts/gcc-androideabi-4.9/bin/arm-linux-androidkernel-gcc` (a symlink to the androideabi wrapper, which resolves its own real compiler by name) |
 | output | out-of-tree, `O=/tmp/opencode/ko` |
-| patches | `standalone/patches/0001-usb-gadget-f_fs-include-uidgid.patch` — `f_fs.c` was missing `#include <linux/uidgid.h>`; the tree *has* `include/linux/uidgid.h` (with `kuid_t`, `make_kuid`, `uid_valid`) but `f_fs.c` never included it, and `linux/fs.h` does not either. It only surfaced now because functionfs was previously never built. |
+| patches | `patches/0001-usb-gadget-f_fs-include-uidgid.patch` — `f_fs.c` was missing `#include <linux/uidgid.h>`; the tree *has* `include/linux/uidgid.h` (with `kuid_t`, `make_kuid`, `uid_valid`) but `f_fs.c` never included it, and `linux/fs.h` does not either. It only surfaced now because functionfs was previously never built. |
 
 Config facts, verified in `/tmp/opencode/ko/.config`:
 
@@ -711,7 +711,7 @@ process drives. The USB *controller* (`USB_GADGET`) is untouched.
 
 ## 14. What Krux actually needs from the camera
 
-Krux vendored at `standalone/vendor/krux` (commit `9b3a431`, 2026-10-07).
+Krux vendored at `vendor/krux` (commit `9b3a431`, 2026-10-07).
 Read, not assumed.
 
 ### 14.1 It is the OpenMV `sensor` + `image` API, not a generic camera API
@@ -812,7 +812,7 @@ are fixed (`/dev/control0`, `/dev/config0`, `/dev/frame0`, `/dev/pic0`, from
 at build time.
 
 Our current technique is to bake the device nodes into the initramfs cpio
-(`standalone/tools/devnodes.py`), which works only for **static** majors.
+(`tools/devnodes.py`), which works only for **static** majors.
 
 `CONFIG_DEVTMPFS` is available in our tree (`drivers/base/Kconfig:24`, needs
 `HOTPLUG`, which is `y`), and is off in our config today — as it is in every
@@ -838,7 +838,7 @@ forces anyway. It should be done **before** the camera work, not after.
    are `default y` in camera_v1/Kconfig and would otherwise be probed on the
    camera's I2C bus. The air-gap profile's own verification step will
    re-audit the result.
-3. Keep the two patches (`standalone/patches/0001-*`, `0002-*`).
+3. Keep the two patches (`patches/0001-*`, `0002-*`).
 
 **Phase B — the camera bring-up, in our own payload before any MicroPython.**
 
@@ -1097,7 +1097,7 @@ is the only one we have that is not the framebuffer.
 ## 16. The imaging-server experiment (2026-10-19)
 
 The first hands-on work on the camera. Everything below was *run*, not
-reasoned. Code: `standalone/cam/` (`probe.c`, `imaging.c`, `imaging2.c`,
+reasoned. Code: `cam/` (`probe.c`, `imaging.c`, `imaging2.c`,
 `imaging4.c`, `dump.c`, `dqsize.c`).
 
 ### 16.1 Method
@@ -1298,8 +1298,8 @@ Where the distinction actually bites:
 
 | binary | ABI | VFP insns | why |
 |---|---|---|---|
-| our payload (`standalone/rootfs/standalone/init`) | **soft-float** | **0** | this is what becomes the device; the mandate is honoured where it matters |
-| the throwaway probes (`standalone/cam/*.c`) | hard-float | 273 | built with the distro `arm-linux-gnueabihf-gcc` because that is the only ARM toolchain on the host with a libc |
+| our payload (`rootfs/init`) | **soft-float** | **0** | this is what becomes the device; the mandate is honoured where it matters |
+| the throwaway probes (`cam/*.c`) | hard-float | 273 | built with the distro `arm-linux-gnueabihf-gcc` because that is the only ARM toolchain on the host with a libc |
 
 The hard-float probes work because: they are statically linked, so there is no
 dynamic loader and the ABI tag only affects how glibc passes float arguments
@@ -1311,9 +1311,9 @@ kernel, which this is not.
 
 `/tmp/opencode/kern/android_kernel_lge_hammerhead` — 704 MB in tmpfs, git
 `9ac11678`, **the same commit as the vendored tree**. All our builds have
-always used `standalone/vendor/android_kernel_lge_hammerhead` (the `--tree`
+always used `vendor/android_kernel_lge_hammerhead` (the `--tree`
 argument), so the copy was pure waste. Removed; tmpfs went from 1.9 GB to
-1.2 GB used. `standalone/vendor/k_quirc` (the QR decoder) was moved out of
+1.2 GB used. `vendor/k_quirc` (the QR decoder) was moved out of
 tmpfs into the project, where it belongs.
 
 ### 17.3 The camera option set is now applied and verified
@@ -1363,7 +1363,7 @@ uses class `graphics`, so devtmpfs creates the node at the same path.
 
 ### 17.5 The adb image: our kernel + the ROM's ramdisk
 
-`standalone/rootfs/stock/unpacked/` holds the stock boot image unpacked: a
+`rootfs/stock/unpacked/` holds the stock boot image unpacked: a
 kernel and a ramdisk. The ramdisk is the **standard Android boot ramdisk** —
 `init`, `fstab.hammerhead`, `default.prop`, `metadata` and empty `dev`,
 `proc`, `sys`, `mnt` directories. Everything else (including `adbd`) comes
@@ -1479,7 +1479,7 @@ ioctl number encoding the wrong size, and the kernel rejected it with EINVAL.
 
 The lesson is the one this project keeps re-learning: **measure the ABI on
 the device you are talking to, and build the probe against the same header
-the kernel was built with.** Our `standalone/cam/` programs are built against
+the kernel was built with.** Our `cam/` programs are built against
 the tree's header precisely so that this cannot happen for our own kernel.
 
 The camera ABI to program against is simply our tree's
@@ -1527,7 +1527,7 @@ exists — so `write /sys/class/android_usb/android0/f_ffs/aliases adb` works
 without the generic `g_ffs` gadget function.
 
 The same one-line patch is needed in the acroreiser tree as in the z3DD3r one
-(`standalone/patches/0001-usb-gadget-f_fs-include-uidgid.patch`):
+(`patches/0001-usb-gadget-f_fs-include-uidgid.patch`):
 
 ```c
  #include <linux/export.h>

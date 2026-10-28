@@ -22,7 +22,7 @@ measured, and everything below was measured *under our kernel*.
 
 ## The three things that were broken, and are fixed
 
-1. **The ION heap masks** (`standalone/cam/ion.h`).  `heap_id_mask` is
+1. **The ION heap masks** (`cam/ion.h`).  `heap_id_mask` is
    a mask of heap **ids**, not of heap types; `0x00010000` is
    `ION_CP_WB_HEAP_ID`, a **8660-only** heap that this 8974 does not
    have, so every buffer allocation failed with `ENOENT`.  The
@@ -239,7 +239,7 @@ The chromatrix ioctl is `VIDIOC_MSM_CPP_CFG` (0xc01056c0) and it now
    Using the camera_v1 numbers sends the "append" to GET_EVENTPAYLOAD,
    which dereferences a NULL and **panics the kernel**
    (`msm_cpp_subdev_ioctl+0xe30`, NULL at 0x34).  The ispif.h in
-   `standalone/cam/` now carries the camera_v2 numbers.
+   `cam/` now carries the camera_v2 numbers.
 
 2. **The buffer queue is created by ENQUEUE, not APPEND.**  APPEND only
    adds buffers to a queue entry that already exists; ENQUEUE creates
@@ -345,8 +345,8 @@ log, which is where the oopses above came from.
 ## MicroPython / Krux (background)
 
 **MicroPython 1.28.0, static arm32, running inside TWRP** ✓
-(`standalone/kruxport/micropython-arm32` ✓, built by
-`standalone/kruxport/build-micropython.sh` ✓):
+(`kruxport/micropython-arm32` ✓, built by
+`kruxport/build-micropython.sh` ✓):
 ```
 $ adb shell /data/local/tmp/micropython -c "import sys; print(sys.implementation)"
 MicroPython (name='micropython', version=(1, 28, 0, ''), ...)
@@ -358,7 +358,7 @@ built with the *host* compiler ✓ (otherwise the port tries to run an
 arm32 mpy-cross ✓) and the armel sysroot ✓.
 
 The port's scope and the Linux replacements are in
-`standalone/kruxport/README.md` ✓.
+`kruxport/README.md` ✓.
 
 ### `machine.I2C` — done and verified on the hardware (2026-10-20)
 
@@ -372,8 +372,8 @@ rather than `addrsize`, the bus chosen by the `I2C.I2C0` class
 constant, `writeto` taking the bytes rather than a list).
 
 So the port has its own class:
-`standalone/kruxport/machine_i2c_linux.c` ✓, applied to the tree by
-`standalone/kruxport/apply-port.sh` ✓ (called from
+`kruxport/machine_i2c_linux.c` ✓, applied to the tree by
+`kruxport/apply-port.sh` ✓ (called from
 `build-micropython.sh` ✓) as `ports/unix/machine_i2c_linux.c` ✓, and
 added to the `machine` module through the port's
 `MICROPY_PY_MACHINE_EXTRA_GLOBALS` hook ✓ (in `ports/unix/modmachine.c`
@@ -420,18 +420,18 @@ The NFC chip (bcm2079x) is **not** reachable over I2C from userspace
 while the vendor driver holds it: the chip NACKs
 (`ENOTCONN` from the QUP driver).  The vendor's own path is the
 `/dev/bcm2079x` misc device with its six ioctls -- see
-`standalone/nfc/TRANSPORT.md`, which has the full contract (framing
+`nfc/TRANSPORT.md`, which has the full contract (framing
 measured on the hardware, the power/wake ioctls, and the AOSP HAL
 source to port).  That is the way to the NFC, not raw I2C.
 
-- `standalone/rootfs/buildroot.fragment`: MicroPython 1.28.0 + micropython-lib
+- `rootfs/buildroot.fragment`: MicroPython 1.28.0 + micropython-lib
   added; unix-ffi off (it needs libffi, whose autoreconf fails here);
   `BR2_RELRO_NONE=y` (BR2_RELRO_FULL selects BR2_PIC_PIE, and a PIE /init
   hangs the bootloader on this kernel); `BR2_STATIC_LIBS=y` (TWRP is bionic,
   so the runtime must be static).
-- `standalone/rootfs/build.sh`: the buildroot path was wrong
-  (`standalone/rootfs/../../rootfs/buildroot` -> `standalone/buildroot`).
-- the build extracts into TMPDIR -> set to `standalone/rootfs/build/tmp`
+- `rootfs/build.sh`: the buildroot path was wrong
+  (`rootfs/../../rootfs/buildroot` -> `buildroot`).
+- the build extracts into TMPDIR -> set to `rootfs/build/tmp`
   (on the disk, not the tmpfs).
 - the host gcc's "fixinc" step (host-gcc-final) fails intermittently;
   delete build/build/host-gcc-final-* and build/build/gcc-* and retry.
@@ -451,7 +451,7 @@ over the BCM20793 on I2C bus 0 at 0x77).
 
 ### The NFC transport — the chip answers, standalone (2026-10-20)
 
-The port's own C module `_nfc` (`standalone/kruxport/nfc_bcm2079x.c`,
+The port's own C module `_nfc` (`kruxport/nfc_bcm2079x.c`,
 compiled into the unix port by `apply-port.sh`) opens
 `/dev/bcm2079x`, drives the power and wake lines, and reads and writes
 whole packets.  **Verified on the device, in TWRP, with no vendor HAL
@@ -471,7 +471,7 @@ So **the chip's firmware is in its NVM**: it answers GET_BUILD_INFO
 right after a power cycle, with no `.ncd` download.  The port therefore
 does **not** need the DM/PRM patch-download state machine -- that is
 the biggest piece of the NFC port, and it is not needed.  (The blobs
-are kept in `standalone/nfc/blobs/` as a fallback.)
+are kept in `nfc/blobs/` as a fallback.)
 
 ### The vendor's bring-up, captured byte for byte
 
@@ -503,7 +503,7 @@ chip -> 10 60 00 02 00 01          Core Reset notification
 ->    10 21 06 01 00                RF 0x06
 ```
 
-The module that replays it is `standalone/kruxport/kruxport/nfc.py`
+The module that replays it is `kruxport/kruxport/nfc.py`
 (the `nfc` module Krux imports); it needs to be installed as `nfc.py`
 on the device (or frozen into the firmware).
 
@@ -538,7 +538,7 @@ SeedKeeper, hence the `6A82`.
 
 #### The port's own transport (2026-10-20)
 
-`standalone/kruxport/kruxport/nfc.py` is the `nfc` module Krux
+`kruxport/kruxport/nfc.py` is the `nfc` module Krux
 imports.  It replays the vendor's bring-up **byte for byte** -- the
 payloads are generated from the captured trace, because two of them
 were wrong when they were typed by hand (the LPTD one was three bytes
@@ -695,7 +695,7 @@ Two things are known broken and are not worked around yet:
 
 /tmp is a tmpfs (RAM). Keep only what is in use: the kernel objects
 (719 MB, rebuilt constantly -> /tmp/opencode/ko-cap) and the small
-scratch. The rootfs build lives on the disk (standalone/rootfs/build).
+scratch. The rootfs build lives on the disk (rootfs/build).
 
 ---
 
@@ -703,7 +703,7 @@ scratch. The rootfs build lives on the disk (standalone/rootfs/build).
 
 ## What was fixed
 
-**1. The ION heap masks were wrong (`standalone/cam/ion.h`).**
+**1. The ION heap masks were wrong (`cam/ion.h`).**
 
 ```
 ION_MASK_SYSTEM   0x00010000    <-- bit 16
@@ -769,7 +769,7 @@ and the captured chromatrix has **5** stripes and **266** words:
 464 + 27*5 + 1 = 600      <-- 1.6.0
 ```
 
-So `standalone/cam/fw/cpp_firmware_v1_2_0.fw` is the one, and
+So `cam/fw/cpp_firmware_v1_2_0.fw` is the one, and
 without it the kernel says `invalid fw version 00000000` and then
 `Invalid frame message`.
 
