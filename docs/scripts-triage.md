@@ -1,7 +1,8 @@
 # Scripts triage (tools/ vs scripts/)
 
 ## Summary
-- `tools/` holds reusable build/config helpers: `build-kernel.sh`, `apply-defconfig.py`, `fetch-toolchain.sh`, `build-armel-sysroot.sh`, `audit-zip.sh`, `sdat2img.py`, `extract-vmlinux.py`, profiles.
+- `tools/` holds reusable build/config helpers: `build-kernel.sh`, `apply-defconfig.py`, `fetch-toolchain.sh`, `audit-zip.sh`, `sdat2img.py`, `extract-vmlinux.py`, profiles.
+- `scripts/` also holds the real build drivers: `build-armel-sysroot.sh`, `build/build-micropython.sh`, `deploy-firmware.sh`.
 - `scripts/` holds ~100 one-off probe/capture/boot helpers from the camera, NFC and display investigations.
 - `scripts/README.md` already groups them by topic (boot, build, cam, display, kernel, misc, nfc, rootfs).
 
@@ -10,7 +11,7 @@ Keep `tools/` and `scripts/` separate: `tools/` is build infrastructure, `script
 
 ## What is still reusable
 - scripts/boot/: `boot-our-firmware.sh`, `boot-twrp.sh`, `final-run.sh`
-- scripts/build/: `build-imaging.sh`, `build-mpy.sh`, `build-kernel.sh`-adjacent helpers
+- scripts/build/: `build-imaging.sh`, `build-micropython.sh`, `build-kernel.sh`-adjacent helpers
 - scripts/rootfs/: `devnodes.py`
 - scripts/kernel/: `cmp-kernels.sh`, `check-rom-kernel.sh`
 - scripts/cam/: `camtest.sh`, `runcam.sh`, `imaging.sh`, `pull-vendor.sh`
@@ -24,5 +25,6 @@ and are recorded in docs/standalone-log.md. Keep a few representative ones for
 reference; the rest can be archived.
 
 ## Action
-No deletion performed yet. Review the list above; then move the dead ones to
-`scripts/archive/` (or delete) in a follow-up commit.
+The dead ones were moved to `scripts/archive/` (by topic).  The stale
+`scripts/build/build-mpy.sh` (an older MicroPython build that predates the
+submodule layout) was removed in favour of `scripts/build/build-micropython.sh`.

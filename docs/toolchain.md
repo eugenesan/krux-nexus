@@ -406,8 +406,8 @@ reproducible, and it does not change. So it is **built on demand** into a
 tmpfs directory:
 
 ```sh
-standalone/tools/build-armel-sysroot.sh              # -> /tmp/opencode/armel-sysroot
-standalone/tools/build-armel-sysroot.sh /some/where
+scripts/build-armel-sysroot.sh              # -> /tmp/opencode/armel-sysroot
+scripts/build-armel-sysroot.sh /some/where
 ```
 
 The result is byte-for-byte the tree the build expects (686 files, verified

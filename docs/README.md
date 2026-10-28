@@ -12,6 +12,8 @@
 - cam-state.md - camera status
 - nfc-isodep.md - NFC ISO-DEP notes
 - nfc-transport.md - NFC transport notes
+- plan-camera.md - camera completion plan (kernel V4L2 → MaixPy sensor shim)
 - phase0-findings.md - phase 0 bring-up findings
 - directories.md - project layout
+- scripts-triage.md - scripts/tools layout and archive decisions
 - archive/ - superseded docs

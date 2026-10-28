@@ -1,35 +1,47 @@
-# standalone/scripts — the session's working scripts
+# scripts — build drivers and device probes
 
-These are the throwaway helpers that were written while the camera, NFC
-and display were being brought up.  They are not part of the build: each
-one is a self-contained probe or a one-off capture driver, and most of
-them talk to the device over adb.
+Two kinds of scripts live here:
 
-They are kept because they are the *record* of how the findings were
-made — a probe is usually the only description of the question it was
-asking.  They are grouped by what they were for:
+* the **build drivers** — the recipes that produce something (the firmware,
+  the images, the deploy);
+* the **probes** — the throwaway helpers written while the camera, NFC and
+  display were being brought up. They are not part of the build; each one is
+  a self-contained probe or a one-off capture driver, and most talk to the
+  device over adb.
 
-| dir | what is in it |
+The probes are kept because they are the *record* of how the findings were
+made — a probe is usually the only description of the question it was asking.
+
+| path | what is in it |
 |---|---|
-| `cam/` | the camera investigation: the capture drivers (`capture*.sh`, `run-imaging*.sh`), the HAL dumps (`hal-*.sh`), the register and routing dumps (`dump-*.sh`, `csid*.sh`, `ispif*.sh`), and the ones that pick the capture apart (`find-cpp*.sh`, `find-sensor-data.sh`) |
-| `nfc/` | the NFC transport work: the transport probes and the card readers |
-| `display/` | the framebuffer: the dumps, the crop and the touch and key probes |
-| `rootfs/` | the userspace: the device-node and mount probes, and the ones that read the init's behaviour |
+| `build/` | the build drivers: `build-micropython.sh` (the firmware), `build-imaging.sh` (the camera server), the kernel variants |
+| `cam/` | the camera investigation: capture drivers, HAL dumps, register/routing dumps |
+| `nfc/` | the NFC transport work: the transport probes and card readers |
+| `display/` | the framebuffer: dumps, crop, touch and key probes |
+| `rootfs/` | the userspace: device-node and mount probes, init behaviour |
 | `boot/` | flashing and booting the device, and the one-shot runs that tie a capture to a boot |
-| `kernel/` | the kernel tree itself: the branch and upstream checks, the ROM-reference comparisons, the rebase and repack |
-| `build/` | the build drivers (the imaging server, the kernel, the port) |
+| `kernel/` | the kernel tree itself: branch and upstream checks, ROM-reference comparisons, rebase and repack |
 | `misc/` | the leftovers that do not fit anywhere else |
+| `archive/` | dead scripts, kept by topic |
 
-Two of them are worth knowing about:
+Shared drivers at the top level:
+
+* `scripts/build/build-micropython.sh` builds the static arm32 interpreter and
+  writes `kruxport/micropython-arm32`;
+* `scripts/build-armel-sysroot.sh` builds the armel sysroot the firmware is
+  linked against;
+* `scripts/deploy-firmware.sh` pushes the interpreter, `krux/src`, embit and
+  the port modules to the device and restarts the service.
+
+Two of the probes are worth knowing about:
 
 * `scripts/build/build-imaging.sh` builds the imaging server
-  (`standalone/cam/imaging*.c`) for the device.  It is the only copy of
-  that recipe; `standalone/cam/` has the sources but not the build.
-* `scripts/rootfs/devnodes.py` is the same file as
-  `standalone/tools/devnodes.py` — the device-node list that the
-  ramdisk builders bake in.
+  (`cam/imaging*.c`) for the device. It is the only copy of that recipe;
+  `cam/` has the sources but not the build.
+* `scripts/rootfs/devnodes.py` is the same file as `tools/devnodes.py` — the
+  device-node list that the ramdisk builders bake in.
 
-The probes' sources are in `standalone/probes/`.
+The probes' sources are in `probes/`.
 
 ## Paths
 

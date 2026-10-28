@@ -346,7 +346,7 @@ log, which is where the oopses above came from.
 
 **MicroPython 1.28.0, static arm32, running inside TWRP** ✓
 (`kruxport/micropython-arm32` ✓, built by
-`kruxport/build-micropython.sh` ✓):
+`scripts/build/build-micropython.sh` ✓):
 ```
 $ adb shell /data/local/tmp/micropython -c "import sys; print(sys.implementation)"
 MicroPython (name='micropython', version=(1, 28, 0, ''), ...)

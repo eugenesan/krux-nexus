@@ -883,3 +883,78 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - Current failing symptom: CSID `irq status 0x000000dd`, ~54k–69k packets, mapped/unmapped long 0, VFE `stream 0: src 2, pix_count 0, raw_count 0`, frame `bytesused=0`, `camif error status: 0xd0`; LUT matches vendor (`vc0 0x0000122b`, `cfg0 0x23`, `cfg1 0x13`).
 - Camera nodes: `/dev/v4l-subdev11` (sensor), `/dev/video1` (sensor), `/dev/video0` (event), `/dev/v4l-subdev13` (ISP), `/dev/v4l-subdev15` (ISP-IF).
 - Kernel b25 built with `buf_done` instrumentation — needs boot and test.
+
+## 2026-10-28 00:03:24 UTC - session compaction (manual)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Krux firmware (MicroPython port) working on the LG Nexus 5 (hammerhead) air-gapped device; fix the reported device issues first, then the camera, on our own kernel.
+
+## Requirements
+- Core constraints unchanged: air-gapped (no modem/Wi-Fi/BT), no privileged or signature permissions, revertible by reflash, adb as the only debug channel.
+- Minimize changes to upstream Krux; prefer port-level shims over firmware edits.
+- Docs live in `docs/` with `status-`/`build-` prefixes; `reference/` and `archive/` keep plain names.
+- Single `master` branch.
+- Builds go to `/tmp/opencode`; the kernel image is `zImage-dtb`.
+- Test with `fastboot boot`; never flash unless the user requests it.
+- Only deducible fixes (build from source or disassemble); no guessing.
+- Do not rewrite the history of `docs/standalone-log.md` or `docs/compaction-log.md`.
+- Ask the user with BEL when a physical action is needed.
+
+## Decisions
+- Keep MicroPython (not MaixPy).
+- The port lives in the `krux` submodule on branch `nexus-port`.
+- The deploy script only pushes to the device.
+- `tools/` holds build infrastructure; `scripts/` holds device probes.
+- The `krux/firmware/MaixPy` submodule is intentionally left uninitialized.
+- No binary libsecp256k1; the pure-Python secp256k1 fallback is used.
+- The mbedtls-backed `crypto_fast` C module replaces the slow pure-Python sha512/PBKDF2.
+- The camera was postponed until the UI/NFC/crypto issues were fixed.
+- The history rewrite to drop committed build artifacts was not executed (destructive).
+
+## Work State
+### Completed
+- Repo restructure: `standalone/` flattened, submodules set up.
+- All three builds verified: kernel `zImage-dtb`, MicroPython arm32, stub ramdisk/boot image.
+- Port committed on `nexus-port`.
+- Device boots our firmware via `fastboot boot` (adb state `recovery`, uid 0).
+- Fixed on device: About-screen QR (bytes return from `qrcode_maixpy.c`); crypto (`crypto_fast`: sha512 + pbkdf2_hmac ~24–26 ms for 2048 iterations); hmac (string digestmod, 128-byte sha512 blocks, `copy()`); Vol+/Vol− swap; brightness sysfs write; tamper-check sha512 import.
+- MaixPy shims (`image`/`fpioa_manager`/`Maix`) added; scripts archived with a triage doc; NFC transport imports + `available()` + auto-connect; splash flush + 3 s hold attempted.
+- New this session: mnemonic creation fixed (`hashlib.sha256` must stay a hash object; only sha512 needs the `_FastSHA512` wrapper; `_cf` import ordering fixed); the user confirmed "Mnemonic creation works now!".
+
+### Active
+- Device verification of the splash: still not visible — the menu blinks with ~2 s blank; the framebuffer renders, but `MSMFB_DISPLAY_COMMIT` + `FBIOPAN_DISPLAY` do not flip the panel. The user agreed to defer this.
+- NFC/SeedKeeper with a real SeedKeeper JavaCard (JCOP4SID): discovery sometimes misses the card ("no card within 3000/30000 ms"); when discovery succeeds, the SeedKeeper SELECT APDU gets no answer ("card didn't respond"). NFC DEBUG logging was toggled during tests.
+
+### Blocked
+- Camera sensor API gap (`sensor` module lacks `set_pixformat` etc.).
+- Kernel V4L2 camera backlog (`bytesused=0`/`pix_count=0`, CSID 54k–69k vs vendor 2.36M packets, camif error `0xd0`; b25 `buf_done` build untested).
+- `/dev/mem` absent.
+- SELinux blocks kernel state files under ROM Android.
+
+## Next Move
+1. Finish the NFC discovery/activation debug (trace discover NCI params, RF discover map, ISO-DEP activation, retry cadence) using the debug trace.
+2. Commit the docs restructure/archival/port/misc changes.
+3. Start the camera plan (`docs/plan-camera.md`).
+4. Defer the splash.
+
+## Relevant Files
+- `kruxport/kruxport/nfc.py`
+- `kruxport/kruxport/uhashlib_hw.py`
+- `kruxport/kruxport/hmac.py`
+- `kruxport/crypto_fast.c`
+- `kruxport/apply-micropython-port.sh`
+- `kruxport/build-micropython.sh`
+- `scripts/deploy-firmware.sh`
+- `tools/build-kernel.sh`
+- `rootfs/build-stub-ramdisk.sh`
+- `rootfs/make-boot-image.sh`
+- `krux/src/krux/camera.py`
+- `kruxport/kruxport/sensor.py`
+- `docs/*`
+
+## Important Context
+- Project: `/home/user/Develop/src/krux-nexus`. Submodules: `krux` (`nexus-port`), `micropython` (master `a3af47edc`, 1.30.0-dev), `linux` (`airgap/master-cleanup` `95f4b0f38ce`).
+- Device `0879524b0068abca`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; reboot via `adb reboot bootloader` + `fastboot boot /tmp/opencode/boot-stub-test.img`.
+- MicroPython has no `traceback` module (use `sys.print_exception`); builtin `hashlib` rejects `setattr` (inject through `sys.modules`); mbedtls is already linked by the unix port (add only `crypto_fast.c`).
