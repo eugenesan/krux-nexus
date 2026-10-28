@@ -35,6 +35,9 @@ cp "$HERE/qrcode_maixpy.c" "$TREE/ports/unix/qrcode_maixpy.c"
 cp "$HERE/qrcodegen.c" "$TREE/ports/unix/qrcodegen.c"
 cp "$HERE/qrcodegen.h" "$TREE/ports/unix/qrcodegen.h"
 
+# 1f. the mbedtls-backed crypto (fast PBKDF2 + sha512)
+cp "$HERE/crypto_fast.c" "$TREE/ports/unix/crypto_fast.c"
+
 # 2. ports/unix/Makefile: compile them
 python3 - "$TREE/ports/unix/Makefile" <<'PY'
 import sys
@@ -90,6 +93,35 @@ else:
     print("  ports/unix/Makefile: the input device module is already there")
 PY
 
+
+# 1g. ports/unix/Makefile: compile the crypto module and mbedtls.
+python3 - "$TREE/ports/unix/Makefile" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+if "crypto_fast.c" not in s:
+    marker = "\tmodtermios.c \\\n"
+    assert marker in s, "unix Makefile source list moved"
+    s = s.replace(marker, marker
+                  + "\tcrypto_fast.c \\\n", 1)
+    open(p, "w").write(s)
+    print("  ports/unix/Makefile: crypto + mbedtls sources added")
+else:
+    print("  ports/unix/Makefile: crypto already there")
+PY
+
+# 1h. ports/unix/Makefile: add mbedtls include path to CFLAGS.
+python3 - "$TREE/ports/unix/Makefile" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+if "lib/mbedtls/include" not in s:
+    s = s.replace("CFLAGS += -I.", "CFLAGS += -I. -I../../lib/mbedtls/include", 1)
+    open(p, "w").write(s)
+    print("  ports/unix/Makefile: mbedtls include path added")
+else:
+    print("  ports/unix/Makefile: mbedtls include path already there")
+PY
 
 # 2b. ports/unix/main.c: the C stack limit.
 #    The unix port allows only 40 KB of C stack, and the firmware's

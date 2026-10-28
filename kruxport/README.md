@@ -65,7 +65,7 @@ on the device.
 The **NFC protocol is already in Python** (`seedkeeper.py` does
 `import nfc` and calls `nfc.transport()`), so the phone side is an
 ISO-DEP reader over the BCM20793 on I2C bus 0 at 0x77. A real card is
-not needed to bring the transport up (see `standalone/README.md` §5).
+not needed to bring the transport up (see `docs/README.md` §5).
 
 ## The NFC transport (done, verified against a real card)
 
@@ -118,7 +118,7 @@ else sits on.
 
 ## The buildroot rootfs (the eventual runtime)
 
-`standalone/rootfs/buildroot.fragment` carries the rootfs's settings.
+`rootfs/buildroot.fragment` carries the rootfs's settings.
 What the build taught us:
 
 * `BR2_RELRO_FULL` **selects** `BR2_PIC_PIE`, so PIE could not be

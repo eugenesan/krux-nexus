@@ -41,9 +41,9 @@
 # tools/build-armel-sysroot.sh.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-V=1.28.0
-TAG=${TAG:-v$V}
-SRC=${SRC:-$HERE/../vendor/micropython}
+V=master
+TAG=${TAG:-HEAD}
+SRC=${SRC:-$HERE/../micropython}
 BUILD=${BUILD:-/tmp/opencode/mp-build}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
@@ -59,7 +59,7 @@ git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 || {
 
 # The tree we build: a worktree of the vendored checkout at $TAG.  It is
 # disposable -- the tag in the project is the source of truth.
-TREE="$BUILD/micropython-$V"
+TREE="$BUILD/micropython-port"
 mkdir -p "$BUILD"
 if [ ! -e "$TREE" ]; then
 	# a worktree that was deleted from under us leaves its registration
@@ -74,7 +74,7 @@ fi
 git -C "$TREE" submodule update --init lib/mbedtls lib/micropython-lib
 
 # 0. the port's own files
-sh "$HERE/apply-port.sh" "$TREE"
+sh "$HERE/apply-micropython-port.sh" "$TREE"
 
 # 1. the host tools, with the host compiler
 if [ ! -x "$TREE/mpy-cross/build/mpy-cross" ]; then

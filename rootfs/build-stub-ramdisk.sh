@@ -34,7 +34,7 @@
 #   ./build-stub-ramdisk.sh [--force] [TWRP.img]
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
 FORCE=""
 [ "${1:-}" = "--force" ] && { FORCE=1; shift; }
 TWRP_IMG=${1:-$ROOT/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img}
@@ -72,7 +72,7 @@ cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
 # frame message against the firmware's stripe base, and the chromatrix
 # the camera sends has 5 stripes and 266 words, which is
 # 130 + 27*5 + 1 = 266 -- firmware 1.2.0.
-CPP_FW="$ROOT/standalone/cam/fw/cpp_firmware_v1_2_0.fw"
+CPP_FW="$ROOT/cam/fw/cpp_firmware_v1_2_0.fw"
 if [ -f "$CPP_FW" ]; then
 	mkdir -p "$WORK/rd/lib/firmware"
 	cp "$CPP_FW" "$WORK/rd/lib/firmware/cpp_firmware_v1_2_0.fw"

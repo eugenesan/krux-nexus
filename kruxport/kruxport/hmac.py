@@ -11,6 +11,10 @@ and `HMAC(key, msg=None, digestmod=None)`, with `update`, `digest`,
 """
 
 import hashlib
+try:
+    import crypto_fast as _cf
+except Exception:
+    _cf = None
 
 
 def _digest_size(digestmod):
@@ -22,12 +26,32 @@ class HMAC:
     """The keyed hashing (RFC 2104)."""
 
     def __init__(self, key, msg=None, digestmod=None):
+        # embit passes the hash as a name ("sha256", "sha512", ...)
+        if isinstance(digestmod, str):
+            name = digestmod
+            try:
+                import uhashlib_hw
+                if name == "sha512":
+                    digestmod = uhashlib_hw._FastSHA512 if hasattr(uhashlib_hw, "_FastSHA512") else (uhashlib_hw.sha512 if hasattr(uhashlib_hw, "sha512") else None)
+                elif name == "sha256":
+                    digestmod = hashlib.sha256
+                elif name == "sha1":
+                    digestmod = hashlib.sha1
+                else:
+                    digestmod = getattr(hashlib, name)
+            except Exception:
+                digestmod = getattr(hashlib, name, hashlib.sha256)
         if digestmod is None:
             digestmod = hashlib.sha256
 
         self.digestmod = digestmod
-        self.block_size = 64
+        # sha512 uses 128-byte blocks
+        try:
+            self.block_size = 128 if getattr(digestmod, "block_size", 64) == 128 or digestmod in (uhashlib_hw.sha512,) else 64
+        except Exception:
+            self.block_size = 64
         self._outer = self._inner = None
+        self._fed = bytearray()
 
         if isinstance(key, str):
             key = key.encode()
@@ -46,6 +70,7 @@ class HMAC:
     def update(self, msg):
         if isinstance(msg, str):
             msg = msg.encode()
+        self._fed.extend(msg)
         self._inner.update(msg)
 
     def digest(self):
@@ -67,7 +92,9 @@ class HMAC:
         other._key = self._key
         other._ipad = self._ipad
         other._opad = self._opad
-        other._inner = self._inner.copy()
+        other._fed = bytearray(self._fed)
+        other._inner = self.digestmod(self._ipad)
+        other._inner.update(bytes(self._fed))
         return other
 
 

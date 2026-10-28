@@ -108,7 +108,14 @@ class Touch:
         self.y_regions = []
 
         self.fd = evdev.open(board.config["krux"]["pins"]["TOUCH_IRQ"])
+        # the firmware's settings page calls touch.touch_driver.threshold(...);
+        # there is no hardware threshold on this port, so provide a no-op
+        self.touch_driver = self
         _debug("Touch created on %s" % board.config["krux"]["pins"]["TOUCH_IRQ"])
+
+    def threshold(self, value):
+        # no-op: evdev has no hardware threshold
+        return
 
     # ------------------------------------------------------------------
     # the regions the menu draws its items in

@@ -19,14 +19,14 @@
 #   ./make-boot-image.sh [TEMPLATE.img] [KERNEL] [OUT.img]
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
-TEMPLATE=${1:-$ROOT/standalone/rootfs/stock/boot-ourkern-clean-twrp.img}
+ROOT="$(cd "$HERE/.." && pwd)"
+TEMPLATE=${1:-$ROOT/rootfs/stock/boot-ourkern-clean-twrp.img}
 # The kernel the shipped boot-stub.img pairs with.  It is NOT the same
 # one the current kernel build produces: this is the kernel that was
 # flashed and verified with the stub, so it is kept next to the image
 # rather than rebuilt.
-KERNEL=${2:-$ROOT/standalone/rootfs/stock/kernel-stub}
-OUT=${3:-$ROOT/standalone/rootfs/stock/boot-stub.img}
+KERNEL=${2:-$ROOT/rootfs/stock/kernel-stub}
+OUT=${3:-$ROOT/rootfs/stock/boot-stub.img}
 RAMDISK=$HERE/stock/ramdisk-stub
 WORK=${WORK:-/tmp/opencode/boot-stub}
 
