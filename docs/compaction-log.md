@@ -958,3 +958,96 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - Project: `/home/user/Develop/src/krux-nexus`. Submodules: `krux` (`nexus-port`), `micropython` (master `a3af47edc`, 1.30.0-dev), `linux` (`airgap/master-cleanup` `95f4b0f38ce`).
 - Device `0879524b0068abca`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; reboot via `adb reboot bootloader` + `fastboot boot /tmp/opencode/boot-stub-test.img`.
 - MicroPython has no `traceback` module (use `sys.print_exception`); builtin `hashlib` rejects `setattr` (inject through `sys.modules`); mbedtls is already linked by the unix port (add only `crypto_fast.c`).
+
+## 2026-10-28 01:12:24 UTC - session compaction (manual)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware (MicroPython port) fully working on the LG Nexus 5 (hammerhead) air-gapped device: fix device issues, then the camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem/Wi-Fi/BT; no privileged/signature permissions; revertible by reflash; adb is the only debug channel.
+- Minimize changes to upstream Krux so they can merge upstream; prefer port-level shims over firmware edits.
+- All documentation except basic README goes in `docs/`; archived docs in `docs/archive/`.
+- Use file prefixes (`status-*`, `build-*`) for most docs; `reference/` and `archive/` keep plain names.
+- Krux-Nexus has a single branch (`master`) with all files on it.
+- Android-related work can be dropped; "recovery" means deploying MicroPython+Krux inside TWRP ramdisk.
+- Builds must use `/tmp/opencode` for object/build outputs (tmpfs, avoids SSD wear).
+- Kernel image must be `zImage-dtb`; `fastboot boot` for tests (no flash) unless explicitly requested.
+- Prefer building from source and disassembly over guessing; deducible fixes only.
+- Do not touch `docs/standalone-log.md` / `docs/compaction-log.md` contents except appending new compaction events.
+- `docs/continue-prompt.md` to be refreshed later (deferred).
+- Ask the user explicitly (prefix `\7`/BEL) whenever their physical action on the device is required.
+- User invites objections with reasoning for any request.
+
+## Decisions
+- Keep **MicroPython**, not MaixPy (reasoning in `docs/standalone-log.md` Entry 12).
+- Canonical port sources live in the submodules: Python in `krux/src/` (+ `krux/src/krux/`), C in `micropython/ports/unix/` (`krux` branch `nexus-port`, `micropython` `master`).
+- `kruxport/` holds only build output (`micropython-arm32`, gitignored) + README; build scripts in `scripts/` (`scripts/build/`).
+- `tools/` = reusable build/config helpers; `scripts/` = build drivers + device probes; dead scripts in `scripts/archive/<topic>/`.
+- No binary libsecp256k1: `secp256k1.py` is embit's pure-Python fallback.
+- `crypto_fast` C module (mbedtls) replaces slow pure-Python sha512/PBKDF2; `hashlib.sha256` stays native.
+- Camera postponed until NFC/UI/crypto fixed; plan exists (`docs/plan-camera.md`).
+- NFC discovery: do **not** send `RF_DEACTIVATE` + second routing/discover round (it turns RF field off and it never returns); rely on bring-up's single `RF_DISCOVER`, accept status `0x06` as "already active".
+
+## Work State
+### Completed
+- Repo restructure (kernel/MicroPython/stub ramdisk builds verified); device boots our firmware via `fastboot boot /tmp/opencode/boot-stub-test.img`; adb state `recovery`, uid 0.
+- Fixed: About QR, crypto (`crypto_fast` sha512/PBKDF2/HMAC), hmac shim, Vol+/Vol−, brightness, tamper check, mnemonic creation, NFC transport imports/auto-connect, MaixPy shims.
+- Port C modules committed in `micropython` (`dc5042bab`); Krux port commits in `krux` (NFC discovery, tag notification, 2-byte OID-6).
+- Layout consolidation: duplicates removed from `kruxport/`; `apply-micropython-port.sh` deleted; `test_nfc.py` → `scripts/nfc-test.py`; `build-micropython.sh` → `scripts/build/build-micropython.sh` (fixed `SRC`/`OUT`/sysroot paths); `build-airgap-unused-ports-minimal.sh` → `scripts/archive/misc/`; stale `scripts/build/build-mpy.sh` removed.
+- Docs updated and committed: `cce78bc` (script moves/layout/READMEs, gitlinks), `235032b` (`docs/plan-camera.md`).
+- NFC now works end-to-end through activation and APDUs:
+  - Bring-up succeeds; discovery finds and activates the SeedKeeper (`RF_INTF_ACTIVATED_NTF` with card name `PVJCOP4SID`).
+  - AID SELECT `00 A4 04 00 0A "SeedKeeper"` returns a 13-byte data payload + `9000`; `B0 3C 00 00` (GET_STATUS) also returns `9000` with the same 13 bytes.
+  - VERIFY_PIN `B0 42 00 00 06 "123456"` fails: chip sends `CORE_INTERFACE_ERROR_NTF` (`10 60 08 02 b2 00`), status `0xB2` = `RF_TIMEOUT_EXCEPTION`; card then stops answering subsequent SELECTs.
+  - Error shown by app: "communication failed: the card did not answer", after a few seconds, even without a fresh tap.
+- `_data`/`_activate` patched on device: recognises `RF_DISCOVER_NTF` (OID 3), builds SELECT params from it, checks buffered notifications, 2 s per-APDU timeout.
+
+### Active
+- Diagnose/fix `RF_TIMEOUT_EXCEPTION` on the VERIFY_PIN APDU (card likely slow due to on-card PBKDF2; official Android app may extend the transceive timeout).
+- Checked NFA code: `nfa_dm_set_total_duration()` (`nfa_dm_discover.c:409`, param `NFC_PMID_TOTAL_DURATION`) — general lead for discovery timing, not yet tied to ISO-DEP RF timeout.
+- Need to determine how Android/libnfc-nci extends the ISO-DEP/RF timeout (`IsoDep.setTimeout`) and whether to replay it (parameter/config or host retry policy).
+
+### Blocked
+- Camera: MaixPy `sensor` API gap over V4L2; kernel-side camera backlog (`bytesused=0`/`pix_count=0`, CSID packet counts, `camif error status: 0xd0`, b25 buf_done untested).
+- `/dev/mem` absent; SELinux blocks kernel-side state files under ROM Android.
+- Splash: framebuffer renders but `MSMFB_DISPLAY_COMMIT` + `FBIOPAN_DISPLAY` do not flip panel (deferred).
+
+## Next Move
+1. In the HAL/stack sources, find how the NFCC's ISO-DEP RF timeout is configured/extended (Android `IsoDep.setTimeout` path); implement the equivalent in `krux/src/nfc.py` if it is an NCI config, or verify whether a longer host timeout suffices.
+2. If no config path: test with a deliberately wrong PIN to see whether the card answers at all (expect `9C02`); compare with the ROM/vendor stack capturing the same VERIFY_PIN on our logging kernel.
+3. Handle `CORE_INTERFACE_ERROR`/`0xB2` explicitly in `_data` (distinct error), and re-activate/re-discover after link loss instead of blindly retrying APDUs.
+4. Commit `krux/src/nfc.py` changes (discovery/activation/link-error fixes) with a clear message.
+5. After NFC: start camera Phase A per `docs/plan-camera.md`; refresh `docs/continue-prompt.md`; defer splash.
+
+## Relevant Files
+- `krux/src/nfc.py`: NFC transport; bring-up, discovery, activation, `_data`; `DEBUG=1`.
+- `krux/src/krux/seedkeeper.py`: APDU protocol/status words (`INS_VERIFY_PIN=0x42`, `INS_GET_STATUS=0x3C`).
+- `micropython/ports/unix/nfc_bcm2079x.c`: `_nfc` C module (open/power/wake/read/write).
+- `phase0/libnfc-nci-20791b05.conf`: vendor `NFA_DM_START_UP_CFG` (matches our replayed config, incl. `B5:03:01:02:FF`).
+- `nfc/halimpl/hal/nfc_hal_nci.c`, `nfc/halimpl/hal/nfc_hal_dm_cfg.c`: vendor HAL config/NCI message handling.
+- `nfc/stack/nfa/dm/nfa_dm_discover.c`: NFA discovery, `nfa_dm_set_total_duration`, FWI config.
+- `docs/cam-state.md`: captured vendor NFC bring-up/activation trace.
+- `docs/nfc-isodep.md`, `docs/nfc-transport.md`: NFC design/status references.
+- `docs/plan-camera.md`: camera completion plan.
+- `docs/build-guide.md`, `docs/directories.md`, `docs/scripts-triage.md`, `scripts/README.md`, `kruxport/README.md`: updated layout/build docs.
+- `scripts/build/build-micropython.sh`: firmware build (output `kruxport/micropython-arm32`).
+- `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts service.
+- `/tmp/opencode/nfc_listen2.py`: passive NFC probe with discovery/activation/APDU logging.
+- `/tmp/opencode/fw_app2.log`: latest app packet log (activation + APDU + `0xB2` failure).
+
+## Important Context
+- Project dir: `/home/user/Develop/src/krux-nexus`; submodules `krux` (`nexus-port`), `micropython` (`master`), `linux` (`airgap/master-cleanup`).
+- Device `0879524b0068abca`; currently running our firmware; restart only via `adb reboot bootloader` + `fastboot boot /tmp/opencode/boot-stub-test.img`.
+- Deploy: `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; firmware log `/data/krux/fw.log` (truncated on service start); `setprop ctl.stop/start krux`.
+- Stopping the `krux` service blanks the screen (panel stays lit); restarting brings touch/panel back after ~10 s.
+- Only one process can usefully use `/dev/bcm2079x`: a background listener and the app steal each other's packets. Kill the listener (`ps | grep micropython`, `kill <pid>`) before app tests.
+- NCI notes: `0x68` = CORE notification; `10 60 06 03 01 00 01` = credits (normal, appears after every APDU); `10 60 08 02 b2 00` = `CORE_INTERFACE_ERROR_NTF` status `0xB2` = `RF_TIMEOUT_EXCEPTION`.
+- `RF_FIELD_INFO_NTF` is `10 61 07 01 00` (field OFF); field never turned ON after the old deactivate+rediscover path.
+- Vendor trace: tag activation `RX 10 61 06 02 01 00` → `TX 10 21 04 03 01 04 02` → `RX 10 41 04 01 00` → `RX 10 61 05 ...`; APDU out as `10 00 00 <len> <apdu>`, response `10 00 00 <len> <data><SW1><SW2>`.
+- MicroPython: no `traceback` (use `sys.print_exception`); builtin `hashlib` rejects `setattr`; `raise ... from` prints "Warning: exception chaining not supported".
+- Build firmware: `bash scripts/build/build-micropython.sh` (~3 min, `BUILD=/tmp/opencode/mp-build`).
+
+* Follow-up after this compaction: the `0xB2` diagnosis was narrowed down the same day — the card's status says `needs_secure_channel = 1` and the applet rejects all plaintext instructions except GET_STATUS with `0x9C20`, so simple PIN verification cannot work on this stock card. The port now names the NCI interface error and reconnects after link loss. Details, sources and the open "silence instead of 0x9C20" question are in `docs/nfc-isodep.md` ("Status 2026-10-28").

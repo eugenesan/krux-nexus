@@ -167,3 +167,181 @@ E. SeedKeeper                       (seedkeeper.py)           — reuse
 
 A is the only one still blocked on work, and its remaining pieces are sourced.
 B–D are the "ISO-DEP layer" proper, and none of them is reverse engineering.
+
+---
+
+## Status 2026-10-28 — the layer works; the card needs a secure channel
+
+This section is the measured outcome, not the plan above.  The bring-up,
+discovery, activation and NCI data plane are **all working on the device**
+against a real SeedKeeper JavaCard.  The first command that exercises the
+card's applet, however, ends the RF link, and the card's own status shows
+why the current plaintext protocol cannot finish the job on a stock card.
+
+### What works, end to end
+
+The chip is brought up with the vendor's replayed sequence (power cycle,
+`GET_BUILD_INFO`, `CORE_RESET`, `CORE_INIT`, the `SET_CONFIG`s, routing and
+`RF_DISCOVER`).  `RF_DISCOVER` (GID RF, OID 3) starts the poll and the chip
+then activates the card by itself:
+
+```
+[tx]  10 21 03 0f 07 00 01 01 01 02 01 80 01 06 01 74 01 77 01   RF_DISCOVER
+[rsp] 10 41 03 01 06                                             (6 = already active)
+[ntf] 10 61 05 26 01 02 04 00 ff 01 0c 48 00 07 04 31 55 6a 99 15 90 01 20
+                  00 00 00 0f 0e 78 77 71 02 50 56 4a 43 4f 50 34 53 49 44
+```
+
+`10 61 05 26` is `RF_INTF_ACTIVATED_NTF` (MT_NTF | GID_RF, OID 5, 38 bytes).
+The payload starts with discovery id `01`, interface `02` and protocol `04`
+(both ISO-DEP), technology/mode `00` (NFC-A passive), max data payload
+`ff` and one initial credit.  The tail contains `0E 78 77 71 02` followed by
+the ASCII historical bytes `PVJCOP4SID`.  Read as an ATS (TL `0E`, T0 `78`,
+TA `77`, TB `71`, TC `02`), TB gives `FWI = 7` and `SFGI = 1`; the card is a
+JCOP4 JavaCard.
+
+The APDU plane is exactly the vendor's:
+
+```
+out:  10 00 00 <len> <apdu>
+in:   10 00 00 <len> <response data> <SW1> <SW2>
+```
+
+Observed exchange:
+
+```
+[data tx] 10 00 00 0f 00 a4 04 00 0a 53 65 65 64 4b 65 65 70 65 72   SELECT AID "SeedKeeper"
+[data rx] 10 60 06 03 01 00 01                                       CORE_CONN_CREDITS_NTF
+[data rx] 10 00 00 0f 00 02 00 01 05 01 00 00 00 01 01 01 00 90 00
+[data tx] 10 00 00 04 b0 3c 00 00                                    GET_STATUS
+[data rx] 10 60 06 03 01 00 01
+[data rx] 10 00 00 0f 00 02 00 01 05 01 00 00 00 01 01 01 00 90 00
+```
+
+`10 60 06 03 01 00 01` is `CORE_CONN_CREDITS_NTF` (destination type 1 = RF,
+connection 0, one credit), not a deactivate.  The 13-byte data body of both
+replies decodes exactly as the applet's `GetStatus`:
+
+| byte | value | meaning |
+|---|---|---|
+| 0–1 | `00 02` | card-edge protocol 0.2 |
+| 2–3 | `00 01` | SeedKeeper applet 0.1 |
+| 4 | `05` | PIN0 tries left |
+| 5 | `01` | PUK0 tries left |
+| 6–7 | `00 00` | PIN1 / PUK1 (unused) |
+| 8 | `00` | 2FA not used |
+| 9 | `01` | "seeded" flag (always 1 in this applet) |
+| 10 | `01` | setup done |
+| **11** | **`01`** | **needs secure channel** |
+| 12 | `00` | NFC policy enabled |
+
+The AID SELECT and the following GET_STATUS returned the same 13 bytes; only
+the latter is parsed, and it is a valid, self-consistent card status.
+
+### Where it stops: the PIN command
+
+The app then prompts for the PIN and sends `VERIFY_PIN`:
+
+```
+[data tx] 10 00 00 0b b0 42 00 00 06 31 32 33 34 35 36   B0 42 00 00 06 "123456"
+[data rx] 10 60 06 03 01 00 01                            CORE_CONN_CREDITS_NTF
+[data rx] 10 60 08 02 b2 00                               CORE_INTERFACE_ERROR_NTF
+```
+
+`10 60 08 02 b2 00` is GID CORE, OID `0x08` = `CORE_INTERFACE_ERROR_NTF`
+(AOSP `system/nfc/src/nci_packets.pdl`: `CORE_INTERFACE_ERROR = 0x8`), status
+`0xB2` = `RF_TIMEOUT_EXCEPTION`, connection 0.  No `MT_DATA` answer follows,
+and every later SELECT on the same activation gets no answer either: the
+NFCC has torn the RF link down.
+
+This is the **NFCC's** timeout, not the host's.  Android's `IsoDep.setTimeout`
+only widens a host-side wait (`NativeNfcTag.cpp`: `mTechnologyTimeoutsTable`
+and `sTransceiveEvent.wait(timeout)`); when the NFCC reports an interface
+error, `NFA_RW_INTF_ERROR_EVT` calls `nativeNfcTag_notifyRfTimeout()` and the
+application gets a timeout immediately.  A longer timeout in `nfc.py` can
+therefore never fix this.
+
+The obvious "the card is slow" explanation is also weak: the applet's
+`VerifyPIN` is just `OwnerPIN.check(...)` (source lines 2756–2788); the
+expensive PBKDF2 work is in setup/import, not in PIN verification.  A stock
+SeedKeeper should answer that command in milliseconds.
+
+### The real blocker: this card requires the secure channel
+
+The stock SeedKeeper applet (`Toporin/Seedkeeper-Applet`, tag `v0.2-0.1`,
+which is exactly protocol 0.2 / applet 0.1) has
+`needs_secure_channel = true`.  Its `process()` rejects every instruction
+except `GET_STATUS` (`0x3C`), `INIT_SECURE_CHANNEL` (`0x81`) and
+`PROCESS_SECURE_CHANNEL` (`0x82`) with `SW_SECURE_CHANNEL_REQUIRED`
+(`0x9C20`):
+
+```java
+// only 3 commands are allowed, the others must be wrapped in a secure channel command
+if (ins == INS_GET_STATUS) { ... }
+else if (ins == INS_INIT_SECURE_CHANNEL) { ... }
+else if (ins == INS_PROCESS_SECURE_CHANNEL) { ... }
+else if (needs_secure_channel) {
+    ISOException.throwIt(SW_SECURE_CHANNEL_REQUIRED);
+}
+```
+
+Byte 11 of the card status confirms `needs_secure_channel = 1`.  So even
+with a perfect RF link, **plaintext `VERIFY_PIN`, import and export cannot
+work on this card**.  The expected reply to our plaintext VERIFY is
+`9C20`, not silence; that discrepancy is the open question (see below).
+
+`pysatochip` (the reference library) handles this automatically: on
+`SW1=0x9C` / `SW2=0x20..0x23` it calls `card_initiate_secure_channel()`
+(INS `0x81`), derives the session, and wraps subsequent commands as INS
+`0x82` (`CardConnector.py`, `card_transmit` / `card_encrypt_secure_channel`).
+The Krux module explicitly implements **only the plaintext flows**.
+
+Implementing the secure channel in the port would need:
+
+* a P-256 keypair and ECDH on the host (embit's pure-Python `ec` can do
+  this; it must produce the same uncompressed point format the card expects);
+* HMAC-SHA160 for the session/MAC keys and the message MAC — mbedtls in
+  `crypto_fast` has SHA-1, so this is a small C addition;
+* AES-128-CBC for the command/response bodies (also mbedtls, not currently
+  exposed by `crypto_fast`);
+* the IV counter rules and the card's `0x81` response parsing/verification.
+
+That is a separate feature, not an NFC-transport bug, and it is not started.
+
+### Why the PIN command goes silent
+
+Three candidates, in order of likelihood:
+
+1. **The card moved and the link died.**  `0xB2` is the NFCC's own
+   no-response timeout; a card that shifts off the antenna produces exactly
+   this.  The next test must keep the card flat on the phone for the whole
+   PIN prompt and command.
+2. **The card mutes on the gated command.**  Nothing in the applet source
+   suggests it (it throws `9C20`), but the installed applet could be a
+   modified build.
+3. **A card/firmware timing quirk** that produces the timeout before the
+   `9C20` status is sent.
+
+The new port build (2026-10-28) makes the next test decisive: `_data()` now
+recognises `CORE_INTERFACE_ERROR`/`0xB2`, prints timestamps, marks the link
+dead and raises a named error instead of waiting out the host timeout;
+`connect()` closes a stale node and re-brings-up the chip on the next
+transmit.  If the card answers `9C20`, the transport is correct and the
+remaining work is the secure channel.  If it still times out with the card
+held still, we probe individual instructions (`0xA7`, malformed `0x42`) to
+separate "card mutes on gated commands" from "link drops on the third APDU".
+
+### Port changes made for this
+
+* `krux/src/nfc.py`
+  * `_data()`: 5 s host timeout; understands `CORE_INTERFACE_ERROR`
+    (0x08), `CORE_GENERIC_ERROR` (0x07) and RF `RF_DEACTIVATE`; maps status
+    0xB2/0xB0/0xB1/0xB3 to readable errors and marks the transport
+    disconnected on link loss.
+  * `_dbg()`: every packet is timestamped (milliseconds), so the difference
+    between an immediate NFCC error and a real timeout is visible in
+    `/data/krux/fw.log`.
+  * `connect()`: closes a chip left open by a failed attempt before
+    power-cycling it again.
+* `krux/src/krux/seedkeeper.py`: `0x9C20` now reads
+  "Secure channel required".
