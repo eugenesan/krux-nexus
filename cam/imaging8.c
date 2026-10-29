@@ -405,7 +405,7 @@ static const struct imx179_reg stream_off_regs[] = { { 0x0100, 0x00, 0 } };
  * geometry, and only then 0x0100 = 1 to start streaming.  Writing the
  * mode table alone leaves the sensor silent on the MIPI link.
  */
-static int use_vendor_sensor_seq = 1;
+static int use_vendor_sensor_seq = 0;
 
 /*
  * Program the sensor from the register list that was read out of the
@@ -1059,7 +1059,8 @@ static int isp_start(void)
 	/* The CPP: it sits between the ISP and memory, and the camera2
 	 * HAL hands it the chromatrix as a frame message.  Without it
 	 * the ISP's output never leaves the CPP. */
-	{
+	if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
+	    isp_stream_src == CAMIF_RAW) {
 		struct msm_camera_v4l2_ioctl_t io;
 		struct msm_cpp_frame_info_t frame;
 		int32_t cpp_status = 0;
@@ -1306,7 +1307,8 @@ static void *server_thread(void *arg)
 			sensor_dump_regs("after programming");
 			break;
 		case PRIV_STREAM_ON:
-			if (cpp_fw_path)
+			if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
+			    isp_stream_src == CAMIF_RAW)
 				cpp_load_firmware(cpp_fw_path);
 			/*
 			 * The ISP comes first, the sensor second.
@@ -1554,7 +1556,9 @@ static void *client_thread(void *arg)
 				       strerror(errno));
 		}
 
-		cpp_send_chromatrix();
+		if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
+		    isp_stream_src == CAMIF_RAW)
+			cpp_send_chromatrix();
 
 		if (replay_cycle)
 			isp_replay(cam_cycle, CAM_CYCLE_COUNT,
@@ -1564,12 +1568,24 @@ static void *client_thread(void *arg)
 			printf("[client] no frame after 5s\n");
 			continue;
 		}
-		memset(&buf, 0, sizeof(buf));
-		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-		buf.memory = V4L2_MEMORY_USERPTR;
-		if (ioctl(fd, VIDIOC_DQBUF, &buf) < 0) {
-			printf("[client] DQBUF: %s\n", strerror(errno));
-			continue;
+		{
+			struct v4l2_plane dqplanes[2];
+			memset(dqplanes, 0, sizeof(dqplanes));
+			memset(&buf, 0, sizeof(buf));
+			buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+			buf.memory = V4L2_MEMORY_USERPTR;
+			buf.m.planes = dqplanes;
+			buf.length = 2;
+			if (ioctl(fd, VIDIOC_DQBUF, &buf) < 0) {
+				printf("[client] DQBUF: %s\n", strerror(errno));
+				continue;
+			}
+			printf("[client] plane0: bytesused=%u length=%u data_offset=%u\n",
+			       dqplanes[0].bytesused, dqplanes[0].length,
+			       dqplanes[0].data_offset);
+			printf("[client] plane1: bytesused=%u length=%u data_offset=%u\n",
+			       dqplanes[1].bytesused, dqplanes[1].length,
+			       dqplanes[1].data_offset);
 		}
 		{
 			/* how often the frames come: with the CAMIF's
