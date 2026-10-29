@@ -12,7 +12,7 @@ cam/sensordump
 cam/camprobe*
 
 # micropython build
-kruxport/micropython-arm32
+rootfs/micropython-arm32
 
 # rootfs build artifacts
 rootfs/stock/
@@ -28,3 +28,6 @@ artifacts/
 __pycache__/
 
 sync.sh
+
+# local agent state
+.opencode/

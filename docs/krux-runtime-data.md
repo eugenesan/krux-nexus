@@ -67,7 +67,7 @@ take the partition table or the bootloader with it, and **the phone
 would not come back**.
 
 So the port provides its own `flash` module
-(`standalone/kruxport/kruxport/flash.py`), which is safe by
+(`krux/src/flash/__init__.py`), which is safe by
 construction:
 
 * it opens **no** block device and no device node at all -- it only

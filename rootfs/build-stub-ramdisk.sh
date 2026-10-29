@@ -31,14 +31,30 @@
 # replaced when --force is given.
 #
 # Usage:
-#   ./build-stub-ramdisk.sh [--force] [TWRP.img]
+#   ./build-stub-ramdisk.sh [--force] [--bundle] [TWRP.img]
+#
+# --bundle copies MicroPython, Krux and embit into /opt/krux in the
+# ramdisk, so the boot image carries a read-only firmware instead of
+# loading it from /data/krux.  The development deploy path still works:
+# the init stub prefers /opt/krux when it is present.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 FORCE=""
-[ "${1:-}" = "--force" ] && { FORCE=1; shift; }
+BUNDLE=${BUNDLE:-0}
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--force)  FORCE=1; shift ;;
+		--bundle) BUNDLE=1; shift ;;
+		*)        break ;;
+	esac
+done
 TWRP_IMG=${1:-$ROOT/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img}
-OUT="$HERE/stock/ramdisk-stub"
+if [ "$BUNDLE" = "1" ]; then
+	OUT=${OUT:-$HERE/stock/ramdisk-bundled}
+else
+	OUT=${OUT:-$HERE/stock/ramdisk-stub}
+fi
 WORK=${WORK:-/tmp/opencode/stub-ramdisk}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
@@ -79,6 +95,44 @@ if [ -f "$CPP_FW" ]; then
 	echo "  the camera's CPP firmware: $CPP_FW"
 else
 	echo "  !! no CPP firmware at $CPP_FW -- the camera cannot work" >&2
+fi
+
+# 3c. the read-only firmware, when asked for.
+#
+# The production boot image can carry the interpreter and the Python
+# tree itself, so /data/krux is not needed for the firmware at all.
+# The init stub checks /opt/krux first and falls back to /data/krux,
+# which keeps the adb deploy path working during development.
+if [ "$BUNDLE" = "1" ]; then
+	BUNDLE_DIR="$WORK/rd/opt/krux"
+	MICROPYTHON="$ROOT/rootfs/micropython-arm32"
+	KRUX_SRC="$ROOT/krux/src"
+	EMBIT_SRC="$ROOT/krux/vendor/embit/src/embit"
+
+	[ -x "$MICROPYTHON" ] || {
+		echo "  !! no MicroPython at $MICROPYTHON" >&2
+		echo "     build it with scripts/build/build-micropython.sh" >&2
+		exit 1
+	}
+	[ -f "$KRUX_SRC/boot.py" ] || {
+		echo "  !! no Krux entry point at $KRUX_SRC/boot.py" >&2
+		exit 1
+	}
+	[ -d "$EMBIT_SRC" ] || {
+		echo "  !! no embit at $EMBIT_SRC" >&2
+		exit 1
+	}
+
+	rm -rf "$BUNDLE_DIR"
+	mkdir -p "$BUNDLE_DIR/krux" "$BUNDLE_DIR/flash" "$BUNDLE_DIR/embit"
+	cp "$MICROPYTHON" "$BUNDLE_DIR/micropython"
+	chmod 755 "$BUNDLE_DIR/micropython"
+	cp "$KRUX_SRC"/*.py "$BUNDLE_DIR/"
+	cp -R "$KRUX_SRC/krux/." "$BUNDLE_DIR/krux/"
+	cp -R "$KRUX_SRC/flash/." "$BUNDLE_DIR/flash/"
+	cp -R "$EMBIT_SRC/." "$BUNDLE_DIR/embit/"
+	find "$BUNDLE_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
+	echo "  the read-only firmware: $BUNDLE_DIR ($(du -sh "$BUNDLE_DIR" | cut -f1))"
 fi
 
 # 4. repack to a scratch file, and compare it with what ships

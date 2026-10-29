@@ -1051,3 +1051,670 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - Build firmware: `bash scripts/build/build-micropython.sh` (~3 min, `BUILD=/tmp/opencode/mp-build`).
 
 * Follow-up after this compaction: the `0xB2` diagnosis was narrowed down the same day — the card's status says `needs_secure_channel = 1` and the applet rejects all plaintext instructions except GET_STATUS with `0x9C20`, so simple PIN verification cannot work on this stock card. The port now names the NCI interface error and reconnects after link loss. Details, sources and the open "silence instead of 0x9C20" question are in `docs/nfc-isodep.md` ("Status 2026-10-28").
+## 2026-10-28 01:14:49 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware (MicroPython port) fully working on the LG Nexus 5 (hammerhead) air-gapped device: fix device issues, then the camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem/Wi-Fi/BT; no privileged/signature permissions; revertible by reflash; adb is the only debug channel.
+- Minimize changes to upstream Krux so they can merge upstream; prefer port-level shims over firmware edits.
+- All documentation except basic README goes in `docs/`; archived docs in `docs/archive/`; use `status-*`/`build-*` prefixes except in `reference/`/`archive/`.
+- Single `master` branch with all files on it.
+- Android-related work can be dropped; "recovery" means deploying MicroPython+Krux inside TWRP ramdisk.
+- Builds must use `/tmp/opencode` for object/build outputs; kernel image must be `zImage-dtb`; `fastboot boot` for tests (no flash) unless explicitly requested.
+- Prefer building from source/disassembly over guessing; deducible fixes only.
+- Do not touch `docs/standalone-log.md` / `docs/compaction-log.md` except appending new compaction events.
+- `docs/continue-prompt.md` refresh deferred.
+- Ask the user explicitly (prefix `\7`/BEL) whenever physical action on the device is required.
+- User invites objections with reasoning.
+
+## Decisions
+- Keep **MicroPython**, not MaixPy; canonical port sources in submodules (`krux/src/`, `micropython/ports/unix/`).
+- `kruxport/` holds only build output; build scripts in `scripts/`; `tools/` = reusable helpers.
+- No binary libsecp256k1: pure-Python `secp256k1.py` fallback.
+- `crypto_fast` (mbedtls) replaces slow pure-Python sha512/PBKDF2/HMAC; `hashlib.sha256` stays native.
+- Camera postponed until NFC/UI/crypto fixed.
+- NFC discovery: do **not** send `RF_DEACTIVATE` + second routing/discover round; rely on bring-up's single `RF_DISCOVER`, accept status `0x06` as "already active".
+- Android `IsoDep.setTimeout` is host-side only; it cannot override the NFCC's `RF_TIMEOUT_EXCEPTION`, so a longer `nfc.py` timeout is not the fix.
+- Stock SeedKeeper cards require the secure channel; Krux's plaintext-only `seedkeeper.py` cannot complete PIN/import/export on this card without a new secure-channel implementation.
+
+## Work State
+### Completed
+- Repo restructure and all builds verified; device boots our firmware via `fastboot boot /tmp/opencode/boot-stub-test.img`; adb uid 0.
+- Fixed: About QR, crypto (`crypto_fast` sha512/PBKDF2/HMAC), hmac shim, Vol+/Vol−, brightness, tamper check, mnemonic creation, NFC transport imports/auto-connect, MaixPy shims.
+- NFC bring-up, discovery and activation now work end-to-end: card activates as `PVJCOP4SID`; AID SELECT and `B0 3C 00 00` (GET_STATUS) both return `90 00` with the same 13-byte status.
+- Decoded card status: protocol 0.2, applet 0.1, PIN0 tries 5, PUK0 1, setup done, **`needs_secure_channel=1`**, NFC policy enabled.
+- Identified `VERIFY_PIN` failure: `10 60 08 02 b2 00` = `CORE_INTERFACE_ERROR_NTF`, status `0xB2` = `RF_TIMEOUT_EXCEPTION`; no data reply, card then stops answering.
+- Verified from `Toporin/Seedkeeper-Applet` v0.2-0.1 that plaintext instructions other than `0x3C`/`0x81`/`0x82` get `SW_SECURE_CHANNEL_REQUIRED (0x9C20)`; `VerifyPIN` is just `OwnerPIN.check`, so on-card PBKDF2 is not the cause.
+- Patched `krux/src/nfc.py`: timestamped debug; `_data()` recognizes `CORE_INTERFACE_ERROR`/`CORE_GENERIC_ERROR`/`RF_DEACTIVATE`, names `0xB2`, marks link dead, 5 s timeout; `connect()` closes stale node before reopening.
+- Added `0x9C20: "Secure channel required"` to `krux/src/krux/seedkeeper.py`.
+- Deployed and restarted the firmware on the device.
+- Appended the latest compaction event to `docs/compaction-log.md`.
+- Added a detailed `Status 2026-10-28` section to `docs/nfc-isodep.md` covering the working trace, status decode, RF timeout, secure-channel requirement, and open questions.
+- Changes to `krux/src/nfc.py`, `krux/src/krux/seedkeeper.py`, `docs/nfc-isodep.md`, `docs/compaction-log.md` are **uncommitted**.
+
+### Active
+- Awaiting user device test with the SeedKeeper held flat over the camera area for the whole PIN operation, to see whether the card now returns `9C20` or still reports the RF timeout.
+- Need to determine whether the observed silence is link loss (card moved) or the card muting on gated commands.
+
+### Blocked
+- SeedKeeper on this stock card: plaintext-only protocol cannot work because `needs_secure_channel=1`; secure-channel support (INS `0x81`/`0x82`) is not implemented.
+- Camera: MaixPy `sensor` API gap over V4L2; kernel-side camera backlog (`bytesused=0`/`pix_count=0`, CSID packet counts, `camif error status: 0xd0`, b25 buf_done untested).
+- `/dev/mem` absent; SELinux blocks kernel-side state files under ROM Android.
+- Splash: framebuffer renders but `MSMFB_DISPLAY_COMMIT` + `FBIOPAN_DISPLAY` do not flip the panel (deferred).
+
+## Next Move
+1. Inspect the fresh `/data/krux/fw.log` after the user's held-card test; confirm whether `VERIFY_PIN` yields `9C20` or remains silent.
+2. If `9C20`: decide with the user whether to implement SeedKeeper secure channel (P-256 ECDH, HMAC-SHA160 session/MAC keys, AES-128-CBC, IV counters, INS `0x81`/`0x82`); would need AES/SHA1 exposed in `crypto_fast` and EC via embit.
+3. If still silent: probe individual APDUs (`B0 A7 00 00`, malformed `B0 42 00 00 00`) with timestamps to distinguish card muting from RF link loss.
+4. Commit the `nfc.py`/`seedkeeper.py`/docs changes with a clear message.
+5. After NFC: start camera Phase A per `docs/plan-camera.md`; refresh `docs/continue-prompt.md`; defer splash.
+
+## Relevant Files
+- `krux/src/nfc.py`: transport, discovery/activation, `_data()` error handling/timeouts, reconnect logic; `DEBUG=1`.
+- `krux/src/krux/seedkeeper.py`: APDU protocol/status words (`0x3C`, `0x42`, `0x9C20`).
+- `docs/nfc-isodep.md`: new status section with full NFC trace, secure-channel findings, next tests.
+- `docs/compaction-log.md`: appended compaction event.
+- `docs/cam-state.md`: vendor bring-up/activation trace.
+- `phase0/libnfc-nci-20791b05.conf`: vendor `NFA_DM_START_UP_CFG` (`B5:03:01:02:FF`).
+- `micropython/ports/unix/nfc_bcm2079x.c`: `_nfc` C module (open/power/wake/read/write).
+- `/tmp/opencode/fw_app2.log`: latest app packet log (activation + APDU + `0xB2` failure).
+- `/tmp/opencode/SeedKeeper.java`: applet source used to prove secure-channel gating.
+- `/tmp/opencode/CardConnector.py`: pysatochip reference for auto secure-channel handling.
+- `scripts/build/build-micropython.sh`: firmware build (output `kruxport/micropython-arm32`).
+- `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts service.
+- `docs/plan-camera.md`: camera completion plan.
+
+## Important Context
+- Project dir: `/home/user/Develop/src/krux-nexus`; submodules `krux` (`nexus-port`), `micropython` (`master`), `linux` (`airgap/master-cleanup`).
+- Device `0879524b0068abca`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; firmware log `/data/krux/fw.log`; restart via `setprop ctl.stop/start krux`.
+- Stopping the `krux` service blanks the screen; restart restores touch/panel after ~10 s.
+- Only one process can usefully use `/dev/bcm2079x`; kill background listeners before app tests.
+- NCI packet meanings: `10 60 06 03 01 00 01` = `CORE_CONN_CREDITS_NTF`; `10 60 08 02 b2 00` = `CORE_INTERFACE_ERROR_NTF`/`0xB2`; `10 61 07 01 00` = `RF_FIELD_INFO_NTF`; `10 60 00 02 00 01` = `CORE_RESET_NTF`.
+- APDU framing: out `10 00 00 <len> <apdu>`, in `10 00 00 <len> <data><SW1><SW2>`.
+- Activation notification tail: ATS-like `0E 78 77 71 02` + ASCII `PVJCOP4SID`; TB `0x71` gives FWI=7, SFGI=1.
+- Secure channel protocol: INS `0x81` (client P-256 pubkey, card returns ephemeral key+sig), INS `0x82` (AES-128-CBC body + HMAC-SHA160, IV counter); reference `CardConnector.py`.
+- MicroPython: no `traceback` (use `sys.print_exception`); builtin `hashlib` rejects `setattr`; `raise ... from` prints "Warning: exception chaining not supported".
+
+## 2026-10-28 01:39:58 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware (MicroPython port) fully working on the LG Nexus 5 (hammerhead) air-gapped device: fix device issues, then the camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem/Wi-Fi/BT; no privileged/signature permissions; revertible by reflash; adb is the only debug channel.
+- Minimize changes to upstream Krux so they can merge upstream; prefer port-level shims over firmware edits.
+- Builds use `/tmp/opencode` for objects; kernel image must be `zImage-dtb`; `fastboot boot` for tests unless flashing is explicitly requested.
+- Ask the user explicitly (prefix `\7`/BEL) whenever physical action on the device is required.
+- “Recovery” means deploying MicroPython+Krux inside the TWRP ramdisk; Android-related work can be dropped.
+- Preserve `docs/standalone-log.md` / `docs/compaction-log.md` except for appending compaction events.
+
+## Decisions
+- Keep MicroPython (not MaixPy); canonical port sources are in `krux/src/` and `micropython/ports/unix/`.
+- `crypto_fast` (mbedtls) replaces slow pure-Python sha512/PBKDF2/HMAC; `hashlib.sha256` stays native.
+- NFC discovery needs the vendor’s second round: `RF_DISCOVER` → `RF_DEACTIVATE` → `RF_SET_ROUTING` → `RF_DISCOVER`.
+- But do **not** run that second round in bring-up when the initial poll may already have activated the card: it tears the session down before the first APDU.
+- Current sequence: bring-up sends one `RF_DISCOVER`; `_discover()` restarts with deactivate/routing/discover only after ~1 s without a tag.
+- `CORE_INTERFACE_ERROR` / `0xB2 RF_TIMEOUT_EXCEPTION` is terminal; the transport marks itself disconnected and reconnects on the next transmit.
+- The stock SeedKeeper applet requires the secure channel (`needs_secure_channel=1`); plaintext `VERIFY_PIN` cannot succeed even with a perfect link.
+- The card is not muting: it answers plaintext gated commands with `9C20` when they are sent promptly.
+- `IsoDep.setTimeout` is host-side only and cannot override the NFCC’s RF timeout.
+
+## Work State
+### Completed
+- Back-cover/antenna issue identified: the Nexus 5 NFC antenna is in the back cover; with the cover off the chip polled but never saw a card.
+- With the cover in place, activation now succeeds as `PVJCOP4SID`; SELECT and GET_STATUS work on some attempts.
+- Confirmed via raw probes that the card returns `9C20` for:
+  - unknown gated instruction with 0, 1, 2, 3, 4, 5, 6, 10 bytes
+  - `VERIFY_PIN` with 1, 2, 3, 4, 5, 6 bytes (including wrong 6-byte PIN `000000`)
+- All `9C20` replies arrived in ~8–13 ms; PIN tries remained 5, so the wrong PIN was not processed.
+- Reproduced the app failure: SELECT + GET_STATUS succeed, then the 6-byte `VERIFY_PIN` (`b0 42 00 00 06 "123456"`) is sent ~4.8 s after GET_STATUS and gets `0xB2` with no data.
+- `nfc.py` now names `CORE_INTERFACE_ERROR`, `CORE_GENERIC_ERROR`, `RF_DEACTIVATE`, and statuses `0xB0–0xB3`; adds timestamps and a 5 s APDU timeout; closes stale nodes on reconnect.
+- `seedkeeper.py` maps `0x9C20` to “Secure channel required”.
+- Docs and earlier fixes committed: `krux` `c7bf220c`, repo `b1d4562`.
+- Latest `nfc.py` discovery changes are deployed (device hash `64d4c4dc…`) but uncommitted.
+
+### Active
+- Testing whether the ISO-DEP session dies after a few seconds of idle time; the app’s PIN prompt leaves ~5 s between GET_STATUS and VERIFY.
+- `/tmp/opencode/nfc_idle_probe.py` is written but not yet pushed or run. It checks GET_STATUS at 0 s, 2 s, 5 s, 10 s, then 6-byte VERIFY_PIN.
+- If idle timeout is confirmed: add a reconnect/re-select or keepalive immediately before `verify_pin`.
+
+### Blocked
+- Actual SeedKeeper PIN/import/export still requires the secure channel (INS `0x81`/`0x82`); not implemented.
+- First APDU after activation is sometimes lost (`0xB2` on SELECT), indicating a marginal/intermittent RF link even with the cover on.
+- Camera: MaixPy `sensor` API gap over V4L2; kernel-side camera backlog (`bytesused=0`, `pix_count=0`, CSID/`camif error status: 0xd0`).
+- Splash: framebuffer renders but `MSMFB_DISPLAY_COMMIT` + `FBIOPAN_DISPLAY` do not flip the panel.
+
+## Next Move
+1. Push `/tmp/opencode/nfc_idle_probe.py` to `/data/krux/`, stop the `krux` service, run it with the card held, then restart the service.
+2. Read the first timeout after an idle gap; determine whether 2 s, 5 s, or 10 s kills the session.
+3. If confirmed, make the app re-select/reconnect after PIN entry (or keep the link alive during the prompt), then retest.
+4. Implement the SeedKeeper secure channel: fetch `Toporin/pysatochip` `SecureChannel.py`; needs P-256 ECDH, HMAC-SHA160, AES-128-CBC, IV counters, INS `0x81`/`0x82`.
+5. Update `docs/nfc-isodep.md` with the second-round regression, confirmed `9C20` gate, and idle-timeout finding; commit `nfc.py` and docs.
+6. After NFC, start camera Phase A per `docs/plan-camera.md`; defer splash.
+
+## Relevant Files
+- `krux/src/nfc.py`: transport, discovery/restart logic, activation, APDU timeout and link-error handling.
+- `krux/src/krux/pages/seedkeeper.py`: `_connect()` flow — SELECT, GET_STATUS, PIN prompt, `verify_pin`.
+- `krux/src/krux/seedkeeper.py`: APDU protocol, status words including `0x9C20`.
+- `docs/nfc-isodep.md`: NFC architecture and the “Status 2026-10-28” findings; now partly superseded.
+- `docs/cam-state.md`: vendor bring-up/activation trace and historical “second round required” note.
+- `/tmp/opencode/nfc_idle_probe.py`: idle-gap probe, written and ready to push/run.
+- `/tmp/opencode/nfc_len_probe.py`: length probe; all lengths returned `9C20`.
+- `/tmp/opencode/nfc_apdu_probe.py`: retrying SELECT/gated-command probe.
+- `/tmp/opencode/nfc_len_probe.out`: captured successful `9C20` results and status.
+- `/tmp/opencode/fw_pin_rf.log`: app log showing SELECT/GET_STATUS success and VERIFY `0xB2`.
+- `/tmp/opencode/SeedKeeper.java`: stock applet source; secure-channel gate and `VerifyPIN`.
+- `/tmp/opencode/CardConnector.py`: pysatochip secure-channel reference (`0x81`/`0x82` formats).
+- `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts the service.
+- `scripts/build/build-micropython.sh`: firmware build, output `kruxport/micropython-arm32`.
+- `docs/plan-camera.md`: camera completion plan.
+
+## Important Context
+- Device `0879524b0068abca`, adb state `recovery`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; firmware log `/data/krux/fw.log`; restart via `setprop ctl.stop/start krux`.
+- Only one process can use `/dev/bcm2079x`; stop `krux` before running probes and restart afterward.
+- Stopping `krux` blanks the screen; restart restores touch/panel after ~20 s.
+- APDU framing: out `10 00 00 <len> <apdu>`, in `10 00 00 <len> <data><SW1><SW2>`.
+- Activation trace: `10 61 05 26 01 02 04 00 ff 01 …`, ATS tail `0E 78 77 71 02` + `PVJCOP4SID`; TB `0x71` → FWI=7, SFGI=1.
+- Card status 13 bytes: protocol 0.2, applet 0.1, PIN0 tries 5, PUK0 1, setup done, `needs_secure_channel=1`, NFC policy enabled.
+- `10 60 06 03 01 00 01` = `CORE_CONN_CREDITS_NTF`; `10 60 08 02 b2 00` = `CORE_INTERFACE_ERROR_NTF` / `0xB2`.
+- The single-discovery variant produced endless `RF_DISCOVER` status `0x06` and no tag notifications; the restored second round produces `0x00` and polls normally.
+- Adding the second round in bring-up caused activation followed by `0xB2` on the first APDU; moving the restart into `_discover()` fixed that.
+- Raw probes sometimes fail at the first SELECT after activation; they retry SELECT until successful.
+- App’s failing APDU is `b0 42 00 00 06 31 32 33 34 35 36` (“123456”), ~4.8 s after GET_STATUS; expected reply is `9C20`.
+- Secure-channel request formats: `0x81` carries a 65-byte uncompressed P-256 public key; `0x82` carries `IV(16) | len(2) | ciphertext | len(2) | HMAC-SHA160(20)`.
+- MicroPython: no `traceback` (use `sys.print_exception`); `raise ... from` prints “Warning: exception chaining not supported”.
+- Build firmware with `bash scripts/build/build-micropython.sh` (~3 min, `BUILD=/tmp/opencode/mp-build`).
+
+## 2026-10-28 01:57:41 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware fully working on the LG Nexus 5 (hammerhead) as an air-gapped device: SeedKeeper NFC first, then camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem, Wi-Fi, Bluetooth, privileged permissions, or signature permissions; adb is the only debug channel; reflash must be reversible.
+- Minimize upstream Krux divergence; prefer port-level shims.
+- Build objects under `/tmp/opencode`; kernel image is `zImage-dtb`; use `fastboot boot` unless flashing is explicitly requested.
+- Ask explicitly with a BEL (`\7`) before any physical action on the device.
+- Preserve `docs/standalone-log.md` and `docs/compaction-log.md` except for appending compaction events.
+- For any PIN test use only `123456`; do not risk consuming PIN tries.
+
+## Decisions
+- Keep MicroPython, not MaixPy; port sources live in `krux/src/` and `micropython/ports/unix/`.
+- `crypto_fast`/mbedtls provides slow hashes and PBKDF2; `hashlib.sha256` remains native.
+- NFC discovery needs the vendor second round; current bring-up sends one `RF_DISCOVER` and `_discover()` restarts after ~1 s without a tag.
+- `CORE_INTERFACE_ERROR` / `0xB2` is terminal; transport marks itself disconnected and reconnects on the next transmit.
+- The stock SeedKeeper applet requires the secure channel; plaintext `VERIFY_PIN` returns `9C20`.
+- The ISO-DEP link dies after roughly 3–5 seconds of idle; refresh/re-select before PIN verification and retry a lost first APDU.
+- Secure channel uses **secp256k1**, not P-256, matching the applet’s `Secp256k1` key agreement.
+
+## Work State
+### Completed
+- Confirmed the Nexus 5 NFC antenna is in the back cover; activation works as `PVJCOP4SID`.
+- Confirmed SELECT and GET_STATUS success when the card is held well.
+- Probed gated commands: unknown INS and `VERIFY_PIN` with 1–10 bytes, including 6-byte `123456`, all return `9C20` in ~8–13 ms when sent promptly.
+- Idle probe: 3 s gap works; 5 s gap fails with `0xB2`; card returns `9C20` again after reconnect + SELECT.
+- Confirmed the app’s ~4.8–6.2 s PIN-entry gap caused the original RF timeout.
+- Added `SeedKeeper.refresh()` with one link-error retry; initial `_connect()` now uses it, and PIN verification/setup call it.
+- App now reaches the expected `Secure channel required` error instead of RF timeout after PIN entry.
+- Implemented `krux/src/krux/seedkeeper_sc.py`: secp256k1 ECDH, HMAC-SHA1 key derivation, AES-128-CBC, PKCS#7, IV counters, 0x81/0x82 framing, ephemeral-key recovery.
+- Integrated secure-channel wrapping into `SeedKeeper._transmit`, added `needs_secure_channel` to `parse_card_status`, and clear the session on `select()`.
+- Device self-test passed AES known vector, HMAC-SHA1, padding, and ECDH symmetry.
+- Fixed `_random_bytes` because `urandom.getrandbits` accepts at most 32 bits.
+
+### Active
+- Secure-channel recovery and end-to-end verification against the real card are not yet validated.
+- `seedkeeper_sc.py` still contains `[::-1]` step slices, which MicroPython does not support; must be replaced before deployment.
+- Initial connection is still occasionally unstable: first attempt may lose GET_STATUS after a successful SELECT; second attempt works.
+- SC integration is local only; the app currently on the device does **not** include it.
+
+### Blocked
+- Actual PIN verification/import/export waits on validating the secure-channel handshake.
+- Camera work is deferred until NFC is complete.
+
+## Next Move
+1. Replace every extended slice (`[::-1]`) in `seedkeeper_sc.py` with a loop-based reverse helper.
+2. Validate ECDSA public-key recovery with a known secp256k1 signature; verify recovered X/Y endianness and `ecdsa_recover` usage.
+3. Deploy the SC integration with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`, then test `refresh()` → `card_status()` → `verify_pin("123456")` with the card held.
+4. Inspect `/data/krux/fw.log` for 0x81/0x82 exchanges, outer `9000`, and decrypted responses; then test `memory_status()` and `list_secrets()`.
+5. Harden initial connect by retrying SELECT + `card_status()` on a link error; then handle SC session loss/idle during authenticated operations.
+6. Commit `nfc.py`, the SeedKeeper changes, and updated `docs/nfc-isodep.md`; then start camera Phase A.
+
+## Relevant Files
+- `krux/src/krux/seedkeeper_sc.py`: new secure-channel implementation; still needs MicroPython slice fix and recovery validation.
+- `krux/src/krux/seedkeeper.py`: SC wrapping, `refresh()`, status parsing, `_random_bytes` fix.
+- `krux/src/krux/pages/seedkeeper.py`: refreshes link before PIN verification/setup and retries initial selection.
+- `krux/src/nfc.py`: ISO-DEP transport, idle/reconnect behavior, error naming; uncommitted changes from earlier work.
+- `docs/nfc-isodep.md`: NFC findings; needs idle-timeout and secure-channel update.
+- `/tmp/opencode/pysatochip/pysatochip/SecureChannel.py`: reference key derivation and encryption.
+- `/tmp/opencode/pysatochip/pysatochip/CardConnector.py`: reference 0x81/0x82 handling and response decryption.
+- `/tmp/opencode/pysatochip/pysatochip/CardDataParser.py`: reference 0x81 response parsing and signature recovery.
+- `/tmp/opencode/SeedKeeper.java`: applet source for `InitiateSecureChannel`/`ProcessSecureChannel`.
+- `/tmp/opencode/sc_selftest.py`: device crypto self-test; recovery test still fails at local signing.
+- `/tmp/opencode/fw_sc_required.log`: log proving `9C20` after refresh.
+- `/tmp/opencode/nfc_idle_probe.py`: idle-timeout probe and result source.
+- `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts the service.
+- `docs/plan-camera.md`: camera work to resume after NFC.
+
+## Important Context
+- Device `0879524b0068abca`, adb state `recovery`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; firmware log `/data/krux/fw.log`.
+- Only one process can use `/dev/bcm2079x`; stop `krux` before probes and restart afterward. Stopping blanks the screen; restart restores it after ~20 s.
+- Use `/data/krux/micropython` for device-side scripts; logs show APDU framing as `10 00 00 <len> <apdu>`.
+- Card status: protocol 0.2, applet 0.1, PIN0 tries 5, setup done, `needs_secure_channel=1`, NFC policy enabled.
+- Secure channel: host sends `B0 81 00 00 41 04||X||Y`; card replies `00 20 || X(32) || siglen(2) || DER sig [|| auth sig]`; recover Y from the self-signature over `00 20 || X`.
+- Derive `AES key = HMAC-SHA1(shared_x, "sc_key")[:16]`, `MAC key = HMAC-SHA1(shared_x, "sc_mac")`.
+- 0x82 body: `IV(16) | len(2) | AES-CBC ciphertext | len(2) | HMAC-SHA1(20)`; IV is 12 random bytes + 4-byte counter, host starts at 1 and adds 2.
+- Response: `IV(16) | len(2) | ciphertext`; no response MAC; decrypt and remove PKCS#7. Outer `9000` means success; inner SW is not returned.
+- `ucryptolib.aes(key, ucryptolib.MODE_CBC, iv)` works on device. `urandom` has no `urandom(n)`; use 32-bit chunks. MicroPython lacks `[::-1]`.
+- `parse_card_status` marks `needs_secure_channel=False` for the 11-byte FakeCard status, so existing plaintext tests remain unaffected.
+- Local pytest is blocked by missing `Crypto` (`ModuleNotFoundError: Crypto.Cipher`); `py_compile` passes.
+- Device signing self-test fails in `/data/krux/secp256k1.py` with `'int' object has no attribute 'bit_length'`; unrelated to SC recovery but prevents generating a local test signature.
+- Current local changes are uncommitted; `nfc.py`, `seedkeeper.py`, page, and new SC module are not committed. `seedkeeper_sc.py` was manually pushed but still has the slice bug.
+
+## 2026-10-28 02:26:20 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware fully working on the LG Nexus 5 (hammerhead) as an air-gapped device: SeedKeeper NFC first, then camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem, Wi-Fi, Bluetooth, privileged permissions, or signature permissions; adb is the only debug channel; reflash must be reversible.
+- Minimize upstream Krux divergence; prefer port-level shims.
+- Build objects under `/tmp/opencode`; kernel image is `zImage-dtb`; use `fastboot boot` unless flashing is explicitly requested.
+- Ask explicitly with a BEL (`\7`) before any physical action on the device.
+- Preserve `docs/standalone-log.md` and `docs/compaction-log.md` except for appending compaction events.
+- For any PIN test use only `123456`; do not risk consuming PIN tries.
+- User needs a clear on-screen signal/timing before tapping the card; card must be presented after the reader starts polling.
+
+## Decisions
+- Keep MicroPython, not MaixPy; port sources live in `krux/src/` and `micropython/ports/unix/`.
+- `crypto_fast`/mbedtls provides slow hashes and PBKDF2; `hashlib.sha256` remains native.
+- NFC discovery needs the vendor second round; `_discover()` restarts polling after ~1 s without a tag.
+- `CORE_INTERFACE_ERROR` / `0xB2` is terminal; transport marks itself disconnected and reconnects on the next transmit.
+- Secure channel uses **secp256k1**, HMAC-SHA1, AES-128-CBC; implemented with embit pure-Python curve arithmetic and device `ucryptolib`.
+- The card must enter an already-running RF field: `IsoDepTransport.prepare()` now powers up and starts polling before the UI shows “Tap your SeedKeeper card”.
+- `9C30` is the applet’s transient multi-step lock; it is retried automatically with a fresh IV/counter.
+- App reconnects/retries the initial SELECT+GET_STATUS and the PIN verification once on link loss.
+- Auto-retry/re-auth for read-only commands after a later link loss is still pending; it was planned but not implemented.
+
+## Work State
+### Completed
+- Confirmed full secure-channel handshake against the real card: `0x81` succeeds, host ECDH/recovery works, and encrypted `0x82` commands are accepted.
+- Successfully ran a device probe that did `refresh()` → `card_status()` → `_init_secure_channel()` → `verify_pin("123456")` → `memory_status()` → `list_secrets()`.
+- Probe results: SC ready in 0.51 s; PIN verified in 0.06 s; memory `total=4095`, `free=3970`, `nb_secrets=1`; one secret `id=1`, label `twst`, type 16, subtype 1, fingerprint `5d6b5afe`.
+- Implemented `krux/src/krux/seedkeeper_sc.py`: secp256k1 ECDH, manual ECDSA public-key recovery, HMAC-SHA1 key derivation, AES-128-CBC, PKCS#7, `0x81`/`0x82` framing, odd host IV counters.
+- Added `needs_secure_channel` parsing from status byte 11, SC wrapping in `SeedKeeper._transmit`, SC reset on SELECT, and automatic SC setup on `9C20`/first secure command.
+- Added `9C30` lock retry; app logs show `9C30` followed by a fresh envelope returning `9000`.
+- Fixed MicroPython port issues: replaced `int.bit_length()` in `krux/src/secp256k1.py` and `krux/vendor/embit/src/embit/util/key.py`; fixed `urandom.getrandbits` >32-bit usage; removed `[::-1]` from SC code.
+- Local signing now works after the `_bit_length` fix; AES known vector, HMAC-SHA1, ECDH symmetry, host secp256k1 signature recovery, and local sign/verify all pass.
+- Added optional `IsoDepTransport.prepare()`; page now shows “Starting card reader” then starts the field before “Tap your SeedKeeper card”.
+- App logs show at least one attempt successfully verified PIN and read memory status/list data; `0x9C12` correctly ends the list.
+- `tests/test_seedkeeper.py`: 46 passed; 2 errors only because `pytest-mock`/`mocker` is unavailable in the local environment.
+
+### Active
+- App-level reliability: some attempts still end in `0xB2` RF timeout after PIN or after several secure commands; logs show PIN/list success in one attempt, then later `0x82` commands receive `B2`.
+- Need decide between a keepalive while menus/list views are open and automatic reconnect + re-PIN for read-only commands after link loss.
+- Need test the actual app flows (`View Secrets`, free space, card info, save/load) with the card held continuously.
+- Secure-channel/session tests and updated documentation are not yet committed.
+
+### Blocked
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+- Import/export/save-to-card tests need explicit user permission because they modify card contents.
+- Local full pytest still needs `pytest-mock`; two tests cannot run locally.
+
+## Next Move
+1. Reproduce the app `View Secrets` flow and inspect `/data/krux/fw.log` to determine whether `B2` follows idle time or card movement.
+2. Implement either a card keepalive for open SeedKeeper menus or automatic reconnect + re-verify for read-only commands (`A6`, `A7`) using the stored PIN, with one retry limit.
+3. Retest app-level SeedKeeper: initial tap prompt, PIN `123456`, view secrets, free space, card info; keep the card pressed throughout.
+4. Add status mapping/tests for `9C21`, `9C22`, `9C23`, `9C30`, and SC envelope behavior; update `docs/nfc-isodep.md`.
+5. Commit the uncommitted NFC/SeedKeeper/SC/port changes.
+6. Start camera Phase A from `docs/plan-camera.md`.
+
+## Relevant Files
+- `krux/src/krux/seedkeeper_sc.py`: secure-channel implementation, manual secp256k1 recovery, AES/HMAC envelope.
+- `krux/src/krux/seedkeeper.py`: SC integration, `refresh()`, status parsing, 9C30 retry, random-byte fixes.
+- `krux/src/krux/pages/seedkeeper.py`: reader prepare timing, initial SELECT/status retry, PIN verify retry.
+- `krux/src/nfc.py`: ISO-DEP transport, new `prepare()`/`prepared` flow, idle/reconnect behavior.
+- `krux/src/secp256k1.py`: port copy with `_bit_length` fallback.
+- `krux/vendor/embit/src/embit/util/key.py`: `_bit_length` fallback for signing.
+- `scripts/deploy-firmware.sh`: now also pushes `embit/util/*.py`.
+- `docs/nfc-isodep.md`: needs SC/idle/prepare findings.
+- `docs/plan-camera.md`: deferred camera work.
+- `/tmp/opencode/sc_probe.py`: successful device-side SC + PIN + list probe.
+- `/tmp/opencode/fw_app_sc3.log`: latest app log with `9C30` retry and later `B2`.
+- `/tmp/opencode/sc_recover_test.py`: host-vector recovery test.
+- `/tmp/opencode/pysatochip/pysatochip/SecureChannel.py`: host SC reference.
+- `/tmp/opencode/SeedKeeper.java`: applet reference for 0x81/0x82, lock, and status words.
+
+## Important Context
+- Device `0879524b0068abca`, adb state `recovery`; firmware log `/data/krux/fw.log`; deploy via `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`.
+- Only one process can use `/dev/bcm2079x`; stop `krux` before probes and restart after. Stopping blanks the screen; restart takes ~20 s.
+- Service commands used: `adb shell 'setprop ctl.stop krux; sleep 3; ...; setprop ctl.start krux; sleep 18'`.
+- Card status: protocol 0.2, applet 0.1, PIN0 tries 5, setup done, `needs_secure_channel=1`, NFC policy enabled.
+- Secure channel details: host sends `B0 81 00 00 41 04||X||Y`; card returns `00 20 || X(32) || siglen(2) || DER sig [|| auth sig]`; recover Y from the self-signature over `00 20 || X`.
+- Derive `AES key = HMAC-SHA1(shared_x, "sc_key")[:16]`, `MAC key = HMAC-SHA1(shared_x, "sc_mac")`.
+- `0x82` body: `IV(16) | len(2) | AES-CBC ciphertext | len(2) | HMAC-SHA1(20)`; IV is 12 random bytes + 4-byte counter, host starts at 1 and adds 2.
+- Response body: `IV(16) | len(2) | ciphertext`; no response MAC; decrypt and remove PKCS#7. Outer `9000` means success; inner SW is not returned.
+- Applet uses `ALG_EC_SVDP_DH_PLAIN_XY`, which outputs `0x04 || X || Y`; its HMAC input starts at offset 1, so the host’s full shared X is correct.
+- `9C30` lock is transient: `resetLockThenThrow()` clears it; retrying the same command with a new IV succeeds (observed).
+- `9C12` means “no more secrets” and is the normal end of `list_secrets`.
+- `B2` means the RF link timed out; it can indicate card movement/coupling or an idle link. The transport reconnects on the next transmit, but re-selecting the applet logs out.
+- Device crypto: `ucryptolib.aes(key, MODE_CBC, iv)` works; `urandom.getrandbits` maxes at 32 bits; MicroPython lacks `int.bit_length` and extended slices.
+- Local tests need `PYTHONPATH=/tmp/opencode/pydeps` for the temporary `pycryptodome` install; `pytest-mock` is still missing.
+- Current app/device files were pushed and the service restarted, but all source changes remain uncommitted.
+
+## 2026-10-28 03:00:26 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware fully working on the LG Nexus 5 (hammerhead) as an air-gapped device: SeedKeeper NFC first, then camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem, Wi-Fi, Bluetooth, privileged permissions, or signature permissions; adb is the only debug channel; reflash must be reversible.
+- Minimize upstream Krux divergence; prefer port-level shims.
+- Build objects under `/tmp/opencode`; kernel image is `zImage-dtb`; use `fastboot boot` unless flashing is explicitly requested.
+- Ask explicitly with a BEL (`\7`) before any physical action on the device.
+- Preserve `docs/standalone-log.md` and `docs/compaction-log.md` except for appending compaction events.
+- For any PIN test use only `123456`; do not risk consuming PIN tries.
+- The user needs a clear on-screen signal/timing before tapping the card; the card must be presented after the reader starts polling, and held in place.
+- Do not modify card contents (import/export/delete/save) without explicit permission.
+
+## Decisions
+- Keep MicroPython, not MaixPy; port sources live in `krux/src/` and `micropython/ports/unix/`.
+- `crypto_fast`/mbedtls provides slow hashes and PBKDF2; `hashlib.sha256` remains native.
+- Secure channel uses secp256k1, HMAC-SHA1, AES-128-CBC; implemented with embit pure-Python curve arithmetic and device `ucryptolib`.
+- Recover the card's ephemeral Y with manual ECDSA recovery; do not use the platform `ecdsa_recover`, which depends on missing `int.bit_length()`.
+- Use `IsoDepTransport.prepare()` to start polling before showing the tap prompt; show a second tap/hold prompt after PIN entry.
+- Use plaintext `GET_STATUS` keepalives between host SC recovery and ECDH to avoid the NFCC idle-link timeout.
+- `9C30` is the applet's transient multi-step lock; retry it automatically with a fresh IV/counter.
+- Keep the PIN only in the `SeedKeeper` object's memory for the session and auto-reconnect/re-verify for read-only recovery; restart stateful walks rather than repeating one APDU.
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+
+## Work State
+### Completed
+- Confirmed full secure-channel handshake and PIN verification against the real card.
+- Probe results: SC ready in 0.51 s; PIN verified in 0.06 s; memory `total=4095`, `free=3970`, `nb_secrets=1`; one secret `id=1`, label `twst`, type 16, subtype 1, fingerprint `5d6b5afe`.
+- Implemented `krux/src/krux/seedkeeper_sc.py`: secp256k1 ECDH, manual public-key recovery, HMAC-SHA1 key derivation, AES-128-CBC, PKCS#7, `0x81`/`0x82`, odd host counters, and GET_STATUS keepalives.
+- Added SC wrapping, status parsing, `9C30` retry, `9C20` auto-setup, and secure-session reset on SELECT.
+- Added `IsoDepTransport.prepare()`, post-PIN second prompt, "Starting card reader"/"Hold the SeedKeeper card" UI, and `ACTIVATE_SETTLE_S = 0.05`.
+- Added auto-relogin with stored PIN for `INS_SEEDKEEPER_STATUS`; `list_secrets()` restarts after link loss.
+- Fixed MicroPython port issues: `int.bit_length()` in `secp256k1.py` and `embit/util/key.py`; extended-slice usage in SC; `urandom.getrandbits` >32-bit usage.
+- `tests/test_seedkeeper.py`: 46 passed; 2 errors only because `pytest-mock`/`mocker` is unavailable locally.
+- App-level success: after the second hold prompt, loading a mnemonic, listing secrets, and Card Info have worked.
+- `view_secrets` display duration increased to `FLASH_MSG_TIME * 3`; not yet retested.
+
+### Active
+- The first card read of a session is still slow and often fails; retries eventually succeed.
+- The second command after PIN is flaky: View Secrets/list works, View Free Space usually fails, Card Info works only occasionally.
+- User suspects the failures are message-length or timing dependent: "works for view secrets. doesn't work for read free space. and works occasionlly for card info."
+- `refresh()` was just changed to retry SELECT 3 times but has not been compiled, deployed, or tested.
+- Need stronger app-level retry/feedback for post-PIN actions, especially `free_space()` and `card_info()`.
+- Need update `docs/nfc-isodep.md` with SC, keepalive, second-tap, and timing findings.
+- All source changes remain uncommitted; `krux` submodule is dirty.
+
+### Blocked
+- Import/export/save/delete tests need explicit permission because they modify card contents.
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+- Local full pytest still needs `pytest-mock`; `pycryptodome` is installed under `/tmp/opencode/pydeps`.
+
+## Next Move
+1. Compile/deploy the current `seedkeeper.py` with 3-attempt `refresh()`; increase page retry loops and add a visible "Retrying card" state.
+2. Add a page-level read retry helper using `_reader_prompt()` + `_login_again()` for `free_space()`, `card_info()`, and `view_secrets()`.
+3. Test View Free Space repeatedly, then Card Info/View Secrets, holding the card through the second prompt; pull `/data/krux/fw.log`.
+4. If B2 persists, compare successful/failed APDU timing and consider an A7-specific or transport-level timing fix.
+5. Run the SeedKeeper tests, update `docs/nfc-isodep.md`, and commit the NFC/SC/port changes.
+6. Start camera Phase A from `docs/plan-camera.md`.
+
+## Relevant Files
+- `krux/src/krux/seedkeeper.py`: SC integration, retries, status parsing, `_login_again`, stored session PIN.
+- `krux/src/krux/seedkeeper_sc.py`: secure-channel handshake, recovery, keepalives, AES/HMAC envelope.
+- `krux/src/krux/pages/seedkeeper.py`: prepare/tap/hold prompts, second tap after PIN, page flows and retries.
+- `krux/src/nfc.py`: ISO-DEP transport, `prepare()`, activation delay, idle/reconnect behavior.
+- `krux/src/secp256k1.py`: port `_bit_length`/`_reverse` shims.
+- `krux/vendor/embit/src/embit/util/key.py`: `_bit_length` shim for signing.
+- `scripts/deploy-firmware.sh`: now pushes `embit/util/*.py`.
+- `docs/nfc-isodep.md`: transport findings; needs SC/timing update.
+- `docs/plan-camera.md`: deferred camera work.
+- `tests/test_seedkeeper.py`: SeedKeeper/transport tests.
+- `/tmp/opencode/fw_app_sc7.log`: latest app log with SC keepalives and B2 failures.
+- `/tmp/opencode/sc_probe.py`: successful device-side SC + PIN + list probe.
+- `/tmp/opencode/sc_timing.py`: device timings: recover 149 ms, keygen 34 ms, ECDH 34 ms.
+- `/tmp/opencode/SeedKeeper.java`: applet reference for SC, lock, and status words.
+- `/tmp/opencode/pysatochip/pysatochip/SecureChannel.py`: host SC reference.
+
+## Important Context
+- Device `0879524b0068abca`, adb state `recovery`; firmware log `/data/krux/fw.log`; deploy via `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`.
+- Only one process can use `/dev/bcm2079x`; stop `krux` before probes and restart after. Stopping blanks the screen; restart takes ~20 s.
+- Service commands: `adb shell 'setprop ctl.stop krux; sleep 3; ...; setprop ctl.start krux; sleep 18'`.
+- Card status: protocol 0.2, applet 0.1, PIN0 tries 5, setup done, `needs_secure_channel=1`, NFC policy enabled.
+- B2 is the NFCC's `RF_TIMEOUT_EXCEPTION`, not the host timeout. It can occur on the first SELECT, on `0x81`, or on the first `0x82`.
+- Successful `0x81` responses arrive in ~300 ms; successful `0x81`→`0x82` gaps were ~226–233 ms, failing gaps ~337 ms.
+- SC handshake details: send `B0 81 00 00 41 04||X||Y`; card returns `00 20 || X || siglen || DER`; recover Y from the self-signature over `00 20 || X`.
+- Keys: `AES = HMAC-SHA1(shared_x, "sc_key")[:16]`, `MAC = HMAC-SHA1(shared_x, "sc_mac")`; IV is 12 random bytes + odd 32-bit counter starting at 1.
+- `0x82` request body: `IV(16) | len(2) | AES-CBC ciphertext | len(2) | HMAC-SHA1(20)`; response is `IV(16) | len(2) | ciphertext` with no response MAC.
+- `9C12` ends `list_secrets`; `9C30` is transient and cleared by `resetLockThenThrow`.
+- The app now: initial prepare/tap → status → PIN prompt → second prepare/"Hold" prompt → verify → menu.
+- `_select_secret()` auto-selects when there is exactly one seed, so "Load mnemonic" not showing a picker is expected.
+- `View Secrets` currently only flashes headers; it does not open an interactive selection screen.
+- Local pytest needs `PYTHONPATH=/tmp/opencode/pydeps`; remaining two tests need `pytest-mock`.
+- Current git state: `krux` submodule modified; `scripts/deploy-firmware.sh` and `docs/compaction-log.md` modified; `.opencode/` untracked.
+
+## 2026-10-28 04:07:38 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware fully working on the LG Nexus 5 (hammerhead) as an air-gapped device: SeedKeeper NFC first, then camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem, Wi-Fi, Bluetooth, privileged permissions, or signature permissions; adb is the only debug channel; reflash must be reversible.
+- Minimize upstream Krux divergence; prefer port-level shims.
+- Build objects under `/tmp/opencode`; kernel image is `zImage-dtb`; use `fastboot boot` unless flashing is explicitly requested.
+- Ask explicitly with a BEL (`\7`) before any physical action on the device.
+- Preserve `docs/standalone-log.md` and `docs/compaction-log.md` except for appending compaction events.
+- For any PIN test use only `123456`; do not risk consuming PIN tries.
+- User needs a clear on-screen signal/timing before presenting the card; the card must be presented after the reader starts polling and held in place.
+- Do not modify card contents (import/export/delete/save) without explicit permission.
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+
+## Decisions
+- Keep MicroPython, not MaixPy; port sources live in `krux/src/` and `micropython/ports/unix/`.
+- `crypto_fast`/mbedtls provides slow hashes and PBKDF2; `hashlib.sha256` remains native.
+- Secure channel uses secp256k1, HMAC-SHA1, AES-128-CBC; implemented with embit pure-Python curve arithmetic and device `ucryptolib`.
+- Recover the card's ephemeral Y with manual ECDSA recovery; do not use the platform `ecdsa_recover`.
+- Use keepalives after the 0x81 response, between host key recovery and ECDH; do **not** send GET_STATUS immediately before 0x81.
+- The app must prompt again after PIN entry and after label/prompt entry, because the link drops while the user uses the keypad.
+- Reuse the verified PIN from memory for read retries and pre-write reconnects.
+- Import must send `header[2:]`; sending `header[4:]` caused the applet's `0x9C0F` invalid-parameter response.
+- Use `.digest().hex()` for fingerprints; this MicroPython hashlib lacks `hexdigest()`.
+- Camera work remains deferred.
+
+## Work State
+### Completed
+- Confirmed full secure-channel handshake and PIN verification against the real card.
+- Probe results: SC ready in 0.51 s; PIN verified in 0.06 s; memory `total=4095`, `free=3970`, `nb_secrets=1`; original secret `id=1`, label `twst`, type 16, subtype 1, fingerprint `5d6b5afe`.
+- Implemented SC, manual key recovery, HMAC-SHA1, AES-128-CBC, GET_STATUS keepalives, `9C30` retry, and secure-session reset on SELECT.
+- Added `IsoDepTransport.prepare()`, initial card prompt, post-PIN second prompt, post-label reauth, and `_card_action` retry for read-only actions.
+- Confirmed loads, list, Card Info, and free space can work; save successfully wrote a new secret, verified by View Secrets.
+- Fixed import header offset and `sha256.hexdigest` crash, updated the fake card in `tests/test_seedkeeper.py`.
+- Increased retries: `refresh()` tries SELECT 3 times; `_connect` retries status and PIN verification 3 times.
+- Retry text now clears the display; View Secrets duration increased to 3× `FLASH_MSG_TIME`.
+- Tests: 46 passed; 2 errors only because `pytest-mock`/`mocker` is unavailable locally.
+
+### Active
+- NFC reliability remains poor: first read and especially 0x81 handshake often fail with `CORE_INTERFACE_ERROR`/B2; many retries needed.
+- Second save attempt failed with RF error after many retries; general reads remain unreliable.
+- Investigating the vendor NFC stack for ISO-DEP RF-timeout configuration or recovery behavior; relevant leads are `NFC_PMID_FWI`/param `0x58`, `NCI_PARAM_ID_NFCDEP_TRANS_TIME 0xB2`, and `nfa_dm_discover.c` interface-error handling.
+- Need to decide between retrying on the same activation, altering activation settle timing, or changing NFCC config; `ACTIVATE_SETTLE_S = 0.2` did not clearly help.
+- Need to update `docs/nfc-isodep.md` and commit the NFC/SC/port changes.
+
+### Blocked
+- Further import/save/delete tests require explicit permission because the card now holds at least the original `twst` secret plus a newly saved secret.
+- Local full pytest still needs `pytest-mock`; `pycryptodome` is installed under `/tmp/opencode/pydeps`.
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+
+## Next Move
+1. Continue vendor-stack analysis in `nfa_dm_discover.c`, `nfc_hal_dm_cfg.c`, `nfc_brcm_defs.h`, and `probes/nci_defs.h` for the ISO-DEP RF timeout, FWI/WTX, or interface-error retry path.
+2. Test whether a 0x81 B2 can be retried on the same activation instead of power-cycling; compare success rates and timings.
+3. Re-test reads and one save only after explicit permission; use View Secrets first to avoid duplicate secrets.
+4. Pull `/data/krux/fw.log`, count successful 0x81 responses vs B2, and compare activation/settle timing.
+5. Run the SeedKeeper tests, update `docs/nfc-isodep.md`, and commit the NFC/SC/port changes.
+6. Start camera Phase A from `docs/plan-camera.md` only after SeedKeeper is reliable.
+
+## Relevant Files
+- `krux/src/krux/seedkeeper.py`: SC integration, import header fix, fingerprint fix, retries, stored PIN.
+- `krux/src/krux/seedkeeper_sc.py`: handshake, recovery, keepalives, AES/HMAC envelope.
+- `krux/src/krux/pages/seedkeeper.py`: prompts, reauth, page-level retries, save/delete flows.
+- `krux/src/nfc.py`: ISO-DEP transport, activation settle, discovery, B2 handling.
+- `krux/tests/test_seedkeeper.py`: 46 tests plus updated fake-card import parsing.
+- `docs/nfc-isodep.md`: transport/SC findings; needs latest timing and import notes.
+- `nfc/stack/nfa/dm/nfa_dm_discover.c`: vendor discovery, FWI, interface-error handling.
+- `nfc/halimpl/hal/nfc_hal_dm_cfg.c`: vendor NFC HAL configuration.
+- `nfc/vendor-headers/nfc_brcm_defs.h`: Broadcom NCI parameters, including `NCI_PARAM_ID_NFCDEP_TRANS_TIME`.
+- `probes/nci_defs.h`: NCI parameter IDs and lengths.
+- `phase0/libnfc-nci-20791b05.conf`: vendor `NFA_DM_START_UP_CFG`.
+- `/tmp/opencode/fw_app_sc12.log`: latest app log with handshake successes and B2 failures.
+- `/tmp/opencode/SeedKeeper.java`: applet reference for import/SC/status words.
+- `/tmp/opencode/sc_timing.py`: device timings: recover 149 ms, keygen 34 ms, ECDH 34 ms.
+- `scripts/deploy-firmware.sh`: deploys firmware and embit files; use `DEPLOY_RESTART=1`.
+
+## Important Context
+- Device `0879524b0068abca`, adb state `recovery`; firmware log `/data/krux/fw.log`; deploy via `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`.
+- Only one process can use `/dev/bcm2079x`; stop `krux` before probes and restart after. Stopping blanks the screen; restart takes ~20 s.
+- Service commands: `adb shell 'setprop ctl.stop krux; sleep 3; setprop ctl.start krux; sleep 18'`; a second restart may be needed if the screen stays blank.
+- Card works reliably on another device, so the remaining failures are in our BCM2079x/NFC transport path or timing.
+- B2 is the NFCC's `RF_TIMEOUT_EXCEPTION`, not the host timeout; it occurs on first SELECT, 0x81, or first 0x82.
+- Successful 0x81 responses arrive ~300 ms after send; failed ones report B2 around 175–220 ms, with occasional longer delays.
+- A GET_STATUS immediately before 0x81 made every handshake fail; it was removed. Keepalives after the 0x81 response remain.
+- 0x9C0F is the applet's `Invalid parameter`; the old import payload skipped two extra header bytes.
+- Save flow: `_connect` → label keypad → `_reconnect` → memory status → `import_secret`; a link failure during memory status now aborts before writing.
+- Applet import header layout starts at type: type, origin, export_rights, counters/fingerprint, subtype, RFU2, label_size, label, padded size.
+- `_connect` no longer swallows link errors from `memory_status` during save; a protocol status still allows a card-side capacity judgment.
+- Current state: app is running and screen visible; reads mostly work but require many retries; one save succeeded, a later one failed with RF.
+- All source changes remain uncommitted; the `krux` submodule is dirty; `tests/test_seedkeeper.py` is also modified.
+
+## 2026-10-28 04:57:28 UTC - session compaction (auto)
+
+* session: `ses_ec9cfaf7efferMLQZnvjWxHDO8`
+
+## Objective
+- Get Krux firmware fully working on the LG Nexus 5 (hammerhead) as an air-gapped device: SeedKeeper NFC first, then camera, on our own kernel.
+
+## Requirements
+- Air-gapped: no modem, Wi-Fi, Bluetooth, privileged permissions, or signature permissions; adb is the only debug channel; reflash must be reversible.
+- Minimize upstream Krux divergence; prefer port-level shims.
+- Build objects under `/tmp/opencode`; kernel image is `zImage-dtb`; use `fastboot boot` unless flashing is explicitly requested.
+- Ask explicitly with a BEL (`\7`) before any physical action on the device.
+- Preserve `docs/standalone-log.md` and `docs/compaction-log.md` except for appending compaction events.
+- For any PIN test use only `123456`; do not risk consuming PIN tries.
+- User needs a clear on-screen signal/timing before presenting the card; the card must be presented after the reader starts polling and held in place.
+- Do not modify card contents (import/export/delete/save) without explicit permission.
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+- User now explicitly wants longer read windows, plenty of retries, and an ability to cancel an operation.
+
+## Decisions
+- Keep MicroPython, not MaixPy; port sources live in `krux/src/` and `micropython/ports/unix/`.
+- `crypto_fast`/mbedtls provides slow hashes and PBKDF2; `hashlib.sha256` remains native.
+- Secure channel uses secp256k1, HMAC-SHA1, AES-128-CBC; implemented with embit pure-Python curve arithmetic and device `ucryptolib`.
+- Recover the card's ephemeral Y with manual ECDSA recovery; do not use the platform `ecdsa_recover`.
+- Use keepalives after the 0x81 response, between host key recovery and ECDH; do **not** send GET_STATUS immediately before 0x81.
+- The app must prompt for PIN/label before presenting the card, then keep one uninterrupted card session; this avoids the link dying during keypad entry.
+- Import must send `header[2:]`; sending `header[4:]` caused the applet's `0x9C0F` invalid-parameter response.
+- Use `.digest().hex()` for fingerprints; this MicroPython hashlib lacks `hexdigest()`.
+- Do not keep chasing RF timing: Android on the same phone is also inconsistent, so the remaining failures are hardware/coupling, not the ISO-DEP driver.
+- Reverted the experimental FWI=15 and `PA_FSDI=2` changes back to the vendor values.
+
+## Work State
+### Completed
+- Confirmed full secure-channel handshake and PIN verification against the real card.
+- Confirmed loads, list, Card Info, free space, and save can work; a new secret was successfully written and appears in View Secrets.
+- Fixed import header offset (`header[2:]`), `sha256.hexdigest` crash, and the fake-card tests.
+- Removed the GET_STATUS immediately before 0x81; that was the regression that made every handshake fail.
+- Confirmed the card also reads inconsistently in Android on the same Nexus 5, including multi-second reads and duplicate reads.
+- Tested NFCC FWI=15: accepted by the chip but no reliability improvement; reverted.
+- Tested `PA_FSDI=2` (32-byte reader frames): accepted but no improvement/worse; reverted.
+- Tests: 46 passed; 2 errors only because `pytest-mock`/`mocker` is unavailable locally.
+- Started a page-level retry/cancel refactor in `pages/seedkeeper.py`: added `CARD_ATTEMPT_TIMEOUT_MS=8000`, `CARD_SESSION_ATTEMPTS=20`, `CARD_ACTION_RETRIES=3`, `CARD_RETRY_PAUSE_S=0.1`, `_cancel_requested()`, `_retry_screen()`, `_card_session()`, PIN-before-card `_connect()`, retrying `_reconnect()` and `_card_action()`.
+
+### Active
+- Finish and validate the SeedKeeper page UX refactor.
+- `save_seed()` still needs its label prompt moved before `_connect()` and the extra `_reconnect()` removed, so Save uses one card presentation.
+- Compile/test the page changes, deploy, and have the user test View Secrets/Load with cancel/retry behavior.
+- Need to verify `_card_session()`/`_cancel_requested()` interaction, especially taps arriving during a blocking 8 s activation.
+- Update `docs/nfc-isodep.md` with the Android comparison, failed FWI/PA_FSDI experiments, and the retry/cancel design.
+- Commit the NFC/SC/page changes; all source changes remain uncommitted and the `krux` submodule is dirty.
+
+### Blocked
+- Further import/save/delete tests require explicit permission because the card holds at least the original `twst` secret plus newly saved secret(s).
+- Camera work remains deferred until SeedKeeper NFC is reliable.
+
+## Next Move
+1. Finish `save_seed()`: prompt label before `_connect()`, then call `_write_seed()` immediately with no second card presentation.
+2. Review the page refactor for correctness, run `py_compile` and the SeedKeeper tests.
+3. Deploy `nfc.py` (vendor FWI restored) and `pages/seedkeeper.py`, restart the service, and ask the user with BEL to reboot into our firmware and test View Secrets/Load.
+4. If reliability is still poor, use the user's rooted Android environment to collect NFC logs/comparisons and consider antenna/contact/placement fixes.
+5. Update `docs/nfc-isodep.md` and commit the changes.
+6. Start camera Phase A from `docs/plan-camera.md` only after SeedKeeper is reliable.
+
+## Relevant Files
+- `krux/src/krux/pages/seedkeeper.py`: page retry/cancel refactor; PIN-before-card flow; `save_seed()` still needs reordering.
+- `krux/src/krux/seedkeeper.py`: SC integration, import header fix, fingerprint fix, stored PIN, retries.
+- `krux/src/krux/seedkeeper_sc.py`: handshake, manual key recovery, keepalives, AES/HMAC envelope.
+- `krux/src/nfc.py`: ISO-DEP transport; experimental FWI/PA_FSDI changes reverted; activation settle is 0.2 s.
+- `krux/tests/test_seedkeeper.py`: 46 tests plus updated fake-card import parsing.
+- `docs/nfc-isodep.md`: transport/SC findings; needs Android comparison and failed RF experiments.
+- `docs/compaction-log.md`: append-only history; preserve.
+- `scripts/deploy-firmware.sh`: deploy/restart; use `DEPLOY_RESTART=1`.
+- `/tmp/opencode/fw_fsdi2.log`: latest PA_FSDI run showing repeated SELECT/0x81 B2 failures.
+- `/tmp/opencode/fw_fwi15b.log`: FWI=15 run showing no improvement.
+- `/tmp/opencode/fw_app_sc12.log`: earlier log with one successful 0x81 after many B2 failures.
+- `/tmp/opencode/SeedKeeper.java`: applet reference for import/SC/status words.
+- `phase0/libnfc-nci-20791b05.conf`: vendor `NFA_DM_START_UP_CFG`, `PREINIT_DSP_CFG`.
+- `nfc/vendor-headers/nfc_brcm_defs.h`: Broadcom NCI parameter IDs, including `PA_FSDI` and `FRAME_INTF_RETXN`.
+
+## Important Context
+- Device `0879524b0068abca`; currently booted into Android with root (`su` via adb), not our recovery firmware.
+- Firmware log is `/data/krux/fw.log`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`.
+- Only one process can use `/dev/bcm2079x`; stop `krux` before probes and restart after. Stopping blanks the screen; restart takes ~20 s.
+- Service commands: `adb shell 'setprop ctl.stop krux; sleep 3; setprop ctl.start krux; sleep 18'`; a second restart may be needed if the screen stays blank.
+- The Nexus 5 NFC antenna is in the back cover around the camera; the user tried multiple flat positions, orientations, shifts, and pressure, with random results.
+- Android's own NFC reader is also inconsistent on this phone, including 10 s reads and duplicate reads, so the remaining problem is coupling/hardware rather than our ISO-DEP code.
+- `0xB2` is `CORE_INTERFACE_ERROR`/`RF_TIMEOUT_EXCEPTION`; after it, the NFCC tears the RF link down, so retrying on the same activation does not work.
+- Successful 0x81 responses take ~300 ms; failed ones report B2 around 175–220 ms, occasionally longer.
+- `0x9C0F` is the applet's `Invalid parameter`; the old import payload skipped two extra header bytes.
+- Current card contents include the original `twst` secret plus at least one newly saved secret; do not write/delete without explicit permission.
+- All source changes remain uncommitted; the `krux` submodule is dirty; `tests/test_seedkeeper.py` is modified.
+
+---
+
+## Compaction 2026-10-28 — SeedKeeper complete on the second phone
+
+The work in the preceding summary is finished.  The second Nexus 5 has reliable
+NFC; the card can stay attached for the whole sequence and saving works.
+
+- PIN (and the save label) are requested **before** the card is presented;
+  one uninterrupted select → secure channel → verify session follows.
+- The SeedKeeper page retries 20 sessions of 8 s, retries reads with a fresh
+  secure channel, and offers tap-to-cancel between attempts.  Card Info is a
+  PIN-free link test.
+- `FWI=15` and `PA_FSDI=2` were tried and reverted; the vendor RF config is
+  restored.
+- Host tests: 82 passed for the SeedKeeper protocol and page suites.
+- `kruxport/` is removed.  The interpreter is `rootfs/micropython-arm32`;
+  `build-stub-ramdisk.sh --bundle` produces a read-only `/opt/krux` image and
+  the init stub prefers it over `/data/krux`.
+- `standalone-log.md` is now `project-log.md`; the README carries the old
+  `kruxport/README.md` build/deploy text.
+- NFC `.ncd` blobs are reference only; the runtime does not load them.
+
+Next: rebuild kernel + MicroPython + boot image, final NFC check on the second
+phone, then commit the submodules and the main project.  Camera Phase A follows.

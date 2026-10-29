@@ -14,10 +14,9 @@ Top-level:
 - `micropython/` - MicroPython (submodule, branch `master`; the port's C modules
   live in `ports/unix/`)
 - `linux/` - kernel (submodule, branch `airgap/master-cleanup`)
-- `kruxport/` - firmware build **output** only (`micropython-arm32`, gitignored);
-  the sources are in the submodules above
 - `cam/` - camera: server sources, captured data, probes
-- `rootfs/` - init stub + ramdisk + boot image helpers
+- `rootfs/` - init stub + ramdisk + boot image helpers; the built static
+  MicroPython binary is `rootfs/micropython-arm32` (gitignored)
 - `scripts/` - build drivers and device probes, grouped by topic
 - `tools/` - reusable build/config helpers (kernel, defconfig, toolchain, profiles)
 - `nfc/` - NFC stack + vendor headers (reference only; the transport is in Python)

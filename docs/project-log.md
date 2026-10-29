@@ -12788,3 +12788,68 @@ except for the geometry, which the vendor writes as a word.  The
   claimed `CAMIF_RAW`; with `CAMIF_RAW` the kernel now reports
   `src 2` ✓ (the summary names the value it sends).
 
+
+---
+
+## Entry — 2026-10-28 — SeedKeeper signed off on the second phone; packaging
+
+The SeedKeeper work reached a working state on a **second Nexus 5**.  Its NFC
+coupling is reliable: the card can be attached for the whole sequence, reads
+rarely fail, and a save to the card succeeded.
+
+### SeedKeeper
+
+* Full secure channel (0x81 handshake, manual key recovery, AES/HMAC envelope)
+  and all card operations work: PIN verify, list, export, free space, import.
+* **PIN is requested before the card is presented**, matching the official
+  SeedKeeper Android app.  For save, the label is requested first too.  Both
+  keep the card session uninterrupted; the old order read the status, asked
+  for the PIN, and then needed the card re-presented because the link had gone
+  idle during keypad entry.
+* The page now retries a card session up to 20 times with an 8 s activation
+  window, retries read actions with a fresh secure channel, and shows a retry
+  counter with tap-to-cancel between attempts.
+* Card Info is a PIN-free status read and doubles as a link test.
+
+### RF experiments (reverted)
+
+`FWI=15` (`0x58 0x01 0xF0`) and `PA_FSDI=2` (`0xBA 0x01 0x02`) were accepted
+by the NFCC and did not improve the marginal first phone; the vendor
+`SET_CONFIG_RF` is restored to `0x51 … 0x58 0x01 0x70`.  The first phone's
+Android reader was also inconsistent, so those failures were coupling, not
+the ISO-DEP driver.
+
+### Tests
+
+`82 passed` for `tests/test_seedkeeper.py` and
+`tests/pages/test_seedkeeper.py`, using a host `evdev` stub and the vendored
+embit.  The host `uhashlib_hw` mock now provides `sha512`/`_FastSHA512` so the
+wallet fixtures work.
+
+### Packaging and layout
+
+* `kruxport/` is gone; the interpreter is built to
+  `rootfs/micropython-arm32`.
+* `rootfs/build-stub-ramdisk.sh --bundle` puts MicroPython, Krux and embit in
+  `/opt/krux` in the ramdisk for a read-only production image; the init stub
+  prefers it and falls back to `/data/krux` for development.
+* `make-boot-image.sh` accepts `RAMDISK=`.
+* `scripts/deploy-firmware.sh` creates all target directories and copies the
+  embit `wordlists`, `descriptor` and `util` packages.
+* The README now contains the build/deploy/bundling information that used to
+  live in `kruxport/README.md`.
+* `standalone-log.md` was renamed `project-log.md`; this is the first entry
+  under the new name.
+
+### NFC files at runtime
+
+The `.ncd` blobs are vendor firmware patches.  The current port does not load
+them; the chip already has firmware and answers `GET_BUILD_INFO` after a power
+cycle.  No NFC blob is required in the target filesystem.  They remain as
+reference.
+
+### Next
+
+Final validation with a fully rebuilt kernel, MicroPython and boot image on
+the second phone, then commit the submodules and the main project.  After that,
+camera Phase A.

@@ -21,7 +21,7 @@ Keep `tools/` and `scripts/` separate: `tools/` is build infrastructure, `script
 Most of `scripts/cam/capture*.sh`, `scripts/cam/*diag*.sh`, `scripts/cam/sweep*.sh`,
 `scripts/boot/fix-capture*.sh`, `scripts/misc/cleanup-trees*.sh`, `scripts/nfc/nfc_bi*.py`,
 `scripts/nfc/nfc_step.py`. These encode questions that have already been answered
-and are recorded in docs/standalone-log.md. Keep a few representative ones for
+and are recorded in docs/project-log.md. Keep a few representative ones for
 reference; the rest can be archived.
 
 ## Action

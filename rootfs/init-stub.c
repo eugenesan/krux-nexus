@@ -52,12 +52,15 @@
 /* how long to wait for adb before touching anything, in seconds */
 #define USB_WAIT_S 8
 
-/* where the firmware lives: on the data partition, so that the
- * ramdisk stays small and the firmware can be updated without
- * repacking it */
+/* Where the firmware lives.
+ *
+ * During development it is on the data partition, so that the ramdisk
+ * stays small and the firmware can be updated over adb without
+ * repacking the boot image.  A production image can instead carry a
+ * read-only copy in the ramdisk at /opt/krux; that copy wins when it is
+ * present, and the data copy remains the development fallback. */
 #define FIRMWARE_DIR "/data/krux"
-#define FIRMWARE_BIN "/data/krux/micropython"
-#define FIRMWARE_MAIN "/data/krux/boot.py"
+#define BUNDLED_FIRMWARE_DIR "/opt/krux"
 
 /* the firmware's own log: init gives a service /dev/null on stdout and
  * stderr, so without this the firmware's messages -- how far it got, and
@@ -133,6 +136,8 @@ static void *start_twrp(void *arg) {
 /* The firmware's settings store wants "/flash" and "/sd".  Point them at
  * the data partition. */
 static void make_the_settings_directories(void) {
+    /* bundled firmware still keeps its mutable settings on /data */
+    mkdir("/data/krux", 0755);
     mkdir(SETTINGS_DIR, 0755);
     mkdir(SD_DIR, 0755);
     if (symlink(SETTINGS_DIR, "/flash") != 0 && errno != EEXIST) {
@@ -201,13 +206,32 @@ static void *start_the_firmware(void *arg) {
         say("could not stop the recovery");
     }
     sleep(2);
-    if (chdir(FIRMWARE_DIR) != 0) {
-        say("no firmware directory");
-    }
     make_the_settings_directories();
     redirect_the_output();
-    say("starting the firmware");
-    execl(FIRMWARE_BIN, "micropython", FIRMWARE_MAIN, (char *)NULL);
+
+    /* Prefer the read-only copy bundled in the boot image, if there is
+     * one.  The development copy on /data stays as the fallback so the
+     * same stub works with either image. */
+    {
+        const char *dir = FIRMWARE_DIR;
+        char binary[64];
+        char main_py[64];
+
+        if (access(BUNDLED_FIRMWARE_DIR "/micropython", X_OK) == 0 &&
+            access(BUNDLED_FIRMWARE_DIR "/boot.py", R_OK) == 0) {
+            dir = BUNDLED_FIRMWARE_DIR;
+            say("using the firmware bundled in the boot image");
+        } else {
+            say("using the firmware on the data partition");
+        }
+        snprintf(binary, sizeof(binary), "%s/micropython", dir);
+        snprintf(main_py, sizeof(main_py), "%s/boot.py", dir);
+        if (chdir(dir) != 0) {
+            say("no firmware directory");
+        }
+        say("starting the firmware");
+        execl(binary, "micropython", main_py, (char *)NULL);
+    }
     say("the firmware did not start");
     return NULL;
 }

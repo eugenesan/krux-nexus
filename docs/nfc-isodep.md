@@ -345,3 +345,66 @@ separate "card mutes on gated commands" from "link drops on the third APDU".
     power-cycling it again.
 * `krux/src/krux/seedkeeper.py`: `0x9C20` now reads
   "Secure channel required".
+
+---
+
+## Update 2026-10-28 — the secure channel works; the antenna decides
+
+The secure channel described above is implemented and verified end to end
+against the real card: `0x81` handshake, manual ephemeral-key recovery,
+AES-128-CBC/HMAC-SHA1 envelopes, PIN verify, list, export, free-space and
+import/save all work.
+
+### What was actually wrong
+
+* **The card's coupling is marginal on some Nexus 5 units.**  On the first
+  phone, even a 15-byte SELECT failed randomly with `CORE_INTERFACE_ERROR`
+  / `0xB2`.  Android's own NFC reader on that same phone was equally
+  inconsistent (some reads took 10 s, some taps produced duplicate reads).
+  A second Nexus 5 reads the same card reliably, including with the card
+  attached for the whole sequence.
+* **The PIN-before-card order is deliberate.**  It matches the official
+  SeedKeeper Android app and keeps the card session uninterrupted.  The old
+  order read the status first, asked for the PIN, and then needed the card
+  re-presented because the link had gone idle during keypad entry.  Now the
+  label (for save) and the PIN are entered first; then the card is presented
+  once for select → secure channel → PIN verify.
+* **A lost `0x81` is not retried on the same activation.**  After
+  `CORE_INTERFACE_ERROR` the NFCC tears the RF link down, so the page starts
+  a fresh activation instead.
+
+### RF experiments that were tried and reverted
+
+Both parameters were accepted by the NFCC and made no reliability
+difference on the marginal phone:
+
+* `NCI_PARAM_ID_FWI` (`0x58`) raised from the vendor's `0x70` (FWI 7,
+  ~39 ms) to `0xF0` (FWI 15, ~1.2 s).  The 300 ms `0x81` answer still
+  depended on the card's WTX frame.
+* `NCI_PARAM_ID_PA_FSDI` (`0xBA`) set to 2 (32-byte reader frames) so the
+  217-byte `0x81` answer would arrive as several short blocks.  No
+  improvement; sometimes worse.
+
+The vendor `SET_CONFIG_RF` is therefore back to `0x51 … 0x58 0x01 0x70`.
+
+### UX on a marginal phone
+
+`krux/src/krux/pages/seedkeeper.py` now:
+
+* starts the field, then shows **"Tap your SeedKeeper card flat on the back,
+  over the camera. Hold it still."**
+* retries a session up to 20 times with an 8 s activation window each;
+* retries a read action (list/export/status) with a fresh secure channel,
+  without asking for the PIN again;
+* shows a retry counter and **"Tap to cancel"** between attempts;
+* asks for the save label before the card is presented, so the write starts
+  immediately after PIN verification.
+
+### NFC files on the target
+
+`nfc/blobs/bcm2079x-b5_firmware.ncd` and `..._pre_firmware.ncd` are the
+vendor firmware patches.  The current port **does not load them**: the chip
+already has firmware and answers `GET_BUILD_INFO` after a power cycle, and
+`nfc.py` starts with `CORE_RESET`/`CORE_INIT`.  They are kept as reference
+for a future vendor-HAL comparison.  The runtime needs only the kernel's
+`/dev/bcm2079x` node; no NFC blob is required in the target filesystem.

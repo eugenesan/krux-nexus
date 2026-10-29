@@ -852,3 +852,7 @@ and the VFE's registers, taken the same way.  The candidates are
 
 Our VFE register dump (for the comparison) is in the kernel log
 when the frame ends: `DEBUG: VFE regs:`.
+
+> **Path note:** this document predates the source consolidation. The port
+> modules are now in `krux/src/` and `micropython/ports/unix/`; `kruxport/`
+> no longer exists.

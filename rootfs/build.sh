@@ -89,16 +89,16 @@ post_build() {
     # `nfc.transport()`.  It goes next to the firmware's own files, and
     # the init script puts that directory on the path.
     mkdir -p "$tgt/opt/krux"
-    if [ -f "$here/../kruxport/kruxport/nfc.py" ]; then
-        cp -v "$here/../kruxport/kruxport/nfc.py" "$tgt/opt/krux/nfc.py" \
+    if [ -f "$here/../krux/src/nfc.py" ]; then
+        cp -v "$here/../krux/src/nfc.py" "$tgt/opt/krux/nfc.py" \
             && echo "     (the port's nfc module -- the SeedKeeper transport)"
     else
         echo "NOTE: the port's nfc.py is missing, skipping"
     fi
 
     # The port's `board` module: what the firmware is running on.
-    if [ -f "$here/../kruxport/kruxport/board.py" ]; then
-        cp -v "$here/../kruxport/kruxport/board.py" "$tgt/opt/krux/board.py" \
+    if [ -f "$here/../krux/src/board.py" ]; then
+        cp -v "$here/../krux/src/board.py" "$tgt/opt/krux/board.py" \
             && echo "     (the port's board module -- the hammerhead's config)"
     else
         echo "NOTE: the port's board.py is missing, skipping"
@@ -106,29 +106,25 @@ post_build() {
 
     # MicroPython itself: buildroot cannot build it (it insists on a
     # dynamic link), so the hand-built static binary is copied in.
-    if [ -f "$here/../kruxport/micropython-arm32" ]; then
+    if [ -f "$here/micropython-arm32" ]; then
         mkdir -p "$tgt/usr/bin"
-        cp -v "$here/../kruxport/micropython-arm32" "$tgt/usr/bin/micropython" \
+        cp -v "$here/micropython-arm32" "$tgt/usr/bin/micropython" \
             && echo "     (the static arm32 MicroPython -- the firmware's runtime)"
     else
         echo "NOTE: micropython-arm32 is missing, skipping"
     fi
 
-    # The Krux firmware, with the port's replacements of the two files
-    # that talk to the MaixPy hardware (the touch screen and the
-    # buttons).  Everything else in the package is portable as it is.
-    KRUX_SRC=${KRUX_SRC:-$HOME/Develop/src/krux-hammerhead/krux/src}
+    # The Krux firmware.  The ported package is the source of truth; it
+    # already contains the Linux touch and button modules.
+    KRUX_SRC=${KRUX_SRC:-$here/../krux/src}
     if [ -d "$KRUX_SRC/krux" ]; then
         rm -rf "$tgt/opt/krux/krux"
         cp -r "$KRUX_SRC/krux" "$tgt/opt/krux/krux"
-        cp -v "$KRUX_SRC/boot.py" "$tgt/opt/krux/boot.py" \
-            && echo "     (the firmware's entry point)"
-        for f in touch.py buttons.py; do
-            if [ -f "$here/../kruxport/kruxport/$f" ]; then
-                cp -v "$here/../kruxport/kruxport/$f" "$tgt/opt/krux/krux/$f" \
-                    && echo "     (the port's $f -- the Linux hardware)"
-            fi
-        done
+        cp "$KRUX_SRC"/*.py "$tgt/opt/krux/"
+        [ -d "$KRUX_SRC/flash" ] && cp -r "$KRUX_SRC/flash" "$tgt/opt/krux/"
+        EMBIT_SRC="$here/../krux/vendor/embit/src/embit"
+        [ -d "$EMBIT_SRC" ] && cp -r "$EMBIT_SRC" "$tgt/opt/krux/embit"
+        echo "     (the firmware's entry point and the port's modules)"
     else
         echo "NOTE: the Krux firmware is not at $KRUX_SRC, skipping"
     fi

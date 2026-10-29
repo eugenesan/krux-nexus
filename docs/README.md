@@ -5,11 +5,13 @@
 - toolchain.md - host toolchain setup
 - toolchain-ubuntu.md - ubuntu arm toolchain notes
 - compaction-log.md - earlier session log (history)
-- continue-prompt.md - resume prompt (to be refreshed later)
+- continue-prompt.md - current resume prompt
 - krux-runtime-data.md - how Krux stores data at runtime
 - findings.md - measurements and findings
-- standalone-log.md - full session log
+- project-log.md - full project session log
 - cam-state.md - camera status
+- cam-bringup.md - camera bring-up failure analysis and recovery plan
+- cam-bringup-alt.md - camera HAL investigation notes
 - nfc-isodep.md - NFC ISO-DEP notes
 - nfc-transport.md - NFC transport notes
 - plan-camera.md - camera completion plan (kernel V4L2 → MaixPy sensor shim)

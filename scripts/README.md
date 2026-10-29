@@ -27,7 +27,7 @@ made — a probe is usually the only description of the question it was asking.
 Shared drivers at the top level:
 
 * `scripts/build/build-micropython.sh` builds the static arm32 interpreter and
-  writes `kruxport/micropython-arm32`;
+  writes `rootfs/micropython-arm32`;
 * `scripts/build-armel-sysroot.sh` builds the armel sysroot the firmware is
   linked against;
 * `scripts/deploy-firmware.sh` pushes the interpreter, `krux/src`, embit and

@@ -1,7 +1,7 @@
 """Read the NFC chip's id over the I2C bus: the transport check."""
 import sys
 sys.path.insert(0, ".")
-from kruxport.i2c import I2CBus
+from krux.i2c import I2CBus
 
 bus = I2CBus(0)
 print("bus 0 open")

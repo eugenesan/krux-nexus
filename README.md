@@ -4,6 +4,13 @@ Goal: replace Android's userspace with a small BusyBox/MicroPython root that run
 Krux, keeping the **stock CAF kernel** for as long as possible, and eventually
 compiling out the radios from the kernel.
 
+**Status (2026-10-28):** the Kernel, MicroPython and Krux image run on the
+Nexus 5; SeedKeeper NFC is working end to end on the second test phone,
+including saving to the card. The remaining work is the camera, then a
+read-only production image and final air-gap hardening. See
+`docs/continue-prompt.md` for the current hand-off and `docs/project-log.md`
+for the history.
+
 Design principle, applied in order:
 
 1. **No kernel changes until the userspace works.** Use the kernel already
@@ -181,20 +188,20 @@ you do both at once.
 
 ## 7. Working copies
 
-Ported code goes in copies, never in the originals:
+The working tree is this repository, `~/Develop/src/krux-nexus`. The three
+upstream trees are git submodules, so the port's changes are reviewable as
+commits against their own branches:
 
 ```
-~/Develop/src/krux-hammerhead/
-  krux/            clone of eugenesan/krux @ unified-sighash_seedkeeper   275M
-  kruxmobileapp/   clone of eugenesan/kruxmobileapp @ same branch         221M
+krux/          eugenesan/krux, branch nexus-port
+micropython/   eugenesan/micropython, branch master
+linux/         eugenesan/android_kernel_lge_hammerhead, branch airgap/master-cleanup
 ```
 
-Both are local clones (no network auth needed), same branch as
-`~/Develop/src/krux-sighash/`, build artifacts excluded. Changes land as
-commits here so they are reviewable as a diff against your fork.
-
-`seedsigner/` is not cloned yet — we are going with Krux, and it has uncommitted
-patch files in the original that should be sorted out before cloning.
+The port's Python modules live in `krux/src/`, the MicroPython C modules in
+`micropython/ports/unix/`, and the kernel profile in `tools/`. Build outputs
+of this repository's own helpers live under `rootfs/` (the static MicroPython
+binary) and `artifacts/` (stock images); both are gitignored.
 
 ---
 
@@ -210,3 +217,51 @@ Nothing cross-buildable is installed. Needed before Phase 3:
 | `cmake`, `libusb`, `libudev` | for the NFC transport port |
 
 `git`, `make` and `python3` are present. 56 GB free.
+
+---
+
+## 9. Firmware build output, deploy and bundled images
+
+The source is in the submodules; nothing is copied into a separate `kruxport/`
+directory any more. The static ARM32 MicroPython interpreter is built to
+`rootfs/micropython-arm32` (gitignored) by:
+
+```sh
+bash scripts/build/build-micropython.sh
+```
+
+The build takes a disposable worktree of the `micropython` submodule at `HEAD`
+in `BUILD=` (default `/tmp/opencode/mp-build`) and uses the armel sysroot at
+`/tmp/opencode/armel-sysroot` (rebuilt by `scripts/build-armel-sysroot.sh` when
+missing).
+
+Deploy over adb during development:
+
+```sh
+bash scripts/deploy-firmware.sh
+```
+
+That pushes the interpreter, the Krux package and embit to `/data/krux`, clears
+byte-code caches and restarts the `krux` service. The firmware log is
+`/data/krux/fw.log`.
+
+For a finished, read-only device, build the firmware into the boot image
+instead. `--bundle` copies MicroPython, Krux and embit into `/opt/krux` inside
+the ramdisk; the init stub prefers that copy and falls back to `/data/krux`
+during development:
+
+```sh
+bash scripts/build/build-micropython.sh
+bash rootfs/build-stub-ramdisk.sh --bundle
+RAMDISK=rootfs/stock/ramdisk-bundled \
+    bash rootfs/make-boot-image.sh \
+    artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
+    /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
+    rootfs/stock/boot-bundled.img
+```
+
+Mutable settings and the log still go to `/data/krux`; the firmware and its
+Python libraries themselves are then read-only in the boot image.
+
+See `docs/build-guide.md` for the full build, `docs/directories.md` for the
+layout, and `docs/nfc-isodep.md` / `docs/nfc-transport.md` for the NFC work.

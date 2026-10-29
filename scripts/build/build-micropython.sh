@@ -37,7 +37,7 @@
 #                  the micropython submodule in this project)
 #   SYSROOT=DIR    the armel sysroot (default: /tmp/opencode/armel-sysroot)
 #   OUT=FILE       where the binary lands (default:
-#                  kruxport/micropython-arm32)
+#                  rootfs/micropython-arm32)
 #
 # The sysroot is not carried around: it is rebuilt from the vendored
 # packages in vendor/toolchain.ubuntu by scripts/build-armel-sysroot.sh.
@@ -46,7 +46,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 TAG=${TAG:-HEAD}
 SRC=${SRC:-$HERE/../../micropython}
 BUILD=${BUILD:-/tmp/opencode/mp-build}
-OUT=${OUT:-$HERE/../../kruxport/micropython-arm32}
+OUT=${OUT:-$HERE/../../rootfs/micropython-arm32}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
 CC_CROSS=${CC_CROSS:-arm-linux-gnueabi-}
@@ -98,5 +98,6 @@ make -j"$(nproc)" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
 
 file build-standard/micropython
-echo "  -> $OUT"
+mkdir -p "$(dirname "$OUT")"
 cp build-standard/micropython "$OUT"
+echo "  -> $OUT"

@@ -15,12 +15,13 @@ below.
 | the **init stub** | `rootfs/build-stub-init.sh` | `rootfs/stub/krux-init` |
 | the **stub ramdisk** | `rootfs/build-stub-ramdisk.sh` | `rootfs/stock/ramdisk-stub` |
 | the **boot image** | `rootfs/make-boot-image.sh` | `rootfs/stock/boot-stub.img` |
-| the **firmware** (the MicroPython interpreter) | `scripts/build/build-micropython.sh` | `kruxport/micropython-arm32` |
+| the **firmware** (the MicroPython interpreter) | `scripts/build/build-micropython.sh` | `rootfs/micropython-arm32` |
 | the **kernel** | `tools/build-kernel.sh` | the output directory you name |
 | the **deploy** | `scripts/deploy-firmware.sh` | on the device, in `/data/krux` |
 
-The boot image is only needed when the **kernel** changes; the
-firmware is deployed over adb and does not need one.
+The boot image is only needed when the **kernel** changes; during
+development the firmware is deployed over adb and does not need one. For a
+finished device, use the bundled image below so the firmware is read-only.
 
 ## 0. The tools
 
@@ -92,7 +93,7 @@ and the touch screen to the firmware.
 
 ```sh
 bash rootfs/make-boot-image.sh \
-    rootfs/stock/boot-ourkern-clean-twrp.img \
+    artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
     rootfs/stock/boot-stub.img
 ```
@@ -114,7 +115,7 @@ About three minutes.  It builds the `micropython` submodule at HEAD
 (unix port, 1.30.0-dev)
 with the port's own modules -- the display, the input devices, the
 NFC, the I2C bus and the rest of the `machine` module -- and leaves
-`kruxport/micropython-arm32`.
+`rootfs/micropython-arm32`.
 
 The build tree is disposable and goes to `BUILD=` (by default
 `/tmp/opencode/mp-build`); the source tree is the `micropython`
@@ -132,6 +133,27 @@ That pushes the interpreter, the Krux package and the port's own
 modules to the device, clears the byte-code cache and restarts the
 firmware (`setprop ctl.stop krux` / `setprop ctl.start krux`).  The
 firmware's log is `/data/krux/fw.log`.
+
+## 5b. A read-only, bundled boot image
+
+For a finished device, put the firmware in the boot image instead of
+`/data/krux`. `--bundle` copies the interpreter, Krux and embit into
+`/opt/krux` inside the ramdisk:
+
+```sh
+bash scripts/build/build-micropython.sh
+bash rootfs/build-stub-ramdisk.sh --bundle
+RAMDISK=rootfs/stock/ramdisk-bundled \
+    bash rootfs/make-boot-image.sh \
+    artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
+    /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
+    rootfs/stock/boot-bundled.img
+```
+
+The init stub prefers `/opt/krux` when it is present and falls back to
+`/data/krux`, so the adb deploy path above keeps working during
+development. Settings and the log still live on `/data/krux`; the
+firmware and its Python libraries are read-only in the boot image.
 
 ## 6. Boot it
 
@@ -165,18 +187,26 @@ sh tools/fetch-toolchain.sh /tmp/opencode/tc-arch
 TOOLCHAIN=arch TOOLCHAIN_PATH=/tmp/opencode/tc-arch \
     bash tools/build-kernel.sh --out /tmp/opencode/ko
 
-# the stub, the ramdisk and the boot image
-bash rootfs/build-stub-init.sh
-bash rootfs/build-stub-ramdisk.sh
-bash rootfs/make-boot-image.sh \
-    rootfs/stock/boot-ourkern-clean-twrp.img \
-    /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
-    rootfs/stock/boot-stub.img
-
 # the firmware
 bash scripts/build/build-micropython.sh
 
-# deploy and boot
+# the stub, the development ramdisk and the boot image
+bash rootfs/build-stub-init.sh
+bash rootfs/build-stub-ramdisk.sh
+bash rootfs/make-boot-image.sh \
+    artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
+    /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
+    rootfs/stock/boot-stub.img
+
+# optional: the read-only bundled image
+bash rootfs/build-stub-ramdisk.sh --bundle
+RAMDISK=rootfs/stock/ramdisk-bundled \
+    bash rootfs/make-boot-image.sh \
+    artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
+    /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
+    rootfs/stock/boot-bundled.img
+
+# deploy and boot (development image)
 bash scripts/deploy-firmware.sh
 adb reboot bootloader
 fastboot boot rootfs/stock/boot-stub.img

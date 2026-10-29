@@ -487,3 +487,7 @@ Pass: ten distinct frames, 320×240, no `SensorError`, daemon logs 10–15 fps,
 | 11 | display | QR page / flash tools | live image and progress bar render | fix lcd Image path |
 | 12 | stability | D4 loops | no oops/reboot/fd leak; ≥8 fps | stop and profile |
 | 13 | air-gap | D5 | no new interface/socket/module | remove/stop daemon |
+
+> **Path note:** this document predates the source consolidation. The port
+> modules are now in `krux/src/` and `micropython/ports/unix/`; `kruxport/`
+> no longer exists.

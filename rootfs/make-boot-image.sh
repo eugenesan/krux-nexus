@@ -17,6 +17,9 @@
 #
 # Usage:
 #   ./make-boot-image.sh [TEMPLATE.img] [KERNEL] [OUT.img]
+#
+# RAMDISK=path selects a different ramdisk, for example the one built
+# with build-stub-ramdisk.sh --bundle (rootfs/stock/ramdisk-bundled).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -27,7 +30,7 @@ TEMPLATE=${1:-$ROOT/rootfs/stock/boot-ourkern-clean-twrp.img}
 # rather than rebuilt.
 KERNEL=${2:-$ROOT/rootfs/stock/kernel-stub}
 OUT=${3:-$ROOT/rootfs/stock/boot-stub.img}
-RAMDISK=$HERE/stock/ramdisk-stub
+RAMDISK=${RAMDISK:-$HERE/stock/ramdisk-stub}
 WORK=${WORK:-/tmp/opencode/boot-stub}
 
 [ -f "$TEMPLATE" ] || { echo "no template boot image at $TEMPLATE" >&2; exit 1; }
