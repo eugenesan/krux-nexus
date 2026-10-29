@@ -16,7 +16,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT=${1:-$HERE/stub/krux-init}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
-CC=${CC:-arm-linux-gnueabi-gcc}
+CC=${CC:-arm-linux-gnueabihf-gcc}
 
 [ -d "$SYSROOT" ] || { echo "no armel sysroot at $SYSROOT (see TOOLCHAIN.md)" >&2; exit 1; }
 

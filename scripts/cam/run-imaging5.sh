@@ -3,7 +3,7 @@
 cd /home/user/Develop/src/android-air-gapped || exit 1
 
 echo "=== build (userspace ARM cross compiler, static) ==="
-arm-linux-gnueabi-gcc -O2 -static -Wall -o /tmp/opencode/imaging5 standalone/cam/imaging5.c 2>&1 | head -20
+arm-linux-gnueabihf-gcc -O2 -static -Wall -o /tmp/opencode/imaging5 standalone/cam/imaging5.c 2>&1 | head -20
 ls -la /tmp/opencode/imaging5
 
 echo

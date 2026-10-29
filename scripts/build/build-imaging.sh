@@ -5,7 +5,7 @@ set -e
 R=/home/user/Develop/src/android-air-gapped
 cd $R/standalone/cam
 
-CC=${CC:-arm-linux-gnueabi-gcc}
+CC=${CC:-arm-linux-gnueabihf-gcc}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
 

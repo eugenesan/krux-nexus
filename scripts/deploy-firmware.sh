@@ -16,6 +16,7 @@ set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MICROPYTHON=${MICROPYTHON:-$HERE/../rootfs/micropython-arm32}
+CAMD=${CAMD:-/tmp/opencode/camd}
 KRUXSRC="$HERE/../krux/src"
 RESTART=${DEPLOY_RESTART:-1}
 
@@ -42,6 +43,18 @@ echo "== the top-level port modules"
 for f in "$KRUXSRC"/*.py; do
 	adb push "$f" /data/krux/ >/dev/null
 done
+
+if [ -f "$CAMD" ]; then
+	echo "== camd daemon"
+	adb push "$CAMD" /data/krux/camd >/dev/null
+	adb shell 'chmod +x /data/krux/camd' >/dev/null
+fi
+
+CPPFW="$HERE/../cam/fw/cpp_firmware_v1_2_0.fw"
+if [ -f "$CPPFW" ]; then
+	echo "== cpp firmware"
+	adb push "$CPPFW" /data/krux/cpp_firmware_v1_2_0.fw >/dev/null
+fi
 if [ -d "$KRUXSRC/flash" ]; then
 	adb shell 'mkdir -p /data/krux/flash' >/dev/null
 	for f in "$KRUXSRC"/flash/*; do
