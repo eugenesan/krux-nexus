@@ -1718,3 +1718,77 @@ NFC; the card can stay attached for the whole sequence and saving works.
 
 Next: rebuild kernel + MicroPython + boot image, final NFC check on the second
 phone, then commit the submodules and the main project.  Camera Phase A follows.
+
+## 2026-10-29 18:09:50 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning and entropy collection), progressing through 4 documented stages from kernel research to MicroPython integration.
+
+## Requirements
+- Work only on the camera; do not touch SeedKeeper or NFC.
+- No modem, Wi-Fi, Bluetooth, vendor HAL, or Android framework in the final path.
+- Reversible boots only (`fastboot boot`, never flash).
+- One device, one thread at a time (camera boot+run cycle is atomic).
+- Keep all port code under `krux/src/` and `micropython/ports/unix/`.
+
+## Decisions
+- **CAMIF_RAW + CPP v1.2.0** chosen as the stream source (PIX_VIEWFINDER blocked by VFE0 pix0 overflow; only raw path delivers frames).
+- **Path A (native V4L2 + camd daemon)** chosen over Path B (HAL3); HAL3 depends on vendor HAL/gralloc/binder.
+- **Hard-float toolchain** (`arm-linux-gnueabihf-*`) adopted for all recovery binaries and kernel builds; soft-float dependency dropped.
+- **Unix socket** (`/data/krux/camd.sock`) instead of TCP for air-gap compliance.
+- **devtmpfs toggled per build**: `=y` for camera builds (runtime nodes), `=n` for air-gap default. Currently `=y`.
+- **KernelSu cherry-picked** (5 commits from `origin/lineage-23.2-kernelsu`) onto `airgap/cam-ksu` branch for root access during testing; linux submodule pointer stays on `airgap/master-cleanup` (95f4b0f) in main repo.
+- **Image is dark** (Y mean≈1-2) due to fixed exposure; auto-exposure is a future optimization. QR testing requires bright lighting.
+
+## Work State
+### Completed
+- Stage 1: devtmpfs enabled, camera kernel built and booted, VFE overflow documented as blocker.
+- Stage 2: CAMIF_RAW path delivers non-empty NV12 frames (~900k non-zero bytes, frame0.nv12 saved).
+- Stage 3: camd daemon (captures QVGA, serves over Unix socket), sensor.py (MaixPy-compatible client), _image native module (Image, width, height, to_bytes, from_nv12, get_statistics, find_qrcodes via quirc), image.py wrapper, lcd_bcm.c (Image support). Smoke test passes (10 frames 320×240, get_id() → 0x179). 100-frame stability passed (mem_free stable). Unix socket verified (no TCP listener).
+- Toolchain: switched all scripts and docs from soft-float to hard-float.
+- Docs: cam-state.md, plan-camera.md, cam-bringup.md, cam-bringup-stage1-4.md, continue-prompt.md, project-log.md, directories.md all updated.
+- All changes committed across main repo, krux, and micropython submodules.
+
+### Active
+- Stage 4 acceptance: QR decode on real QR code, scene-dependent entropy, 50 reset/run/close cycles, 30-min stability, air-gap verification.
+
+### Blocked
+- QR decode untested (image too dark, needs bright lighting or auto-exposure).
+- VFE0 pix0 overflow blocks PIX_VIEWFINDER path (only CAMIF_RAW works).
+- Device instability under sustained load (thermal/watchdog reboots).
+- TWRP overlays LCD writes (visual confirmation limited in recovery mode).
+- Air-gap verification not yet run.
+
+## Next Move
+1. Boot camera kernel (`fastboot boot artifacts/built/boot-cam.img`), verify recovery + uid 0 + device nodes.
+2. Deploy firmware (`DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`).
+3. Run test scripts in order: `test_smoke.sh`, `test_qr.sh` (hold bright QR code 15-25 cm), `test_entropy.sh`, `test_lcd.sh`, `test_stability.sh`, `test_cycles.sh`.
+4. Boot air-gap kernel, run `test_airgap.sh`.
+5. If QR fails due to dark image, implement auto-exposure via `__write_reg` in camd.
+6. 30-min long-run stability test on QR capture page.
+
+## Relevant Files
+- `cam/camd.c`: daemon (capture + QVGA conversion + Unix socket server)
+- `cam/imaging8.c`: lab tool (measurement fixes, CPP retry)
+- `cam/imx179_regs.h`: sensor register tables (settings_7 for binned mode)
+- `krux/src/sensor.py`: MaixPy-compatible camd client
+- `krux/src/image.py`: Python wrapper around native _image
+- `micropython/ports/unix/image_maixpy.c`: native _image module (quirc integrated)
+- `micropython/ports/unix/lcd_bcm.c`: LCD display (Image support added)
+- `micropython/ports/unix/Makefile`: registered image_maixpy.c + quirc sources
+- `scripts/deploy-firmware.sh`: pushes micropython, krux, camd, cpp firmware
+- `tools/build-kernel.sh`: kernel build (host toolchain, camera profile)
+- `docs/cam-bringup-stage4.md`: Stage 4 prompt with tests and acceptance
+- `docs/cam-state.md`: current camera state
+- `artifacts/built/boot-cam.img`: camera kernel boot image
+
+## Important Context
+- Camera char-device majors are allocated at runtime; devtmpfs must be on for camera builds.
+- `CONFIG_DEVTMPFS` is currently `=y` in `tools/profiles/hammerhead-keep.list` (restored from `=n` for testing). Air-gap builds should use `=n`.
+- The kernelsu branch (`airgap/cam-ksu`) is available in linux/ for root access but the main repo pointer stays on `airgap/master-cleanup`.
+- All commits are pushed to local branches; nothing pushed to origin.
+- Test scripts are in `scripts/misc/test_*.sh`. The device is unstable under sustained load (thermal/watchdog); use shorter runs.
+- The image is dark (Y mean≈1-2) due to fixed exposure (1248/1252 lines). QR detection requires bright lighting.
+- `camd` must be started externally (no subprocess in MicroPython); sensor.py assumes it's already running.
