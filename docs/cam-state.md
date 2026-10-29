@@ -857,7 +857,7 @@ when the frame ends: `DEBUG: VFE regs:`.
 
 Kernel built from `linux` at `airgap/master-cleanup` (`95f4b0f38ce`) with the
 camera profile, using the host ARM toolchain (`arm-linux-gnueabihf-gcc`), output
-`/tmp/opencode/ko-cam`, image `/tmp/opencode/boot-cam.img`.  `CONFIG_DEVTMPFS`
+`/tmp/opencode/ko-cam`, image `artifacts/built/boot-cam.img`.  `CONFIG_DEVTMPFS`
 was temporarily enabled (`=y`) for the build; restored to `=n` afterwards, so a
 camera build must re-apply `sed -i 's/^CONFIG_DEVTMPFS=n/CONFIG_DEVTMPFS=y/'`.
 

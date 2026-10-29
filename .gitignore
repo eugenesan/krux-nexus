@@ -15,9 +15,14 @@ cam/camprobe*
 rootfs/micropython-arm32
 
 # rootfs build artifacts
-rootfs/stock/
 rootfs/standalone/ramdisk.cpio
 rootfs/standalone/ramdisk.cpio.gz
+
+# built boot images and ramdisks
+artifacts/built/
+
+# camd daemon binary
+cam/camd
 *.img
 
 # reference artifacts (large, not tracked)

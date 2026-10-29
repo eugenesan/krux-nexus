@@ -16,7 +16,7 @@ set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MICROPYTHON=${MICROPYTHON:-$HERE/../rootfs/micropython-arm32}
-CAMD=${CAMD:-/tmp/opencode/camd}
+CAMD=${CAMD:-$HERE/../cam/camd}
 KRUXSRC="$HERE/../krux/src"
 RESTART=${DEPLOY_RESTART:-1}
 

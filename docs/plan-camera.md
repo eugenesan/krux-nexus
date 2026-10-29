@@ -56,7 +56,7 @@ TOOLCHAIN=host bash tools/build-kernel.sh --out /tmp/opencode/ko-cam
 sh rootfs/make-boot-image.sh \
   artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
   /tmp/opencode/ko-cam/arch/arm/boot/zImage-dtb \
-  /tmp/opencode/boot-cam.img
+  artifacts/built/boot-cam.img
 ```
 
 For a camera build, devtmpfs must be on for this build only:
@@ -502,7 +502,7 @@ Pass: ten distinct frames, 320×240, no `SensorError`, daemon logs 10–15 fps,
 
 | # | test | command / action | pass signal | on fail |
 |---|---|---|---|---|
-| 1 | kernel identity | `fastboot boot /tmp/opencode/boot-cam.img` | `Booting OKAY`; `/proc/version` has built commit; uid 0 | repeat; do not measure |
+| 1 | kernel identity | `fastboot boot artifacts/built/boot-cam.img` | `Booting OKAY`; `/proc/version` has built commit; uid 0 | repeat; do not measure |
 | 2 | nodes | `ls /dev/video* /dev/v4l-subdev*` | video0/1, subdev11/13/15/17 present | fix ramdisk/ueventd |
 | 3 | sensor binned | run A2; `sensordump` | `0x034c..0x034f` = 1640/1232 | fix mode sequence |
 | 4 | processed frame | A2, source 1 | `planes[0].bytesused>0`, Y non-zero, `pix_count>0` | A4 instrumentation |
