@@ -12,7 +12,7 @@ keep the change set small enough to review.
 ## Read first
 
 1. `docs/cam-bringup-stage2.md`
-2. `docs/plan-camera.md` §3 and §4 (Phases B, C, D)
+2. `docs/cam-plan.md` §3 and §4 (Phases B, C, D)
 3. `docs/cam-state.md`
 4. `krux/src/sensor.py`
 5. `krux/src/krux/camera.py`
@@ -23,7 +23,7 @@ keep the change set small enough to review.
 
 ## Architecture to implement
 
-Use the daemon split from `docs/plan-camera.md` §3:
+Use the daemon split from `docs/cam-plan.md` §3:
 
 - `cam/camd` owns `/dev/video0`, `/dev/video1`, sensor, CSID/PHY, ISP-IF,
   ISP, and CPP only for the raw path.
@@ -48,7 +48,7 @@ Do not embed the V4L2 state machine in MicroPython.
 
 ## Required sensor API
 
-Implement `docs/plan-camera.md` §B4 exactly:
+Implement `docs/cam-plan.md` §B4 exactly:
 
 - `reset(freq=..., dual_buff=False, choice=None)`
 - `get_id()` -> `0x179`
@@ -67,7 +67,7 @@ current per-call `sensor()` construction in place.
 
 ## Native image requirements
 
-Implement `docs/plan-camera.md` §C1 and §C2:
+Implement `docs/cam-plan.md` §C1 and §C2:
 
 - NV12 to QVGA conversion in C, never through Python lists;
 - no 1640x1232 frame on the MicroPython GC heap;
@@ -91,7 +91,7 @@ Deploy the rebuilt kernel with `fastboot boot`, not `fastboot flash`.
 
 ## Validation
 
-Use `docs/plan-camera.md` §D1-D5.  At minimum:
+Use `docs/cam-plan.md` §D1-D5.  At minimum:
 
 ```sh
 adb shell 'cd /data/krux && ./micropython -c "

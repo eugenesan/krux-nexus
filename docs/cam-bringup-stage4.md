@@ -5,14 +5,14 @@ non-empty QVGA frame over the Unix socket and the smoke test passes.
 
 ## Goal
 
-Complete the remaining acceptance items from `docs/plan-camera.md` §D1–D5:
+Complete the remaining acceptance items from `docs/cam-plan.md` §D1–D5:
 QR decode on real QR codes, scene-dependent entropy, 50 reset/run/close
 cycles, 30-min stability, and air-gap verification.
 
 ## Read first
 
 1. `docs/cam-bringup-stage3.md`
-2. `docs/plan-camera.md` §D1–D5
+2. `docs/cam-plan.md` §D1–D5
 3. `docs/cam-state.md` (2026-10-29 Stage 3 status)
 4. `cam/camd.c`, `krux/src/sensor.py`, `krux/src/image.py`
 5. `micropython/ports/unix/image_maixpy.c`, `micropython/ports/unix/lcd_bcm.c`

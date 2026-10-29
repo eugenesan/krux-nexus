@@ -12893,3 +12893,11 @@ not flashed, so the installed boot partition is unchanged.
 - Known issues: dark image (fixed exposure), VFE overflow blocks PIX_VIEWFINDER, device unstable under sustained load.
 - Remaining: QR on real code, scene-dependent entropy, 50 cycles, 30-min stability, air-gap.
 - Stage 4 prompt: docs/cam-bringup-stage4.md.
+
+---
+
+## 2026-10-29 — Documentation reorganization
+
+- Renamed `docs/plan-camera.md` → `docs/cam-plan.md`.
+- Dropped `docs/continue-prompt.md`; created `docs/todo.md` with remaining tasks.
+- Updated all cross-references in docs/.

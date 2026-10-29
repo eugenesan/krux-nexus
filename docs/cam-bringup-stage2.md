@@ -16,7 +16,7 @@ Stage 1 is complete and the camera kernel boots with `/dev/video0`,
 ## Read first
 
 1. `docs/cam-bringup-stage1.md`
-2. `docs/plan-camera.md` §A2-A6
+2. `docs/cam-plan.md` §A2-A6
 3. `docs/cam-state.md`
 4. `cam/imaging8.c`, `cam/ion.h`, `cam/isp.h`, `cam/ispif.h`,
    `cam/sensor_live.h`, `cam/sensor_config.h`, `cam/cam_config.h`,
@@ -33,7 +33,7 @@ Do not add Krux or MicroPython code in this stage.
 
 ## Required changes
 
-Apply `docs/plan-camera.md` §A2 to `cam/imaging8.c`:
+Apply `docs/cam-plan.md` §A2 to `cam/imaging8.c`:
 
 - print `planes[0..1].bytesused`, `.length`, `.data_offset`, and reservation fd;
 - map each plane over its ION length, not `width*height`;
@@ -67,7 +67,7 @@ adb shell 'dmesg | grep -a CAMDBG' > /tmp/opencode/camdbg-run.txt
 ```
 
 If the processed path succeeds, stop there.  Only if it fails, run the
-three stream sources from `docs/plan-camera.md` §A3 and then the
+three stream sources from `docs/cam-plan.md` §A3 and then the
 instrumentation/vendor comparison from §A4/A5.
 
 ## Acceptance

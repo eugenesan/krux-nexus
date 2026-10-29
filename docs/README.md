@@ -5,7 +5,7 @@
 - toolchain.md - host toolchain setup
 - toolchain-ubuntu.md - ubuntu arm toolchain notes
 - compaction-log.md - earlier session log (history)
-- continue-prompt.md - current resume prompt
+- todo.md - remaining tasks for project completion
 - krux-runtime-data.md - how Krux stores data at runtime
 - findings.md - measurements and findings
 - project-log.md - full project session log
@@ -17,7 +17,7 @@
 - cam-bringup-stage3.md - camera Stage 3 MicroPython/Krux prompt
 - nfc-isodep.md - NFC ISO-DEP notes
 - nfc-transport.md - NFC transport notes
-- plan-camera.md - camera completion plan (kernel V4L2 → MaixPy sensor shim)
+- cam-plan.md - camera completion plan (kernel V4L2 → MaixPy sensor shim)
 - phase0-findings.md - phase 0 bring-up findings
 - directories.md - project layout
 - scripts-triage.md - scripts/tools layout and archive decisions

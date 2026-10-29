@@ -943,7 +943,7 @@ start/update or WM IRQ mask), so no buffer is completed and
 `planes[0].bytesused` cannot be measured.
 
 The `CAMIF_RAW` path (CPP firmware v1.2.0, binned mode) was then run per
-`plan-camera.md` §A3.  It **succeeds**: `GOT A FRAME: index=2`, the dequeued
+`cam-plan.md` §A3.  It **succeeds**: `GOT A FRAME: index=2`, the dequeued
 buffer holds ~900 k non-zero bytes, and `/data/local/tmp/frame0.nv12` (2 020 480
 bytes) was saved and pulled to `/tmp/opencode/frame0.nv12`.  No kernel oops and
 no `camif error status 0xd0` in the log.

@@ -604,7 +604,7 @@ before spending additional effort on HAL loading or provider architecture.
 Camera kernel built and booted successfully (devtmpfs on, nodes present,
 `CONFIG_MSMB_CAMERA=y`, `CONFIG_IMX179=y`, `CONFIG_MSM_CSID=y`,
 `CONFIG_NFC_BCM2079X=y`).  The binned `PIX_VIEWFINDER` path was re-run with
-the measurement patch from `plan-camera.md` §A2.
+the measurement patch from `cam-plan.md` §A2.
 
 Blocker: the VFE never completes a buffer.  `STREAMON` succeeds and the
 sensor is programmed correctly, but no `DQBUF` returns; the kernel logs

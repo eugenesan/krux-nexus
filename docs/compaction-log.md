@@ -936,7 +936,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 ## Next Move
 1. Finish the NFC discovery/activation debug (trace discover NCI params, RF discover map, ISO-DEP activation, retry cadence) using the debug trace.
 2. Commit the docs restructure/archival/port/misc changes.
-3. Start the camera plan (`docs/plan-camera.md`).
+3. Start the camera plan (`docs/cam-plan.md`).
 4. Defer the splash.
 
 ## Relevant Files
@@ -988,7 +988,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `tools/` = reusable build/config helpers; `scripts/` = build drivers + device probes; dead scripts in `scripts/archive/<topic>/`.
 - No binary libsecp256k1: `secp256k1.py` is embit's pure-Python fallback.
 - `crypto_fast` C module (mbedtls) replaces slow pure-Python sha512/PBKDF2; `hashlib.sha256` stays native.
-- Camera postponed until NFC/UI/crypto fixed; plan exists (`docs/plan-camera.md`).
+- Camera postponed until NFC/UI/crypto fixed; plan exists (`docs/cam-plan.md`).
 - NFC discovery: do **not** send `RF_DEACTIVATE` + second routing/discover round (it turns RF field off and it never returns); rely on bring-up's single `RF_DISCOVER`, accept status `0x06` as "already active".
 
 ## Work State
@@ -997,7 +997,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - Fixed: About QR, crypto (`crypto_fast` sha512/PBKDF2/HMAC), hmac shim, Vol+/Vol−, brightness, tamper check, mnemonic creation, NFC transport imports/auto-connect, MaixPy shims.
 - Port C modules committed in `micropython` (`dc5042bab`); Krux port commits in `krux` (NFC discovery, tag notification, 2-byte OID-6).
 - Layout consolidation: duplicates removed from `kruxport/`; `apply-micropython-port.sh` deleted; `test_nfc.py` → `scripts/nfc-test.py`; `build-micropython.sh` → `scripts/build/build-micropython.sh` (fixed `SRC`/`OUT`/sysroot paths); `build-airgap-unused-ports-minimal.sh` → `scripts/archive/misc/`; stale `scripts/build/build-mpy.sh` removed.
-- Docs updated and committed: `cce78bc` (script moves/layout/READMEs, gitlinks), `235032b` (`docs/plan-camera.md`).
+- Docs updated and committed: `cce78bc` (script moves/layout/READMEs, gitlinks), `235032b` (`docs/cam-plan.md`).
 - NFC now works end-to-end through activation and APDUs:
   - Bring-up succeeds; discovery finds and activates the SeedKeeper (`RF_INTF_ACTIVATED_NTF` with card name `PVJCOP4SID`).
   - AID SELECT `00 A4 04 00 0A "SeedKeeper"` returns a 13-byte data payload + `9000`; `B0 3C 00 00` (GET_STATUS) also returns `9000` with the same 13 bytes.
@@ -1020,7 +1020,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 2. If no config path: test with a deliberately wrong PIN to see whether the card answers at all (expect `9C02`); compare with the ROM/vendor stack capturing the same VERIFY_PIN on our logging kernel.
 3. Handle `CORE_INTERFACE_ERROR`/`0xB2` explicitly in `_data` (distinct error), and re-activate/re-discover after link loss instead of blindly retrying APDUs.
 4. Commit `krux/src/nfc.py` changes (discovery/activation/link-error fixes) with a clear message.
-5. After NFC: start camera Phase A per `docs/plan-camera.md`; refresh `docs/continue-prompt.md`; defer splash.
+5. After NFC: start camera Phase A per `docs/cam-plan.md`; refresh `docs/continue-prompt.md`; defer splash.
 
 ## Relevant Files
 - `krux/src/nfc.py`: NFC transport; bring-up, discovery, activation, `_data`; `DEBUG=1`.
@@ -1031,7 +1031,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `nfc/stack/nfa/dm/nfa_dm_discover.c`: NFA discovery, `nfa_dm_set_total_duration`, FWI config.
 - `docs/cam-state.md`: captured vendor NFC bring-up/activation trace.
 - `docs/nfc-isodep.md`, `docs/nfc-transport.md`: NFC design/status references.
-- `docs/plan-camera.md`: camera completion plan.
+- `docs/cam-plan.md`: camera completion plan.
 - `docs/build-guide.md`, `docs/directories.md`, `docs/scripts-triage.md`, `scripts/README.md`, `kruxport/README.md`: updated layout/build docs.
 - `scripts/build/build-micropython.sh`: firmware build (output `kruxport/micropython-arm32`).
 - `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts service.
@@ -1111,7 +1111,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 2. If `9C20`: decide with the user whether to implement SeedKeeper secure channel (P-256 ECDH, HMAC-SHA160 session/MAC keys, AES-128-CBC, IV counters, INS `0x81`/`0x82`); would need AES/SHA1 exposed in `crypto_fast` and EC via embit.
 3. If still silent: probe individual APDUs (`B0 A7 00 00`, malformed `B0 42 00 00 00`) with timestamps to distinguish card muting from RF link loss.
 4. Commit the `nfc.py`/`seedkeeper.py`/docs changes with a clear message.
-5. After NFC: start camera Phase A per `docs/plan-camera.md`; refresh `docs/continue-prompt.md`; defer splash.
+5. After NFC: start camera Phase A per `docs/cam-plan.md`; refresh `docs/continue-prompt.md`; defer splash.
 
 ## Relevant Files
 - `krux/src/nfc.py`: transport, discovery/activation, `_data()` error handling/timeouts, reconnect logic; `DEBUG=1`.
@@ -1126,7 +1126,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `/tmp/opencode/CardConnector.py`: pysatochip reference for auto secure-channel handling.
 - `scripts/build/build-micropython.sh`: firmware build (output `kruxport/micropython-arm32`).
 - `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts service.
-- `docs/plan-camera.md`: camera completion plan.
+- `docs/cam-plan.md`: camera completion plan.
 
 ## Important Context
 - Project dir: `/home/user/Develop/src/krux-nexus`; submodules `krux` (`nexus-port`), `micropython` (`master`), `linux` (`airgap/master-cleanup`).
@@ -1196,7 +1196,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 3. If confirmed, make the app re-select/reconnect after PIN entry (or keep the link alive during the prompt), then retest.
 4. Implement the SeedKeeper secure channel: fetch `Toporin/pysatochip` `SecureChannel.py`; needs P-256 ECDH, HMAC-SHA160, AES-128-CBC, IV counters, INS `0x81`/`0x82`.
 5. Update `docs/nfc-isodep.md` with the second-round regression, confirmed `9C20` gate, and idle-timeout finding; commit `nfc.py` and docs.
-6. After NFC, start camera Phase A per `docs/plan-camera.md`; defer splash.
+6. After NFC, start camera Phase A per `docs/cam-plan.md`; defer splash.
 
 ## Relevant Files
 - `krux/src/nfc.py`: transport, discovery/restart logic, activation, APDU timeout and link-error handling.
@@ -1213,7 +1213,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `/tmp/opencode/CardConnector.py`: pysatochip secure-channel reference (`0x81`/`0x82` formats).
 - `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts the service.
 - `scripts/build/build-micropython.sh`: firmware build, output `kruxport/micropython-arm32`.
-- `docs/plan-camera.md`: camera completion plan.
+- `docs/cam-plan.md`: camera completion plan.
 
 ## Important Context
 - Device `0879524b0068abca`, adb state `recovery`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; firmware log `/data/krux/fw.log`; restart via `setprop ctl.stop/start krux`.
@@ -1301,7 +1301,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `/tmp/opencode/fw_sc_required.log`: log proving `9C20` after refresh.
 - `/tmp/opencode/nfc_idle_probe.py`: idle-timeout probe and result source.
 - `scripts/deploy-firmware.sh`: pushes interpreter/src and restarts the service.
-- `docs/plan-camera.md`: camera work to resume after NFC.
+- `docs/cam-plan.md`: camera work to resume after NFC.
 
 ## Important Context
 - Device `0879524b0068abca`, adb state `recovery`; deploy with `DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh`; firmware log `/data/krux/fw.log`.
@@ -1376,7 +1376,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 3. Retest app-level SeedKeeper: initial tap prompt, PIN `123456`, view secrets, free space, card info; keep the card pressed throughout.
 4. Add status mapping/tests for `9C21`, `9C22`, `9C23`, `9C30`, and SC envelope behavior; update `docs/nfc-isodep.md`.
 5. Commit the uncommitted NFC/SeedKeeper/SC/port changes.
-6. Start camera Phase A from `docs/plan-camera.md`.
+6. Start camera Phase A from `docs/cam-plan.md`.
 
 ## Relevant Files
 - `krux/src/krux/seedkeeper_sc.py`: secure-channel implementation, manual secp256k1 recovery, AES/HMAC envelope.
@@ -1387,7 +1387,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `krux/vendor/embit/src/embit/util/key.py`: `_bit_length` fallback for signing.
 - `scripts/deploy-firmware.sh`: now also pushes `embit/util/*.py`.
 - `docs/nfc-isodep.md`: needs SC/idle/prepare findings.
-- `docs/plan-camera.md`: deferred camera work.
+- `docs/cam-plan.md`: deferred camera work.
 - `/tmp/opencode/sc_probe.py`: successful device-side SC + PIN + list probe.
 - `/tmp/opencode/fw_app_sc3.log`: latest app log with `9C30` retry and later `B2`.
 - `/tmp/opencode/sc_recover_test.py`: host-vector recovery test.
@@ -1472,7 +1472,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 3. Test View Free Space repeatedly, then Card Info/View Secrets, holding the card through the second prompt; pull `/data/krux/fw.log`.
 4. If B2 persists, compare successful/failed APDU timing and consider an A7-specific or transport-level timing fix.
 5. Run the SeedKeeper tests, update `docs/nfc-isodep.md`, and commit the NFC/SC/port changes.
-6. Start camera Phase A from `docs/plan-camera.md`.
+6. Start camera Phase A from `docs/cam-plan.md`.
 
 ## Relevant Files
 - `krux/src/krux/seedkeeper.py`: SC integration, retries, status parsing, `_login_again`, stored session PIN.
@@ -1483,7 +1483,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 - `krux/vendor/embit/src/embit/util/key.py`: `_bit_length` shim for signing.
 - `scripts/deploy-firmware.sh`: now pushes `embit/util/*.py`.
 - `docs/nfc-isodep.md`: transport findings; needs SC/timing update.
-- `docs/plan-camera.md`: deferred camera work.
+- `docs/cam-plan.md`: deferred camera work.
 - `tests/test_seedkeeper.py`: SeedKeeper/transport tests.
 - `/tmp/opencode/fw_app_sc7.log`: latest app log with SC keepalives and B2 failures.
 - `/tmp/opencode/sc_probe.py`: successful device-side SC + PIN + list probe.
@@ -1568,7 +1568,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 3. Re-test reads and one save only after explicit permission; use View Secrets first to avoid duplicate secrets.
 4. Pull `/data/krux/fw.log`, count successful 0x81 responses vs B2, and compare activation/settle timing.
 5. Run the SeedKeeper tests, update `docs/nfc-isodep.md`, and commit the NFC/SC/port changes.
-6. Start camera Phase A from `docs/plan-camera.md` only after SeedKeeper is reliable.
+6. Start camera Phase A from `docs/cam-plan.md` only after SeedKeeper is reliable.
 
 ## Relevant Files
 - `krux/src/krux/seedkeeper.py`: SC integration, import header fix, fingerprint fix, retries, stored PIN.
@@ -1663,7 +1663,7 @@ Make the LG Nexus 5 (hammerhead) run the Krux firmware standalone on our own ker
 3. Deploy `nfc.py` (vendor FWI restored) and `pages/seedkeeper.py`, restart the service, and ask the user with BEL to reboot into our firmware and test View Secrets/Load.
 4. If reliability is still poor, use the user's rooted Android environment to collect NFC logs/comparisons and consider antenna/contact/placement fixes.
 5. Update `docs/nfc-isodep.md` and commit the changes.
-6. Start camera Phase A from `docs/plan-camera.md` only after SeedKeeper is reliable.
+6. Start camera Phase A from `docs/cam-plan.md` only after SeedKeeper is reliable.
 
 ## Relevant Files
 - `krux/src/krux/pages/seedkeeper.py`: page retry/cancel refactor; PIN-before-card flow; `save_seed()` still needs reordering.
@@ -1748,7 +1748,7 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - Stage 2: CAMIF_RAW path delivers non-empty NV12 frames (~900k non-zero bytes, frame0.nv12 saved).
 - Stage 3: camd daemon (captures QVGA, serves over Unix socket), sensor.py (MaixPy-compatible client), _image native module (Image, width, height, to_bytes, from_nv12, get_statistics, find_qrcodes via quirc), image.py wrapper, lcd_bcm.c (Image support). Smoke test passes (10 frames 320×240, get_id() → 0x179). 100-frame stability passed (mem_free stable). Unix socket verified (no TCP listener).
 - Toolchain: switched all scripts and docs from soft-float to hard-float.
-- Docs: cam-state.md, plan-camera.md, cam-bringup.md, cam-bringup-stage1-4.md, continue-prompt.md, project-log.md, directories.md all updated.
+- Docs: cam-state.md, cam-plan.md, cam-bringup.md, cam-bringup-stage1-4.md, continue-prompt.md, project-log.md, directories.md all updated.
 - All changes committed across main repo, krux, and micropython submodules.
 
 ### Active

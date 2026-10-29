@@ -11,7 +11,7 @@ must be based on measurements, not on the Android HAL3 notes alone.
 ## Read first, in this order
 
 1. `docs/cam-state.md` — measured V4L2 state; the empty-frame finding.
-2. `docs/plan-camera.md` §1, §2, §3, §6 — native V4L2 daemon plan.
+2. `docs/cam-plan.md` §1, §2, §3, §6 — native V4L2 daemon plan.
 3. `docs/cam-bringup.md` — Android Camera HAL3 failure analysis.
 4. `docs/cam-bringup-alt.md` — direct HAL3 hypothesis.
 5. `tools/profiles/hammerhead-camera.list`
@@ -59,7 +59,7 @@ must be based on measurements, not on the Android HAL3 notes alone.
    sensor access works.
 
 3. Re-run the existing `cam/imaging8.c` path with the measurement fixes from
-   `docs/plan-camera.md` §A2:
+   `docs/cam-plan.md` §A2:
    - print `planes[0..1].bytesused`, `.length`, `.data_offset`;
    - map each plane over its ION length;
    - save `/data/local/tmp/frame0.nv12`;
@@ -67,19 +67,19 @@ must be based on measurements, not on the Android HAL3 notes alone.
 
 4. Decide between:
    - **Path A (recommended first):** native V4L2 + `camd` daemon, as in
-     `docs/plan-camera.md` §3.
+     `docs/cam-plan.md` §3.
    - **Path B (fallback only):** direct Camera HAL3 harness, as in
      `docs/cam-bringup-alt.md`.
    Path B is only worth starting if Path A has a documented, measured blocker
    after the kernel registers are compared.
 
 5. If the V4L2 frame is still empty, perform the vendor-register comparison
-   from `docs/plan-camera.md` §A4/A5 before changing the userspace design.
+   from `docs/cam-plan.md` §A4/A5 before changing the userspace design.
 
 ## Deliverables
 
 - Update `docs/cam-state.md` with the new kernel build and measurement.
-- Update `docs/plan-camera.md` with the chosen path and any changed commands.
+- Update `docs/cam-plan.md` with the chosen path and any changed commands.
 - Record the blocker, if any, in `docs/cam-bringup.md`.
 
 ## Acceptance
