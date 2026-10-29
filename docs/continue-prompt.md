@@ -73,8 +73,9 @@ Also completed: `kruxport/` removed, interpreter at
 ### Next, in order
 
 1. **Commit the remaining packaging/doc changes** in the main repository.
-2. Start **camera Phase A** from `docs/plan-camera.md` (the SeedKeeper gate is
-   cleared).
+2. Start camera work with `docs/cam-bringup-stage1.md`; it supersedes the old
+   Phase A commands where they differ.  Keep `docs/plan-camera.md` as the
+   implementation reference.
 3. Keep the camera work reversible: `fastboot boot`, no flashing.
 4. When the camera path is settled, do the final air-gap audit (no radios,
    no privileged/signature permissions, read-only firmware image).

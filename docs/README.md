@@ -12,6 +12,9 @@
 - cam-state.md - camera status
 - cam-bringup.md - camera bring-up failure analysis and recovery plan
 - cam-bringup-alt.md - camera HAL investigation notes
+- cam-bringup-stage1.md - camera Stage 1 research prompt
+- cam-bringup-stage2.md - camera Stage 2 native POC prompt
+- cam-bringup-stage3.md - camera Stage 3 MicroPython/Krux prompt
 - nfc-isodep.md - NFC ISO-DEP notes
 - nfc-transport.md - NFC transport notes
 - plan-camera.md - camera completion plan (kernel V4L2 → MaixPy sensor shim)
