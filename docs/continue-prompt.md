@@ -70,15 +70,30 @@ Also completed: `kruxport/` removed, interpreter at
 `make-boot-image.sh RAMDISK=` for the read-only image, deploy directory fix,
 `standalone-log.md` renamed `project-log.md`, and the README refreshed.
 
+### Camera (2026-10-29)
+
+Stages 1-3 complete.  Core pipeline functional:
+- `camd` daemon captures QVGA frames (CAMIF_RAW + CPP v1.2.0), serves over Unix socket.
+- `sensor.py` + `_image` native module (Image, width, height, to_bytes, from_nv12, get_statistics, find_qrcodes via quirc).
+- Smoke test: 10 frames 320×240, get_id() → 0x179.  100-frame stability passed.
+- LCD display: lcd.display(Image) works (RGB565→32-bit).
+- Known issue: image is dark (Y mean≈1-2), fixed exposure. QR detection needs bright lighting.
+- VFE overflow blocks PIX_VIEWFINDER; only CAMIF_RAW works.
+- Full acceptance remaining: QR on real code, scene-dependent entropy, 50 cycles, 30-min stability, air-gap.
+
 ### Next, in order
 
-1. **Commit the remaining packaging/doc changes** in the main repository.
-2. Start camera work with `docs/cam-bringup-stage1.md`; it supersedes the old
-   Phase A commands where they differ.  Keep `docs/plan-camera.md` as the
-   implementation reference.
-3. Keep the camera work reversible: `fastboot boot`, no flashing.
-4. When the camera path is settled, do the final air-gap audit (no radios,
-   no privileged/signature permissions, read-only firmware image).
+1. ~~**Commit the remaining packaging/doc changes** in the main repository.~~ (done)
+2. ~~Start camera work with `docs/cam-bringup-stage1.md`.~~ (done — Stage 1-3 complete)
+3. Camera work is reversible: `fastboot boot`, no flashing.
+4. Complete remaining Stage 4 acceptance items:
+   - QR decode on real QR code (bright lighting needed; image is dark).
+   - Scene-dependent entropy (l_stdev varies with scene).
+   - 50 reset/run/close cycles.
+   - 30-min long-run stability.
+   - Air-gap audit (no radios, no privileged/signature permissions, read-only image).
+5. Auto-exposure: add `__write_reg` support in camd for dynamic exposure/gain.
+6. When camera path is settled, do the final air-gap audit.
 
 ---
 

@@ -12880,3 +12880,16 @@ The NFC log showed three clean `0x81` handshakes and **zero `0xB2`** errors;
 the first phone's RF failures did not reproduce.  Saving had already been
 tested successfully on this phone before the rebuild.  The image was booted,
 not flashed, so the installed boot partition is unchanged.
+
+---
+
+## 2026-10-29 — Camera Stages 1-3 complete
+
+- Kernel: camera profile build with devtmpfs, CAMIF_RAW path delivers non-empty NV12 frames.
+- camd daemon: captures QVGA, serves over Unix socket. CPP streaming fixed with retry.
+- sensor.py + _image native module: smoke test passes (10 frames, 320x240).
+- 100-frame stability passed. to_bytes() returns 153600 bytes. get_statistics computes l_mean/l_stdev.
+- find_qrcodes integrated with quirc. lcd.display(Image) works.
+- Known issues: dark image (fixed exposure), VFE overflow blocks PIX_VIEWFINDER, device unstable under sustained load.
+- Remaining: QR on real code, scene-dependent entropy, 50 cycles, 30-min stability, air-gap.
+- Stage 4 prompt: docs/cam-bringup-stage4.md.

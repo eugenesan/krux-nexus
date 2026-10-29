@@ -14,10 +14,15 @@ Top-level:
 - `micropython/` - MicroPython (submodule, branch `master`; the port's C modules
   live in `ports/unix/`)
 - `linux/` - kernel (submodule, branch `airgap/master-cleanup`)
-- `cam/` - camera: server sources, captured data, probes
+- `cam/` - camera: imaging server (`imaging8.c`), daemon (`camd.c`), sensor
+  register tables, CPP firmware.  `camd` binary is gitignored.
 - `rootfs/` - init stub + ramdisk + boot image helpers; the built static
-  MicroPython binary is `rootfs/micropython-arm32` (gitignored)
-- `scripts/` - build drivers and device probes, grouped by topic
+  MicroPython binary is `rootfs/micropython-arm32` (gitignored).  `stock/`
+  was dropped; built images are in `artifacts/built/`.
+- `artifacts/built/` - built boot images and ramdisks (gitignored)
+- `scripts/` - build drivers and device probes, grouped by topic.
+  `scripts/misc/` holds test scripts (smoke, QR, entropy, LCD, stability,
+  cycles, air-gap).
 - `tools/` - reusable build/config helpers (kernel, defconfig, toolchain, profiles)
 - `nfc/` - NFC stack + vendor headers (reference only; the transport is in Python)
 - `phase0/` - phase 0 proof-of-concept (reference)
