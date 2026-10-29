@@ -313,9 +313,9 @@ case "${TOOLCHAIN:-host}" in
       ;;
   aosp) : ;;   # fall through to the prebuilt search below
   host)
-      if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
-          CC_PATH="$(dirname "$(command -v arm-linux-gnueabi-gcc)")"
-          CROSS_COMPILE="arm-linux-gnueabi-"
+      if command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
+          CC_PATH="$(dirname "$(command -v arm-linux-gnueabihf-gcc)")"
+          CROSS_COMPILE="arm-linux-gnueabihf-"
       fi
       echo "       Host toolchain: ${CC_PATH} :: ${CROSS_COMPILE}"
       ;;
@@ -350,11 +350,11 @@ if [ -z "$CC_PATH" ]; then
     done
 fi
 
-if [ -z "$CC_PATH" ] && command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
-    CC_PATH="$(dirname "$(command -v arm-linux-gnueabi-gcc)")"
-    CROSS_COMPILE="arm-linux-gnueabi-"
+if [ -z "$CC_PATH" ] && command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
+    CC_PATH="$(dirname "$(command -v arm-linux-gnueabihf-gcc)")"
+    CROSS_COMPILE="arm-linux-gnueabihf-"
     echo "   !! DISTRO cross-compiler, not the 4.9 cross-compiler."
-    echo "      A 2013 CAF tree on GCC $(arm-linux-gnueabi-gcc -dumpversion) may not compile."
+    echo "      A 2013 CAF tree on GCC $(arm-linux-gnueabihf-gcc -dumpversion) may not compile."
     echo ""
 fi
 

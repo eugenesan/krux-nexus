@@ -68,7 +68,7 @@ CONFIG_USB_FUNCTIONFS=n
 #       init mounts devtmpfs on /dev itself instead.
 #
 #       Depends on HOTPLUG, which is already y.
-CONFIG_DEVTMPFS=n
+CONFIG_DEVTMPFS=y
 
 # ---- the pm8941 GPIO driver's debugfs --------------------------------------
 # CONFIG_GPIO_QPNP_PIN_DEBUG
