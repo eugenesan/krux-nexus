@@ -59,6 +59,48 @@ overflows continuously.  Possible causes:
 | `linux/arch/arm/boot/dts/msm8974-camera.dtsi` | Device tree: VFE/ISP-IF registers, CSID |
 | `linux/arch/arm/mach-msm/clock-8974.c` | Clock definitions: `vfe_clk_src` at 266.67 MHz |
 
+## Tooling
+
+The following tools are provided to streamline the VFE overflow diagnosis:
+
+| Tool | Path | Purpose |
+|---|---|---|
+| Instrumentation patcher | `tools/vfe-instrument.py` | Applies/reverts printk instrumentation to kernel source |
+| Kernel builder | `scripts/cam/build-vfe-kernel.sh` | Builds instrumented camera kernel (handles devtmpfs toggle) |
+| Test runner | `scripts/cam/test-vfe.sh` | Boots kernel, runs PIX_VIEWFINDER, captures dmesg |
+| Param extractor | `scripts/cam/compare-vfe.sh` | Extracts VFE params from dmesg for comparison |
+
+### Quick start
+
+```sh
+# 1. Build instrumented kernel
+bash scripts/cam/build-vfe-kernel.sh /tmp/opencode/ko-vfe
+
+# 2. Pack boot image
+rm -rf /tmp/opencode/bootvfe && mkdir -p /tmp/opencode/bootvfe
+python3 rootfs/bootimg.py unpack artifacts/built/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img /tmp/opencode/bootvfe
+cp /tmp/opencode/ko-vfe/arch/arm/boot/zImage-dtb /tmp/opencode/bootvfe/kernel
+python3 rootfs/bootimg.py pack /tmp/opencode/bootvfe /tmp/opencode/bootvfe/ramdisk /tmp/opencode/boot-vfe.img
+
+# 3. Run test and capture dmesg
+bash scripts/cam/test-vfe.sh /tmp/opencode/boot-vfe.img
+
+# 4. Extract params
+adb shell 'dmesg' > /tmp/opencode/dmesg-vfe.txt
+bash scripts/cam/compare-vfe.sh /tmp/opencode/dmesg-vfe.txt
+```
+
+### Applying instrumentation manually
+
+If you need to modify the instrumentation:
+```sh
+# Apply
+python3 tools/vfe-instrument.py --apply
+
+# Revert (restore clean source)
+python3 tools/vfe-instrument.py --revert
+```
+
 ## Source analysis findings
 
 ### 1. VFE40 clock configuration
@@ -117,7 +159,12 @@ bandwidth request is too low, writes stall and the input FIFO overflows.
 
 ### Task 1 — Add VFE40 instrumentation (no device needed)
 
-Add printk instrumentation to `msm_isp40.c` and `msm_ispif.c` to capture:
+Use the provided tooling:
+```sh
+python3 tools/vfe-instrument.py --apply
+```
+
+This adds printk instrumentation to `msm_isp40.c` and `msm_ispif.c` to capture:
 
 1. **VFE40 clock rates** at stream start:
    ```c
@@ -150,32 +197,39 @@ Add printk instrumentation to `msm_isp40.c` and `msm_ispif.c` to capture:
 
 ### Task 2 — Build and boot instrumented kernel (device needed)
 
+Use the provided build script (handles instrumentation + devtmpfs toggle):
 ```sh
-# Apply patches, rebuild
-sed -i 's/^CONFIG_DEVTMPFS=n/CONFIG_DEVTMPFS=y/' tools/profiles/hammerhead-keep.list
-TOOLCHAIN=host bash tools/build-kernel.sh --out /tmp/opencode/ko-vfe
-# restore
-sed -i 's/^CONFIG_DEVTMPFS=y/CONFIG_DEVTMPFS=n/' tools/profiles/hammerhead-keep.list
+bash scripts/cam/build-vfe-kernel.sh /tmp/opencode/ko-vfe
+```
 
-# Pack boot image
+Then pack and boot:
+```sh
 rm -rf /tmp/opencode/bootvfe && mkdir -p /tmp/opencode/bootvfe
 python3 rootfs/bootimg.py unpack artifacts/built/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img /tmp/opencode/bootvfe
 cp /tmp/opencode/ko-vfe/arch/arm/boot/zImage-dtb /tmp/opencode/bootvfe/kernel
 python3 rootfs/bootimg.py pack /tmp/opencode/bootvfe /tmp/opencode/bootvfe/ramdisk /tmp/opencode/boot-vfe.img
 
-# Boot
 adb reboot bootloader
 fastboot boot /tmp/opencode/boot-vfe.img
 ```
 
 ### Task 3 — Run PIX_VIEWFINDER and capture dmesg (device needed)
 
+Use the provided test script:
+```sh
+bash scripts/cam/test-vfe.sh /tmp/opencode/boot-vfe.img
+```
+
+Or manually:
 ```sh
 # Start imaging with PIX_VIEWFINDER
-adb shell 'cd /data/local/tmp && ./imaging-cam 1640 1232 ... PIX_VIEWFINDER ...' &
-sleep 8
-# Capture dmesg
-adb shell 'dmesg | grep -iE "VFE40|ISPIF|overflow|clock|bandwidth" | tail -40'
+adb shell 'cd /data/local/tmp && timeout 8 ./imaging-cam 1640 1232 0x40000000 rear 0 - 1 binned cfg nocycle 0 0x2b 0 0 300 0 0 0 0x12 0 1 0xffffffff 0 0 0 1 0' 2>&1 | tail -20 || true
+
+# Capture dmesg to file
+adb shell 'dmesg' > /tmp/opencode/dmesg-vfe.txt
+
+# Extract params
+bash scripts/cam/compare-vfe.sh /tmp/opencode/dmesg-vfe.txt
 ```
 
 Look for:
