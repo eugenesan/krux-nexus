@@ -137,7 +137,9 @@ fi
 
 # 4. repack to a scratch file, and compare it with what ships
 mkdir -p "$HERE/stock"
-( cd "$WORK/rd" && find . | cpio -o -H newc --quiet | gzip -1 ) > "$WORK/ramdisk-stub.new"
+# -9: the bundled image carries the whole Python tree, and the boot
+# partition is tight; the few extra seconds are worth the space.
+( cd "$WORK/rd" && find . | cpio -o -H newc --quiet | gzip -9 ) > "$WORK/ramdisk-stub.new"
 echo "  built $WORK/ramdisk-stub.new ($(stat -c %s "$WORK/ramdisk-stub.new") bytes)"
 
 if [ -f "$OUT" ] && [ -z "$FORCE" ]; then

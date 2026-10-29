@@ -52,44 +52,44 @@ driver bug.
 * `nfc/blobs/*.ncd` are **not required at runtime**; the chip already has
   firmware and `nfc.py` does not download a patch.  They are reference only.
 
-### Just changed, needs final validation
+### Validated on the rebuilt bundled image
 
-* `rootfs/init-stub.c` prefers a firmware bundled at `/opt/krux` and falls
-  back to `/data/krux` (development deploy).
-* `rootfs/build-stub-ramdisk.sh --bundle` copies MicroPython + Krux + embit
-  into the ramdisk; `make-boot-image.sh` accepts `RAMDISK=`.
-* The static interpreter moved from `kruxport/` to
-  `rootfs/micropython-arm32`; `kruxport/` is being removed.
-* `scripts/deploy-firmware.sh` creates all target directories (including
-  embit `wordlists`) and uses the new interpreter path.
-* Docs: `project-log.md` is being renamed `project-log.md`; the README now
-  carries the old `kruxport/README.md` build/deploy information.
+Final read-only checks passed on the second phone with the freshly built
+kernel, MicroPython and bundled boot image:
+
+* Card Info (no PIN)
+* View Secrets
+* Load Seed
+
+The firmware ran from `/opt/krux` (read-only ramdisk); the log showed three
+clean `0x81` handshakes and zero `0xB2` errors.  Saving had already worked on
+this phone.  The image was booted with `fastboot boot`, not flashed.
+
+Also completed: `kruxport/` removed, interpreter at
+`rootfs/micropython-arm32`, `build-stub-ramdisk.sh --bundle` and
+`make-boot-image.sh RAMDISK=` for the read-only image, deploy directory fix,
+`standalone-log.md` renamed `project-log.md`, and the README refreshed.
 
 ### Next, in order
 
-1. **Connect the new Nexus 5** and confirm `adb devices` shows it.
-2. **Rebuild everything from source**: kernel, MicroPython, init stub,
-   development ramdisk and bundled ramdisk/boot image.  See
-   `docs/build-guide.md` §“The whole thing, in one go”.
-3. **Final NFC check** with the rebuilt kernel + MicroPython + boot image:
-   Card Info (no PIN), View Secrets, Load Seed, and one Save.  Use PIN
-   `123456` only if testing; do not spend card PIN tries.
-4. **Commit** the `krux` submodule (including the port modules and the embit
-   submodule bump), then the main repository.  The port's untracked files in
-   `krux/src/` must be committed or the next checkout loses them.
-5. Only then start camera Phase A from `docs/plan-camera.md`.
+1. **Commit the remaining packaging/doc changes** in the main repository.
+2. Start **camera Phase A** from `docs/plan-camera.md` (the SeedKeeper gate is
+   cleared).
+3. Keep the camera work reversible: `fastboot boot`, no flashing.
+4. When the camera path is settled, do the final air-gap audit (no radios,
+   no privileged/signature permissions, read-only firmware image).
 
 ---
 
 ## Useful commands
 
 ```sh
-cd ~/Develop/src/krux-nexus/krux
+cd ~/Develop/src/krux-nexus
 
-# tests (host)
-PYTHONPATH=/tmp/opencode/teststubs:vendor/embit/src:src \
+# tests (host); run from the submodule so its pytest config applies
+(cd krux && PYTHONPATH=/tmp/opencode/teststubs:vendor/embit/src:src \
     /tmp/opencode/venv/bin/python -m pytest \
-    tests/test_seedkeeper.py tests/pages/test_seedkeeper.py -q
+    tests/test_seedkeeper.py tests/pages/test_seedkeeper.py -q)
 
 # build the interpreter
 bash scripts/build/build-micropython.sh

@@ -23,7 +23,7 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
-TEMPLATE=${1:-$ROOT/rootfs/stock/boot-ourkern-clean-twrp.img}
+TEMPLATE=${1:-$ROOT/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img}
 # The kernel the shipped boot-stub.img pairs with.  It is NOT the same
 # one the current kernel build produces: this is the kernel that was
 # flashed and verified with the stub, so it is kept next to the image
@@ -41,4 +41,13 @@ rm -rf "$WORK"; mkdir -p "$WORK"
 python3 "$HERE/bootimg.py" unpack "$TEMPLATE" "$WORK" >/dev/null
 cp "$KERNEL" "$WORK/kernel"
 python3 "$HERE/bootimg.py" pack "$WORK" "$RAMDISK" "$OUT" >/dev/null
-echo "  -> $OUT ($(stat -c %s "$OUT") bytes)"
+size=$(stat -c %s "$OUT")
+echo "  -> $OUT ($size bytes)"
+# hammerhead's boot partition is 0x1600000 bytes.  A bundled ramdisk is
+# close to that limit; fail here rather than producing an image that
+# cannot be flashed.
+MAX_SIZE=${MAX_SIZE:-23068672}
+if [ "$size" -gt "$MAX_SIZE" ]; then
+	echo "  !! boot image is larger than the boot partition ($MAX_SIZE bytes)" >&2
+	exit 1
+fi

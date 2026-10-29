@@ -155,6 +155,11 @@ The init stub prefers `/opt/krux` when it is present and falls back to
 development. Settings and the log still live on `/data/krux`; the
 firmware and its Python libraries are read-only in the boot image.
 
+The bundled ramdisk is close to hammerhead's boot-partition limit
+(`0x1600000` bytes), so `make-boot-image.sh` fails rather than emitting an
+image that cannot be flashed. The ramdisk is compressed with `gzip -9` for
+this reason.
+
 ## 6. Boot it
 
 The images are **not flashed** -- they are booted, so the phone can

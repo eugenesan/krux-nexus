@@ -12853,3 +12853,30 @@ reference.
 Final validation with a fully rebuilt kernel, MicroPython and boot image on
 the second phone, then commit the submodules and the main project.  After that,
 camera Phase A.
+
+### Final validation on the rebuilt image — 2026-10-28
+
+Booted the **bundled** image (`rootfs/stock/boot-bundled.img`) with
+`fastboot boot` on the second Nexus 5.  The running kernel was the freshly
+built air-gap profile:
+
+```
+3.4.113-🇺🇦-g3f7bed3f2d6-09388-g95f4b0f38ce #1 SMP PREEMPT
+```
+
+`/proc/<pid>/cmdline` confirmed the firmware was the read-only copy:
+
+```
+micropython /opt/krux/boot.py
+```
+
+The final read-only checks all passed on the bundled image:
+
+* **Card Info** (no PIN)
+* **View Secrets**
+* **Load Seed**
+
+The NFC log showed three clean `0x81` handshakes and **zero `0xB2`** errors;
+the first phone's RF failures did not reproduce.  Saving had already been
+tested successfully on this phone before the rebuild.  The image was booted,
+not flashed, so the installed boot partition is unchanged.
