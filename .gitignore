@@ -31,3 +31,4 @@ sync.sh
 
 # local agent state
 .opencode/
+rootfs/stub/krux-init

@@ -48,7 +48,7 @@ comparison is complete.
 ## Build
 
 ```sh
-arm-linux-gnueabi-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
+arm-linux-gnueabihf-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
     -mfloat-abi=hard -Icam -o /tmp/opencode/imaging-cam cam/imaging8.c -lpthread
 adb push /tmp/opencode/imaging-cam /data/local/tmp/imaging
 ```

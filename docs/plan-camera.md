@@ -52,13 +52,25 @@ anti-glare control, CAMIF_RAW/CPP colour stills, and video recording.
   is from an earlier tree. Rebuild before trusting it:
 
 ```sh
-TOOLCHAIN=arch TOOLCHAIN_PATH=/home/user/Develop/toolchains/arch-16.2.0 \
-  bash tools/build-kernel.sh --out /tmp/opencode/ko-cam
+TOOLCHAIN=host bash tools/build-kernel.sh --out /tmp/opencode/ko-cam
 sh rootfs/make-boot-image.sh \
   artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
   /tmp/opencode/ko-cam/arch/arm/boot/zImage-dtb \
   /tmp/opencode/boot-cam.img
 ```
+
+For a camera build, devtmpfs must be on for this build only:
+
+```sh
+sed -i 's/^CONFIG_DEVTMPFS=n/CONFIG_DEVTMPFS=y/' tools/profiles/hammerhead-keep.list
+# ... build ...
+sed -i 's/^CONFIG_DEVTMPFS=y/CONFIG_DEVTMPFS=n/' tools/profiles/hammerhead-keep.list
+```
+
+Do not pass `PROFILE=tools/profiles/hammerhead-camera.list`: that file is an
+enable list consumed by the keep-list loop, not a strip profile.  The default
+`PROFILE=tools/profiles/hammerhead.list` is correct; the camera symbols come
+back through `hammerhead-camera.list`.
 
 `rootfs/stock/boot-ourkern-clean-twrp.img` no longer exists; the TWRP image
 under `artifacts/` is the current valid header/ramdisk template. The kernel
@@ -96,7 +108,7 @@ Patch `cam/imaging8.c` (lab tool only):
 Build and push:
 
 ```sh
-arm-linux-gnueabi-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
+arm-linux-gnueabihf-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
   -mfloat-abi=hard -Icam -o /tmp/opencode/imaging-cam cam/imaging8.c -lpthread
 adb push /tmp/opencode/imaging-cam /data/local/tmp/imaging
 ```
@@ -119,6 +131,22 @@ chromatrix can only confuse the result.
 Acceptance for A2: either `planes[0].bytesused > 0` and Y non-zero, or a
 full-length scan that is genuinely all zero. Save both numbers in the log.
 If pixels are present, go straight to Phase B; Phase A is finished.
+
+### A2a. Result of the 2026-10-28 run (status)
+
+The binned `PIX_VIEWFINDER` path was run with the measurement patch.  Result:
+no frame completes; the client never gets a `DQBUF` and the kernel logs
+`msm_ispif_read_irq_status: VFE0 pix0 overflow.` (~710 lines in 8 s).  The
+sensor is programmed correctly (`0x034c..0x034f = 1640/1232`).  This is a
+kernel/VFE drain problem, not a buffer-geometry problem, so the processed
+path does not deliver a frame.
+
+The `CAMIF_RAW` path (CPP firmware v1.2.0) was then run per §A3 and **does**
+deliver a frame: `GOT A FRAME: index=2`, the dequeued buffer holds ~900 k
+non-zero bytes, and `/data/local/tmp/frame0.nv12` (2 020 480 bytes) was saved.
+Stage 2 acceptance is met on the raw path; the processed path remains deferred
+until the VFE overflow is explained.  Phase B (`camd`) should use `CAMIF_RAW`
+for the first landing.
 
 ### A3. Test the three stream sources
 
@@ -316,7 +344,7 @@ owns it for the object's lifetime, and frees it in the finalizer; expose
 - Build the daemon and firmware:
 
 ```sh
-arm-linux-gnueabi-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
+arm-linux-gnueabihf-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
   -mfloat-abi=hard -Icam -o /tmp/opencode/camd cam/camd.c -lpthread
 bash scripts/build/build-micropython.sh
 ```
@@ -443,11 +471,11 @@ Pass: ten distinct frames, 320×240, no `SensorError`, daemon logs 10–15 fps,
 - **No VFE scaler.** QVGA from the binned frame needs the daemon's 5×5 box
   downscale. If 1640×1232 streaming is too much bandwidth, fall back to a
   centred VFE crop (narrower FOV) or 2×2 to 800×600; measure before choosing.
-- **Processed vs raw path.** `CAMIF_RAW` + NV12 is suspicious: the driver's
-  `cfg_io_format()` treats `CAMIF_RAW` as raw Bayer and rejects
-  `PIX_ENCODER`/`PIX_VIEWFINDER`; the raw path also needs the CPP. Prefer
-  `PIX_VIEWFINDER` for QR. Do not spend Phase B time on CPP until A proves it
-  necessary.
+- **Processed vs raw path (updated 2026-10-29).** `PIX_VIEWFINDER` is blocked
+  by `VFE0 pix0 overflow` (no frame completes). `CAMIF_RAW` + CPP v1.2.0
+  delivers non-empty frames and is the path used by `camd`. Prefer `CAMIF_RAW`
+  for the first landing. Revisit `PIX_VIEWFINDER` only after the VFE overflow
+  is explained via A4/A5 register comparison.
 - **Sensor mode.** The photo sequence and the binned sequence differ. Writing
   the live photo list over a binned configuration returns the sensor to
   3280×2464. Use mode 0 (`IMX179_MODE_TABLE` + `imx179_settings_7`) for

@@ -80,7 +80,7 @@ Implement `docs/plan-camera.md` §C1 and §C2:
 ## Build and deploy
 
 ```sh
-arm-linux-gnueabi-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
+arm-linux-gnueabihf-gcc -O2 -static -march=armv7-a -mfpu=neon-vfpv3 \
     -mfloat-abi=hard -Icam -o /tmp/opencode/camd cam/camd.c -lpthread
 bash scripts/build/build-micropython.sh
 DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh

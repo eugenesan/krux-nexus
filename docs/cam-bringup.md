@@ -598,3 +598,25 @@ capture-result processing
 ```
 
 before spending additional effort on HAL loading or provider architecture.
+
+## 2026-10-28 — Stage 1 blocker (native V4L2 path)
+
+Camera kernel built and booted successfully (devtmpfs on, nodes present,
+`CONFIG_MSMB_CAMERA=y`, `CONFIG_IMX179=y`, `CONFIG_MSM_CSID=y`,
+`CONFIG_NFC_BCM2079X=y`).  The binned `PIX_VIEWFINDER` path was re-run with
+the measurement patch from `plan-camera.md` §A2.
+
+Blocker: the VFE never completes a buffer.  `STREAMON` succeeds and the
+sensor is programmed correctly, but no `DQBUF` returns; the kernel logs
+`msm_ispif_read_irq_status: VFE0 pix0 overflow.` continuously (~710 lines in
+8 s), followed by `msm_isp_close_node: halt timeout` and
+`msm_vb2_buf_cleanup: NULL stream` on teardown.  `planes[0].bytesused` could
+not be measured because no buffer was dequeued.
+
+This is the same class of fault as the earlier empty-frame finding, moved one
+stage later: the ISP-IF is delivering pixels (input-side FIFO overrun), but
+the VFE40 does not drain them into the queued buffers.  It is a kernel/VFE
+clock or configuration difference versus the ROM's working kernel, not a
+userspace buffer-geometry problem.  Next action is the A4/A5 instrumentation
+and vendor-register comparison; the HAL3 path (`cam-bringup-alt.md`) is still
+not started.

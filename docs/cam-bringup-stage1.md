@@ -44,8 +44,8 @@ must be based on measurements, not on the Android HAL3 notes alone.
    ```
    Then build with the camera profile:
    ```sh
-   PROFILE=tools/profiles/hammerhead-camera.list \
-       TOOLCHAIN=arch TOOLCHAIN_PATH=/tmp/opencode/tc-arch \
+   PROFILE=tools/profiles/hammerhead.list \
+       TOOLCHAIN=host \
        bash tools/build-kernel.sh --out /tmp/opencode/ko-cam
    ```
    Restore `CONFIG_DEVTMPFS=n` after the camera kernel if the final air-gap

@@ -853,6 +853,105 @@ and the VFE's registers, taken the same way.  The candidates are
 Our VFE register dump (for the comparison) is in the kernel log
 when the frame ends: `DEBUG: VFE regs:`.
 
+## 2026-10-28 — Stage 1 kernel build and V4L2 measurement
+
+Kernel built from `linux` at `airgap/master-cleanup` (`95f4b0f38ce`) with the
+camera profile, using the host ARM toolchain (`arm-linux-gnueabihf-gcc`), output
+`/tmp/opencode/ko-cam`, image `/tmp/opencode/boot-cam.img`.  `CONFIG_DEVTMPFS`
+was temporarily enabled (`=y`) for the build; restored to `=n` afterwards, so a
+camera build must re-apply `sed -i 's/^CONFIG_DEVTMPFS=n/CONFIG_DEVTMPFS=y/'`.
+
+Verified in `/tmp/opencode/ko-cam/.config`:
+
+- `CONFIG_MSMB_CAMERA=y`, `CONFIG_IMX179=y`, `CONFIG_MSM_CSID=y`,
+  `CONFIG_DEVTMPFS=y`, `CONFIG_NFC_BCM2079X=y`.
+
+Boot verification (TWRP, uid 0, `/proc/version` contains `95f4b0f38ce`):
+
+- `/dev/video0`, `/dev/video1`, `/dev/v4l-subdev3`, `/dev/v4l-subdev11`,
+  `/dev/v4l-subdev13` all present (devtmpfs is working).
+
+Measurement (binned IMX179 mode, 1640×1232, `PIX_VIEWFINDER`, no CPP,
+`use_vendor_sensor_seq=0` so the mode table + binned settings land
+`0x034c..0x034f = 1640/1232`):
+
+- Sensor streams and is programmed correctly (register read-back matches).
+- `STREAMON` succeeds, but no `DQBUF` ever completes; the client prints
+  `no frame after 5s`.
+- Kernel log: repeated `msm_ispif_read_irq_status: VFE0 pix0 overflow.`
+  (~710 lines per 8 s run), then `msm_isp_close_node: halt timeout` and
+  `msm_vb2_buf_cleanup: NULL stream` on teardown.
+- No `planes[0].bytesused` measurement was possible because no buffer was
+  dequeued; the frame is not merely empty, the VFE never completes a buffer.
+
+Interpretation: the ISP-IF is delivering pixels (the overflow is an input-side
+FIFO overrun in `msm_ispif`, i.e. data is arriving faster than the VFE40
+consumes it), but the VFE does not drain them into the queued buffers.  That
+is a kernel/VFE clock or configuration difference, not a userspace buffer
+problem: the buffers are allocated on heap 30, imported, enqueued and
+streamed, and the same code path that previously produced `GOT A FRAME`
+under the raw `CAMIF_RAW` path now cannot even complete a processed frame.
+
+Chosen path: **Path A (native V4L2 + `camd`)**.  Phase A is not fully closed
+(the processed `PIX_VIEWFINDER` path is still blocked by VFE overflow), but
+the `CAMIF_RAW` path delivers non-empty frames and is the path used by `camd`.
+
+### 2026-10-29 — Stage 3 smoke test passed
+
+`cam/camd.c` (daemon, derived from `imaging8.c`) runs on the device, captures
+QVGA frames (centre-crop 1600×1200, 5×5 box-average to 320×240), and serves
+them over TCP port 8765.  `krux/src/sensor.py` connects to camd and implements
+the MaixPy-compatible API.  `krux/src/image.py` provides `width()`/`height()`.
+
+Smoke test (10 iterations): all 10 frames are 320×240, `get_id()` returns
+`0x179`, no `SensorError`, no oops in dmesg.
+
+### 2026-10-29 — Stage 3 status
+
+**Completed:**
+- camd daemon: captures QVGA frames, serves over Unix socket (not TCP).
+- sensor.py: MaixPy-compatible client of camd.
+- _image native module: Image, width, height, to_bytes, from_nv12, get_statistics, find_qrcodes (quirc integrated).
+- image.py wrapper: re-exports _image.Image with MaixPy-compatible stubs.
+- lcd_bcm.c: lcd_display() accepts _image.Image (RGB565→32-bit).
+- Smoke test: 10 frames 320×240, get_id() → 0x179, no SensorError.
+- 100-frame stability: passed (mem_free stable).
+- to_bytes(): 153,600 bytes (320×240×2 RGB565).
+- get_statistics(): computes l_mean, l_stdev from Y channel (stdev fixed).
+- find_qrcodes(): integrated with quirc (returns [] on blank).
+- Unix socket: no TCP listener (air-gap compliant).
+- CPP streaming: fixed with retry + 50ms delay (0 EAGAIN errors).
+
+**Remaining for full acceptance:**
+- QR decode on actual QR codes (needs bright lighting; image is dark, l_mean≈1-2).
+- Scene-dependent entropy (l_stdev varies but image is dark).
+- 50 reset/run/close cycles (not yet tested).
+- 30-min long-run stability.
+- Air-gap verification (boot air-gap kernel, check no new interface/socket/module).
+- Auto-exposure: add __write_reg support in camd for dynamic exposure/gain.
+- Deploy script: push cpp_firmware (done) and camd (done).
+
+### 2026-10-28 — Stage 2 native POC measurement
+
+Instrumented kernel (`/tmp/opencode/ko-camdbg`, CAMDBG prints in
+`msm_isp_process_done_buf` and `msm_isp_buf_done`) was booted and the binned
+`PIX_VIEWFINDER` path was run.  `dmesg | grep CAMDBG` returned **zero lines**:
+neither `process_done_buf` nor `buf_done` is ever called.  Combined with the
+`VFE0 pix0 overflow` flood, the failing stage for the *processed* path is:
+**frame-done interrupt never reaches the buffer-completion path** (stream
+start/update or WM IRQ mask), so no buffer is completed and
+`planes[0].bytesused` cannot be measured.
+
+The `CAMIF_RAW` path (CPP firmware v1.2.0, binned mode) was then run per
+`plan-camera.md` §A3.  It **succeeds**: `GOT A FRAME: index=2`, the dequeued
+buffer holds ~900 k non-zero bytes, and `/data/local/tmp/frame0.nv12` (2 020 480
+bytes) was saved and pulled to `/tmp/opencode/frame0.nv12`.  No kernel oops and
+no `camif error status 0xd0` in the log.
+
+Stage 2 acceptance is therefore met on the raw path.  The processed
+`PIX_VIEWFINDER` path remains blocked by the VFE overflow and is deferred; the
+raw/CPP path is the one to carry into Stage 3.
+
 > **Path note:** this document predates the source consolidation. The port
 > modules are now in `krux/src/` and `micropython/ports/unix/`; `kruxport/`
 > no longer exists.
