@@ -190,6 +190,40 @@ Next tuning, in order:
    client can spin on duplicate frames; the throttled test approximates
    the right behavior with a 50 ms sleep).
 
+## Full-height CBCR and the sustainable rate
+
+### Full-height CBCR + full-height chroma buffer
+
+`CAMD_FULL_CHROMA=1` programs `plane_cfg[1]` at full height and allocates
+`width*height` for chroma:
+
+- `Write master ping pong mismatch`: **0**
+- IOMMU faults, CPP timeout, dump, watchdog: **0**
+- but after ~24 frames the CPP stops accepting frames:
+  `[cpp] CFG: Resource temporarily unavailable` (repeated) and
+  `[client] no frame after 5s`.
+
+So full-height CBCR fixes the ping-pong warning but is not viable with the
+current captured CPP message. The default remains half-height.
+
+### Sustainable CAMIF_RAW+CPP rate
+
+| Target | Result |
+|---|---|
+| 20 fps | stalls at ~300 frames (~19 s) with `cpp CFG: EAGAIN`; no kernel fault |
+| 15 fps | 410 frames over 30 s, no stall; groups 10.7-15.0, average **~13.7 fps**; downscale spikes 56-70 ms; 165 ping-pong warnings |
+
+The CPP path sustains roughly **14-15 fps**, not 20. The 70 ms downscale
+spikes occur even with no Python client, so they are camera/memory
+contention, not client load.
+
+### Consequence
+
+The 20 fps target for 10 fps animated UR now requires the **PIX_VIEWFINDER
+(VFE scaler) path** — the VFE overflow task — or a CPP throughput fix that
+the captured vendor message does not expose. The 15 fps floor is enough for
+5 fps UR, but not 10 fps.
+
 ## Conclusions
 
 - The 0.6-0.8 fps was mostly **camd debug code**, then the **uncached 5x5
@@ -198,12 +232,14 @@ Next tuning, in order:
   **22-28 fps** camd-only (603 frames/30 s).
 - The kernel panic path is fixed: 20 fps camd + Python decode/render now
   runs without CPP dump, timeout, stats panic, watchdog or IOMMU faults.
-- 20.0 fps is reached in steady windows; the average under load is ~17 fps
-  because of 70 ms downscale spikes and the remaining ping-pong warnings.
-- The camera/CPP stage latency is not the bottleneck (`poll` ~0-6 ms), and
-  Python decode/render is 6-10 ms per frame.
-- The next work is the output-side VFE geometry (full-height CBCR + buffer)
-  and the downscale spikes, not another panic-path fix.
+- Full-height CBCR removes the ping-pong warning but stalls the CPP after
+  ~24 frames; half-height remains the default.
+- CAMIF_RAW+CPP sustains **~14-15 fps**, not 20: a 20 fps target stalls at
+  ~300 frames, a 15 fps target survives 30 s at ~13.7 fps average.
+- The 20 fps requirement therefore makes the **PIX_VIEWFINDER/VFE scaler**
+  path (and its input-overflow fix) the critical next step, or the target
+  must drop to 15 fps.
+- Python decode/render is 6-10 ms per frame; it is not the bottleneck.
 - The 3x3 center box is a speed/quality trade-off; if QR quality suffers,
   a 4x4 or 5x5 wide-load variant is the next step, not a return to scalar
   reads.

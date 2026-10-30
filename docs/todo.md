@@ -29,20 +29,17 @@
 - [x] Fix `msm_cpp_do_timeout_work`: drop the frame and return; do not `msm_cpp_write()`/resend from the workqueue
 - [x] Guard `msm_isp_process_stats_irq` on the CAMIF_RAW path
 - [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
-- [ ] Remove the 70 ms downscale spikes: full-height CBCR + full-height chroma buffer, NEON/cached ION, or capture-thread affinity
-- [ ] Add a blocking `snapshot` waiting for a new `latest_seq` (avoid duplicate frame copies/decodes)
-- [ ] Re-run 20 fps until the average is consistently >=20 fps, then proceed to AE VTS/exposure sweep
-- [x] Chroma-plane experiment: full height overruns the half-height buffer (IOMMU faults); half height removes them but breaks Y/C ping-pong pairing
-- [x] Workaround `cam/camd.c` with `plane_cfg[1].output_height/scan_lines = height/2`
-- [x] Re-run AE test with zero IOMMU faults (0 faults, Y 0 -> 10 -> 28, 53 C)
-- [ ] Fix the CBCR ping-pong mismatch: keep CBCR at full height and allocate a full-height chroma buffer (`width*height`), or fix `msm_isp_axi_util.c`
-- [ ] Disable `MSM_CPP_DUMP_FRM_CMD` (186 printk lines per timed-out frame)
-- [ ] Re-run the 90 s stream with 0 IOMMU faults and no ping-pong/CPP storm
+- [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
+- [x] Full-height CBCR + full-height chroma buffer: ping-pong 0, but CPP stalls at ~24 frames with `CFG: EAGAIN`; not viable with the captured CPP message
+- [x] Measure sustainable CAMIF_RAW+CPP rate: 20 fps stalls at ~300 frames; 15 fps survives 30 s at ~13.7 fps average; 165 ping-pong warnings
+- [ ] Decide the 20 fps path: PIX_VIEWFINDER/VFE scaler (requires the VFE overflow fix) or accept the ~15 fps floor
+- [ ] Add a blocking `snapshot` waiting for a new `latest_seq` (still useful for animated QR, after the path decision)
+- [ ] Re-tune the downscale (NEON/cached/affinity) only if the chosen path still uses the CPU downscale
+- [ ] Re-enable the 30-min Stage 4 stability run on the chosen path
 - [ ] Check the remaining `camif error 0x660` input-side messages
-- [ ] Then re-enable the 30-min Stage 4 stability run
 
-### VFE overflow fix (docs/cam-bringup-vfe.md)
-- [ ] Source analysis (done)
+### VFE overflow fix (docs/cam-bringup-vfe.md) — now on the critical path for 20 fps
+- [x] Source analysis (done)
 - [ ] Instrumentation patches (tools/vfe-instrument.py ready)
 - [ ] Build + boot instrumented kernel (device needed)
 - [ ] Run PIX_VIEWFINDER + capture dmesg (device needed)
