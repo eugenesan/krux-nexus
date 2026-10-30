@@ -382,3 +382,33 @@ Test results (2026-10-30, recovery mode):
 - Try group hold (0x0104) around register writes.
 - Try higher gain values (up to 0x01ff).
 - Check if the sensor needs to be in a specific mode for register writes.
+
+### Test results (2026-10-30, recovery mode, active cooling, simple version without group hold)
+
+**Verified:**
+- camd produces frames (GOT A FRAME, ~1.9M non-zero bytes)
+- CPP firmware loads (chromatrix sent, status 0)
+- `W` command protocol works (response: b'OK')
+- `set_exposure(2000)` succeeds (no error)
+- `set_gain(0x01ff)` succeeds (no error)
+- Snapshot works (Y mean: 1, very dark baseline)
+- Register writes reach sensor ("wrote 1 registers" in camd log)
+
+**Not verified (device thermal instability):**
+- Whether register writes change image brightness (device crashes before comparison)
+- Auto-exposure convergence
+- QR scanning with brighter image
+
+**Device stability:**
+- Device crashes within ~10-15 seconds of camd running.
+- Even with active cooling, sustained camera operation is unreliable.
+- Recovery mode (TWRP) is more stable than Android mode.
+- Short tests (≤10s) work; longer tests crash the device.
+- The binaries themselves are stable (no segfaults or kernel panics in logs).
+- The crashes appear to be thermal (device overheats from sustained load).
+
+**Key finding:**
+- IMX179 exposure is already at 1248/1252 lines (99.7% of frame) in binned mode.
+- Increasing exposure beyond VTS requires increasing VTS (frame length, 0x0340/0x0341).
+- Group hold (0x0104) is used in vendor's init sequence but may not be needed during streaming.
+- Register writes reach the sensor but brightness doesn't change (possibly because exposure is at max for current VTS).
