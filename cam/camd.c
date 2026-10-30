@@ -420,7 +420,6 @@ static int use_vendor_sensor_seq = 0;
  *   2 = the captured page sequence first, then the vendor's live list
  */
 static int use_live_sensor_seq = 0;
-static int use_vendor_sensor_seq = 0;
 static int frames_to_wait = 10;
 
 static int sensor_write_array(const struct sensor_write *w)
@@ -1022,9 +1021,23 @@ static int isp_start(void)
 	scmd.plane_cfg[0].output_scan_lines = cbufs.height;
 	scmd.plane_cfg[0].output_plane_format = Y_PLANE;
 	scmd.plane_cfg[1].output_width = cbufs.width;
-	scmd.plane_cfg[1].output_height = cbufs.height;
+	/*
+	 * NV12 chroma is half-height: its buffer is width*height/2.
+	 * Programming the full luma height here makes the CBCR write
+	 * master run a second chroma plane's worth of data past the
+	 * buffer, into unmapped IOVA; the resulting vfe_iommu
+	 * translation-fault storm ends in a watchdog reset.
+	 *
+	 * NOTE: height/2 is a workaround, not the final fix.  With
+	 * different Y/C heights the two write masters can report
+	 * "Write master ping pong mismatch" on long runs and the ISP
+	 * tasklet queue overflows.  The proper fix is full-height
+	 * CBCR with a full-height chroma buffer (width*height), or a
+	 * driver fix that keeps the Y/C pair in lockstep.
+	 */
+	scmd.plane_cfg[1].output_height = cbufs.height / 2;
 	scmd.plane_cfg[1].output_stride = cbufs.width;
-	scmd.plane_cfg[1].output_scan_lines = cbufs.height;
+	scmd.plane_cfg[1].output_scan_lines = cbufs.height / 2;
 	scmd.plane_cfg[1].output_plane_format = CBCR_PLANE;
 	if (ioctl(isp_fd, VIDIOC_MSM_ISP_REQUEST_STREAM, &scmd) < 0) {
 		printf("[isp] REQUEST_STREAM: %s\n", strerror(errno));

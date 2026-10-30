@@ -12,20 +12,9 @@ import sys
 
 PATCHES = {
     "cam/camd.c": [
-        # Add "W" and "E" commands after the 'F' handler's closing brace
+        # Add W (register write), E (exposure+gain) and V (VTS) commands
+        # after the 'F' handler, inside the per-connection read loop.
         (
-            "\t\t\t}\n"
-            "\t\t\t/* AE: set VTS (frame length) for longer exposure */\n"
-            "\t\t\tif (buf[0] == 'V') {\n"
-            "\t\t\t\tunsigned char v[2];\n"
-            "\t\t\t\tif (read(cfd, v, 2) == 2) {\n"
-            "\t\t\t\t\tstruct imx179_reg regs[2] = {\n"
-            "\t\t\t\t\t\t{ 0x0340, v[0], 0 },\n"
-            "\t\t\t\t\t\t{ 0x0341, v[1], 0 },\n"
-            "\t\t\t\t\t};\n"
-            "\t\t\t\t\tsensor_write_regs(regs, 2);\n"
-            "\t\t\t\t\twrite(cfd, \"OK\", 2);\n"
-            "\t\t\t\t}\n"
             "\t\t\t}\n"
             "\t\t}\n"
             "\t\tclose(cfd);\n",
@@ -55,15 +44,20 @@ PATCHES = {
             "\t\t\t\t\twrite(cfd, \"OK\", 2);\n"
             "\t\t\t\t}\n"
             "\t\t\t}\n"
+            "\t\t\t/* AE: set VTS (frame length) for longer exposure */\n"
+            "\t\t\tif (buf[0] == 'V') {\n"
+            "\t\t\t\tunsigned char v[2];\n"
+            "\t\t\t\tif (read(cfd, v, 2) == 2) {\n"
+            "\t\t\t\t\tstruct imx179_reg regs[2] = {\n"
+            "\t\t\t\t\t\t{ 0x0340, v[0], 0 },\n"
+            "\t\t\t\t\t\t{ 0x0341, v[1], 0 },\n"
+            "\t\t\t\t\t};\n"
+            "\t\t\t\t\tsensor_write_regs(regs, 2);\n"
+            "\t\t\t\t\twrite(cfd, \"OK\", 2);\n"
+            "\t\t\t\t}\n"
+            "\t\t\t}\n"
             "\t\t}\n"
             "\t\tclose(cfd);\n",
-        ),
-    ],
-    "krux/src/sensor.py": [
-        # Replace __write_reg no-op with real implementation
-        (
-            "def __write_reg(r, v):\n    pass\n",
-            "def __write_reg(r, v):\n    _connect()\n    try:\n        _sock.sendall(b\"W\" + bytes([(r >> 8) & 0xff, r & 0xff, v & 0xff]))\n        resp = _sock.recv(2)\n        if resp != b\"OK\":\n            raise SensorError(\"write_reg failed: %r\" % resp)\n    except Exception as e:\n        raise SensorError(str(e))\n\n\ndef set_exposure(lines):\n    \"\"\"Set coarse integration time (exposure) in lines.\"\"\"\n    __write_reg(0x0202, (lines >> 8) & 0xff)\n    __write_reg(0x0203, lines & 0xff)\n\n\ndef set_gain(val):\n    \"\"\"Set analog gain (0x0020-0x01ff).\"\"\"\n    __write_reg(0x0204, (val >> 8) & 0xff)\n    __write_reg(0x0205, val & 0xff)\n\n\ndef set_exposure_gain(exposure_lines, gain_val):\n    \"\"\"Set both exposure and gain in one transaction.\"\"\"\n    _connect()\n    try:\n        _sock.sendall(b\"E\" + bytes([\n            (exposure_lines >> 8) & 0xff, exposure_lines & 0xff,\n            (gain_val >> 8) & 0xff, gain_val & 0xff,\n        ]))\n        resp = _sock.recv(2)\n        if resp != b\"OK\":\n            raise SensorError(\"set_exposure_gain failed: %r\" % resp)\n    except Exception as e:\n        raise SensorError(str(e))\n",
         ),
     ],
 }
