@@ -322,6 +322,13 @@ echo "written"
 
 ## Test results (2026-10-29, recovery mode)
 
+> **Superseded (2026-10-30).** The "thermal"/"too unstable" attribution in
+> this section and in the next one is wrong.  The crashes were VFE IOMMU
+> page faults ending in `wdog_bark`, not overheating; the brightness change
+> was later reproduced during streaming (Y mean 2 -> 9).  See
+> `docs/cam-stability-thermal.md` for the measurements and the corrected
+> test procedure.  The historical notes are kept for the record.
+
 ### Verified on device
 - **Register write protocol works**: `test_simple.py` sent `W` + 3 bytes, received `b'OK'` (response time < 3s).
 - **set_exposure() succeeds**: no error, camd responds OK.
@@ -422,7 +429,7 @@ Test results (2026-10-30, recovery mode):
 - `V` command added for VTS adjustment (0x0340/0x0341).
 - Group hold (0x0104) added to register writes.
 
-**Not verified (device thermal instability):**
+**Not verified (blocked by the VFE/IOMMU fault described below):**
 - Auto-exposure convergence with VTS adjustment.
 - QR scanning with brighter image.
 
@@ -432,8 +439,43 @@ Test results (2026-10-30, recovery mode):
 - VTS adjustment added via 'V' command (0x0340/0x0341).
 - Gain alone doesn't increase brightness (signal already at max for current VTS).
 
-**Device stability:**
-- Device crashes within 10-15 seconds of camd running.
-- Even with active cooling, sustained camera operation is unreliable.
-- Recovery mode (TWRP) is more stable than Android mode.
-- Short tests (≤10s) work; longer tests crash the device.
+**Device stability (corrected 2026-10-30):**
+- The crashes are a **software fault**, not overheating: the VFE40 writes to
+  an unmapped IOMMU address, and the resulting fault/printk storm starves
+  the watchdog (`bootreason=wdog_bark`).  See
+  `docs/cam-stability-thermal.md`.
+- Thermal sampling: 41 C after Android boot/cooldown, 51 C during the AE
+  test, 58 C during a 90 s stream; the device survived the 51 C and 58 C
+  runs.  Android boots after a reset heat the device, but that heat is a
+  consequence, not the cause.
+- The AE test itself is not the trigger: the first IOMMU fault occurs
+  before the MicroPython test connects, and stream-only runs fault too.
+- The IOMMU part is now fixed (see below); the remaining blocker is the CPP
+  debug-dump printk storm.  Use `scripts/cam/ae-thermal-test.sh` for
+  instrumented runs.
+
+### 2026-10-30 — VFE IOMMU fault worked around (chroma plane height); ping-pong mismatch remains
+
+- Root cause of the IOMMU fault: `plane_cfg[1]` (NV12 chroma) was
+  programmed with the full luma height (1232) while its buffer holds
+  `width*height/2` (616 lines).  The VFE CBCR write master ran past the
+  buffer into unmapped IOVA, and the fault/printk storm watchdog-reset the
+  device.
+- Workaround in `cam/camd.c`:
+  `plane_cfg[1].output_height = cbufs.height / 2` and
+  `plane_cfg[1].output_scan_lines = cbufs.height / 2`.
+- Verified with the workaround:
+  - **0 IOMMU faults** in short runs (vs 489 in the old 10 s run);
+  - 7 frames in ~10 s; Y mean **0 -> 10 -> 28** after exposure/gain;
+  - hottest zone 53 C.
+- The workaround is **not** the final fix: a fresh 90 s run crashed at
+  53 C with `msm_isp_get_done_buf: Write master ping pong mismatch.
+  Status: 0x10001` and ISP tasklet overflows, because the Y and C write
+  masters no longer complete in lockstep.  Next experiment: keep the CBCR
+  plane at full height and allocate a full-height chroma buffer
+  (`width*height`).
+- A second blocker for >10 s runs: `MSM_CPP_DUMP_FRM_CMD` prints 186 lines
+  per timed-out CPP frame.  Disable it in the kernel (or set
+  `console_loglevel=1`).  See `docs/cam-stability-thermal.md` section 7.
+- `set_vts()` is implemented in `krux/src/sensor.py` but is not yet in the
+  deployed `/data/krux/sensor.py`; deploy it before the VTS sweep (Step 4).

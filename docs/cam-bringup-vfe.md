@@ -1,5 +1,21 @@
 # Camera bring-up — VFE overflow fix
 
+> **2026-10-30 update.**  The output side of the same pipeline had a
+> confirmed IOMMU fault: `vfe_iommu` context `vfe0` reported translation
+> faults (`FSR = 0x2 [TF]`) and, at high fault rates, the printk storm ended
+> in a watchdog reset (`bootreason=wdog_bark`, not thermal).  Root cause:
+> the NV12 chroma plane was programmed with the full luma height while its
+> buffer is half-height.  Programming `plane_cfg[1]` at `height/2` removes
+> the IOMMU faults (short AE runs: 0 faults, Y 0 -> 10 -> 28), **but** it
+> breaks the Y/C write-master pairing: a fresh 90 s run crashes at 53 C
+> with `msm_isp_get_done_buf: Write master ping pong mismatch`.  So the
+> half-height change is a workaround, not the final fix; the next step is
+> full-height CBCR with a full-height chroma buffer.  A second,
+> independent printk storm remains: `MSM_CPP_DUMP_FRM_CMD` prints 186 lines
+> per timed-out frame.  See `docs/cam-stability-thermal.md` for the
+> measurements, the harness, and both fixes.  The notes below remain the
+> `PIX_VIEWFINDER` overflow analysis.
+
 Paste this into a fresh session.  This is a deep-dive task that requires
 both source analysis (no device needed) and device testing (device required).
 
