@@ -116,7 +116,8 @@ print(\"50 cycles OK\")
 Leave QR capture page running for 30 minutes. Check:
 - No oops in `dmesg`.
 - No reboot.
-- Frame rate ≥ 8 fps.
+- Frame rate: **20 fps capture / 15 fps decode** for animated UR at 5–10 fps
+  (8 fps is only the static-QR floor).
 - Battery temperature stable.
 
 ### Task 5 — Air-gap verification

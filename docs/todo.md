@@ -6,23 +6,25 @@
 - [ ] QR decode on real QR code (bright lighting; image is dark, l_mean≈1-2)
 - [ ] Scene-dependent entropy (l_stdev varies with scene)
 - [ ] 50 reset/run/close cycles (no crash, no camif error)
-- [ ] 30-min long-run stability (no oops, reboot, fd leak, >8 KB GC loss)
+- [ ] 30-min long-run stability (no oops, reboot, fd leak, >8 KB GC loss; 20/15 fps animated, 8 fps static)
 - [ ] Air-gap verification (boot air-gap kernel, check no new interface/socket/module)
 - [ ] camd not running when no camera page is open
 
 ### Auto-exposure (docs/cam-bringup-auto-exposure.md)
+- [x] Requirements confirmed (2026-10-30): animated UR 5–10 fps; QR on LCD/OLED screen; 20 fps capture / 15 fps decode target; exposure lock allowed; entropy mid-gray/no-clip
 - [x] Step 1: camd "W"/"E" socket commands (verified: response b"OK")
 - [x] Step 2: sensor.py `__write_reg` + `set_exposure`/`set_gain` (verified: no error)
 - [x] Step 3: verify register writes during streaming (verified 2026-10-30: Y mean 2 -> 9 before the fix, then 0 -> 10 -> 28 after the chroma fix; 0 IOMMU faults)
-- [ ] Step 4: exposure sweep to calibrate ranges (needs `set_vts` deployed)
-- [ ] Step 5: auto-exposure algorithm in Python
-- [ ] Step 6: move AE to camd (C)
-- [ ] Step 7: integrate with Krux camera pages
+- [ ] Step 4: exposure/VTS/gain sweep at fixed 20 fps and 15 fps VTS (needs `set_vts` deployed); record p90/p10/clipping
+- [ ] Step 5: AE algorithm in Python: `qr_screen` (p90/p10, anti-banding ladder, fixed VTS, lock) and `entropy` (mid-gray/no-clip)
+- [ ] Step 6: move AE to camd (C), with mode/lock/manual commands
+- [ ] Step 7: integrate with Krux camera pages (QR waits for convergence; entropy mode; manual override)
 
 ### VFE IOMMU fault / stability (docs/cam-stability-thermal.md)
 - [x] Thermal vs software investigation (conclusion: software; `wdog_bark`, not thermal)
 - [x] Instrumented harness (thermal sampler + detached supervisor + last_kmsg collection)
 - [x] Confirm AE writes are not the trigger (faults start before the test connects)
+- [ ] Profile the camd per-frame path: `isp_replay`, CPP submit, one-frame UPDATE_STREAM, downscale, socket, decode/render; decide whether CAMIF_RAW can reach 20 fps or PIX_VIEWFINDER is required
 - [x] Chroma-plane experiment: full height overruns the half-height buffer (IOMMU faults); half height removes them but breaks Y/C ping-pong pairing
 - [x] Workaround `cam/camd.c` with `plane_cfg[1].output_height/scan_lines = height/2`
 - [x] Re-run AE test with zero IOMMU faults (0 faults, Y 0 -> 10 -> 28, 53 C)

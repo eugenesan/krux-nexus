@@ -11,18 +11,69 @@ QR scanning and entropy collection regardless of lighting conditions.
 Currently the image is dark (Y mean ≈ 1-2) because exposure is fixed at
 1248/1252 lines and gain at 0x00e0.
 
+## Confirmed requirements and AE policy (2026-10-30)
+
+These supersede the earlier targets in this document.
+
+- **Animated QR:** UR at **5–10 parts/s**.
+- **Primary source:** QR displayed on an **LCD/OLED screen** (emissive,
+  50/60 Hz refresh, possible PWM/banding and glare).
+- **Frame rate:** target **20 fps capture / 15 fps decode** for the 10 fps
+  case; floor **15 fps capture / 10 fps decode** for the 5 fps case.  That
+  is 2x the sender rate and 1.5x decode margin.  The old ">=8 fps" target
+  is only a static-QR floor.
+- **Exposure locking:** allowed and preferred after convergence.
+- **Entropy:** a separate **mid-gray / no-clip** policy, not the QR policy.
+
+### QR-screen AE policy
+
+- **Metering:** center-weighted **p90/p10** of the luma plane plus the
+  clipped-pixel fraction.  Do not use the frame mean as the primary error:
+  a QR is bimodal and a bright background biases the mean.
+- **Target:** p90 200–225, p10 20–40, clipped pixels <1% (p99 <245).
+- **Control order:** exposure first; gain second; **VTS fixed** in QR mode
+  so the frame interval does not beat with the panel refresh.
+- **Anti-banding exposure ladder:** 1/120, 1/60, 1/50, 1/30 s (converted to
+  lines from the sensor line time).  Prefer 1/60 for a 60 Hz panel; use
+  1/120 if banding persists.  Never exceed 1/30 s at 20 fps.
+- **Gain:** raise only after exposure; cap at `0x0100` (`0x0180` only if the
+  screen is dim).  Prefer a slightly darker image over visible noise.
+- **Step/cadence:** log-domain (x/÷1.25), max one stop per update, update
+  every 2 frames; deadband ±10%, hysteresis 5%.
+- **Lock:** after 3 stable frames, freeze exposure/gain.  Re-evaluate every
+  30 frames or when p90 changes >20% / p10 changes >10% (screen brightness,
+  glare, page change).
+- **Glare:** if clipping is high and p90 is at target, lower exposure
+  instead of raising gain; anti-glare mode targets p90 ~180.
+
+### Entropy AE policy
+
+- **Target:** mid-gray, no clipping: mean 90–120, p1 >10, p99 <245,
+  clipped pixels <0.5%.
+- Maximize usable histogram spread (`l_stdev`), not brightness.
+- No lock; update every 3–5 frames; avoid pushing gain into pattern noise.
+- Separate mode from QR; entropy can run at lower fps (5–10 fps is enough).
+
+### Manual mode
+
+- Fixed exposure/gain/VTS, AE off; an EV/brightness control offsets the
+  target.  Used for reproducibility and as the fallback if AE fails.
+
 ## Background
 
 ### IMX179 exposure/gain registers
 
 | Register | Function | Current value | Range |
 |---|---|---|---|
-| `0x0202`/`0x0203` | Coarse integration time (exposure in lines) | 0x04e0 (1248) | 100-1200 (binned mode VTS=1252) |
+| `0x0202`/`0x0203` | Coarse integration time (exposure in lines) | 0x04e0 (1248) | 0 .. VTS-4 lines |
 | `0x0204`/`0x0205` | Analog gain | 0x00e0 | 0x0020-0x01ff (~1x-8x) |
-| `0x0340`/`0x0341` | Frame length (VTS) | 0x04e4 (1252) | Fixed for binned mode |
+| `0x0340`/`0x0341` | Frame length (VTS) | 0x04e4 (1252, ~30 fps) | ~1252 @30 fps, ~1878 @20 fps, ~2504 @15 fps |
 
 Exposure is the primary control (linear with brightness, no noise).
 Gain is secondary (amplifies noise).  Prefer exposure increase over gain.
+VTS is fixed in QR-screen mode (to keep the frame interval stable) and is
+only increased in low-light/paper or entropy modes when the frame-rate
+floor allows it.
 
 ### Architecture
 
@@ -194,6 +245,11 @@ print("Y mean:", s.l_mean())
 
 ### Task 4 — Exposure sweep to find optimal range [device needed]
 
+> **Updated by the 2026-10-30 policy.**  The old 100–1200 exposure sweep is
+> obsolete: exposure is already 1248 of VTS 1252.  Sweep within a **fixed
+> VTS set for 20 fps**, then repeat at the 15 fps VTS, and sweep gain
+> separately.  Record p90, p10, clipping and l_mean, not just l_mean.
+
 Sweep exposure from 100 to 1200 lines in steps of 100, capture Y mean for each.
 Also sweep gain from 0x0020 to 0x01ff in steps of 0x0020.
 
@@ -204,6 +260,12 @@ Also sweep gain from 0x0020 to 0x01ff in steps of 0x0020.
 **Pass criteria:** Y mean increases monotonically with exposure/gain.
 
 ### Task 5 — Implement auto-exposure algorithm in Python [device needed]
+
+> **Updated by the 2026-10-30 policy.**  The `TARGET_MEAN = 80` sample below
+> is kept for history.  The confirmed QR policy uses center-weighted
+> p90/p10 + clipping, an anti-banding exposure ladder, a fixed VTS in
+> QR-screen mode, and an exposure lock after convergence.  Entropy uses a
+> separate mid-gray/no-clip policy.
 
 **File:** `krux/src/sensor.py` or a new `krux/src/auto_exposure.py`
 

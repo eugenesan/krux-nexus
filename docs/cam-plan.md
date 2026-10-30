@@ -34,7 +34,8 @@ Done means all of:
   usable `l_stdev`/`a_stdev`/`b_stdev`; `to_bytes()` returns RGB565 bytes.
 - The camera page renders through `lcd.display(img)` without crashing.
 - 10 minutes / 1,000 snapshots with no oops, reboot, fd leak, or monotonic
-  `gc.mem_free()` loss; frame rate ≥ 8 fps at QVGA.
+  `gc.mem_free()` loss; **20 fps capture / 15 fps decode** for animated UR
+  at 5–10 fps (8 fps is only the static-QR floor).
 - `ip addr`, `/proc/net/dev`, and `lsmod` show no new non-loopback interface
   or module. No camera daemon runs when no camera page is open.
 
@@ -454,8 +455,9 @@ Pass: ten distinct frames, 320×240, no `SensorError`, daemon logs 10–15 fps,
   (`ls /proc/<pid>/fd | wc -l` stable).
 - 50 `reset`/`run(0)`/`run(1)`/`close` cycles; no `camif` error, no CSID
   close panic.
-- Battery temperature and frame rate after 10 minutes: ≥ 8 fps, no thermal
-  shutdown.
+- Battery temperature and frame rate after 10 minutes: **20 fps capture /
+  15 fps decode** for animated UR (5–10 fps sender); 8 fps is the static-QR
+  floor.  No thermal shutdown.
 
 ### D5. Failure and air-gap checks
 
@@ -513,7 +515,7 @@ Pass: ten distinct frames, 320×240, no `SensorError`, daemon logs 10–15 fps,
 | 9 | QR | QR page, code at 15–25 cm | payload appears; `find_inverted` works | tune crop/exposure |
 | 10 | entropy | entropy page | `l/a/b_stdev` non-zero and scene-dependent | fix statistics |
 | 11 | display | QR page / flash tools | live image and progress bar render | fix lcd Image path |
-| 12 | stability | D4 loops | no oops/reboot/fd leak; ≥8 fps | stop and profile |
+| 12 | stability | D4 loops | no oops/reboot/fd leak; 20/15 fps animated, 8 fps static | stop and profile |
 | 13 | air-gap | D5 | no new interface/socket/module | remove/stop daemon |
 
 > **Path note:** this document predates the source consolidation. The port
