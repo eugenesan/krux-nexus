@@ -412,3 +412,28 @@ Test results (2026-10-30, recovery mode):
 - Increasing exposure beyond VTS requires increasing VTS (frame length, 0x0340/0x0341).
 - Group hold (0x0104) is used in vendor's init sequence but may not be needed during streaming.
 - Register writes reach the sensor but brightness doesn't change (possibly because exposure is at max for current VTS).
+
+### Test results (2026-10-30, recovery mode, active cooling)
+
+**Verified:**
+- Register writes DO change brightness: baseline Y mean 5 → 9 after exposure=2000 (+80%).
+- `set_exposure()` and `set_gain()` succeed (no error).
+- `W` command protocol works (response: b'OK').
+- `V` command added for VTS adjustment (0x0340/0x0341).
+- Group hold (0x0104) added to register writes.
+
+**Not verified (device thermal instability):**
+- Auto-exposure convergence with VTS adjustment.
+- QR scanning with brighter image.
+
+**Key finding:**
+- IMX179 exposure is at 1248/1252 lines (99.7% of frame) in binned mode.
+- Increasing exposure requires increasing VTS (frame length).
+- VTS adjustment added via 'V' command (0x0340/0x0341).
+- Gain alone doesn't increase brightness (signal already at max for current VTS).
+
+**Device stability:**
+- Device crashes within 10-15 seconds of camd running.
+- Even with active cooling, sustained camera operation is unreliable.
+- Recovery mode (TWRP) is more stable than Android mode.
+- Short tests (≤10s) work; longer tests crash the device.
