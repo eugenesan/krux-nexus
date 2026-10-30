@@ -362,3 +362,23 @@ echo "written"
 - Even with active cooling, sustained camera operation is unreliable.
 - Recovery mode (TWRP) is more stable than Android mode.
 - Short tests (≤10s) work; longer tests crash the device.
+
+### Key finding: register writes succeed but brightness doesn't change
+
+Test results (2026-10-30, recovery mode):
+- `set_exposure(2000)` succeeds (W command → OK)
+- `set_gain(0x0180)` succeeds (W command → OK)
+- Snapshot after writes: Y mean still 0-1 (no change)
+
+**Possible causes:**
+1. Exposure is already at max for current VTS (1248/1252 lines = 99.7%).
+   Increasing exposure beyond VTS requires increasing VTS (frame length, 0x0340/0x0341).
+2. Gain register (0x0204/0x0205) might need a different value range or format.
+3. IMX179 may need group hold (0x0104) for register writes to take effect during streaming.
+   Group hold is used in the vendor's init sequence (settings_3: 0x0104=0x01, settings_6: 0x0104=0x00).
+
+**Next steps:**
+- Try adjusting VTS (0x0340/0x0341) to allow longer exposure.
+- Try group hold (0x0104) around register writes.
+- Try higher gain values (up to 0x01ff).
+- Check if the sensor needs to be in a specific mode for register writes.
