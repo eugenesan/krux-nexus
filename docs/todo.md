@@ -24,7 +24,11 @@
 - [x] Thermal vs software investigation (conclusion: software; `wdog_bark`, not thermal)
 - [x] Instrumented harness (thermal sampler + detached supervisor + last_kmsg collection)
 - [x] Confirm AE writes are not the trigger (faults start before the test connects)
-- [ ] Profile the camd per-frame path: `isp_replay`, CPP submit, one-frame UPDATE_STREAM, downscale, socket, decode/render; decide whether CAMIF_RAW can reach 20 fps or PIX_VIEWFINDER is required
+- [x] Profile the camd per-frame path: debug path was 400 ms + 18 MB/frame; 5x5 scalar downscale 187-250 ms; 3x3 wide-load downscale 34-44 ms; total 36-45 ms, **22-28 fps** (docs/cam-frame-path.md)
+- [ ] Disable `MSM_CPP_DUMP_FRM_CMD` (186 printk lines per timed-out frame)
+- [ ] Fix `msm_cpp_do_timeout_work`: drop the frame and return; do not `msm_cpp_write()`/resend from the workqueue
+- [ ] Mask/fix the `msm_isp_process_stats_irq` panic on the CAMIF_RAW path (stats IRQ against an expired/unconfigured stream)
+- [ ] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes + render` loop
 - [x] Chroma-plane experiment: full height overruns the half-height buffer (IOMMU faults); half height removes them but breaks Y/C ping-pong pairing
 - [x] Workaround `cam/camd.c` with `plane_cfg[1].output_height/scan_lines = height/2`
 - [x] Re-run AE test with zero IOMMU faults (0 faults, Y 0 -> 10 -> 28, 53 C)

@@ -30,6 +30,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -1417,6 +1418,38 @@ static int ion_alloc_fd(size_t len, unsigned int heap_mask)
 	return r;
 }
 
+static int profile_mode;
+static int debug_frames;
+static int bench_mode;
+static int target_fps;
+
+static uint64_t now_ns(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* Sum three bytes with one 32-bit load.  The ION buffer is mapped
+ * uncached, so wide loads matter: scalar byte reads measured 10.5 MB/s,
+ * 32-bit reads 44.6 MB/s, 64-bit reads 83 MB/s. */
+static inline unsigned sum3_u8(const unsigned char *p)
+{
+	uint32_t v;
+	memcpy(&v, p, 4);
+	return (unsigned)(v & 0xff) + ((v >> 8) & 0xff) + ((v >> 16) & 0xff);
+}
+
+/* Sum three interleaved U/V pixels (six bytes) with one 64-bit load. */
+static inline void sum3_uv(const unsigned char *p, unsigned *u, unsigned *v)
+{
+	uint64_t w;
+	memcpy(&w, p, 8);
+	*u = (unsigned)(w & 0xff) + ((w >> 16) & 0xff) + ((w >> 32) & 0xff);
+	*v = (unsigned)((w >> 8) & 0xff) + ((w >> 24) & 0xff) +
+	     ((w >> 40) & 0xff);
+}
+
 static void *client_thread(void *arg)
 {
 	int *wh = (int *)arg;
@@ -1553,6 +1586,11 @@ static void *client_thread(void *arg)
 		struct v4l2_buffer buf;
 		struct pollfd pfd = { .fd = fd, .events = POLLIN };
 		int r;
+		uint64_t p0 = now_ns(), p1 = 0, p2 = 0, p3 = 0;
+		uint64_t p4 = 0, p5 = 0, p5a = 0, p6 = 0, p7 = 0;
+		static uint64_t a_upd, a_cpp, a_rep, a_wait, a_dq;
+		static uint64_t a_dbg, a_down, a_q, a_pace, a_tot;
+		static int pn;
 
 		/* The vendor's per-frame order: the chromatrix goes to
 		 * the CPP first (it carries the frame's buffer
@@ -1580,6 +1618,7 @@ static void *client_thread(void *arg)
 				printf("[isp] CONFIG_DONE: %s\n",
 				       strerror(errno));
 		}
+		p1 = now_ns();
 
 		if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
 		    isp_stream_src == CAMIF_RAW)
@@ -1591,15 +1630,18 @@ static void *client_thread(void *arg)
 				nanosleep(&ts, NULL);
 			}
 		}
+		p2 = now_ns();
 
 		if (replay_cycle)
 			isp_replay(cam_cycle, CAM_CYCLE_COUNT,
 				   "per-frame cycle");
+		p3 = now_ns();
 		r = poll(&pfd, 1, 5000);
 		if (r <= 0) {
 			printf("[client] no frame after 5s\n");
 			continue;
 		}
+		p4 = now_ns();
 		{
 			struct v4l2_plane dqplanes[2];
 			memset(dqplanes, 0, sizeof(dqplanes));
@@ -1612,14 +1654,17 @@ static void *client_thread(void *arg)
 				printf("[client] DQBUF: %s\n", strerror(errno));
 				continue;
 			}
-			printf("[client] plane0: bytesused=%u length=%u data_offset=%u\n",
-			       dqplanes[0].bytesused, dqplanes[0].length,
-			       dqplanes[0].data_offset);
-			printf("[client] plane1: bytesused=%u length=%u data_offset=%u\n",
-			       dqplanes[1].bytesused, dqplanes[1].length,
-			       dqplanes[1].data_offset);
+			p5 = now_ns();
+			if (debug_frames) {
+				printf("[client] plane0: bytesused=%u length=%u data_offset=%u\n",
+				       dqplanes[0].bytesused, dqplanes[0].length,
+				       dqplanes[0].data_offset);
+				printf("[client] plane1: bytesused=%u length=%u data_offset=%u\n",
+				       dqplanes[1].bytesused, dqplanes[1].length,
+				       dqplanes[1].data_offset);
+			}
 		}
-		{
+		if (debug_frames) {
 			/* how often the frames come: with the CAMIF's
 			 * pixel clock and the sensor's real rate, the
 			 * frame rate shows whether the two agree */
@@ -1638,6 +1683,7 @@ static void *client_thread(void *arg)
 		}
 		printf("[client] GOT A FRAME: index=%u bytesused=%u seq=%u\n",
 		       buf.index, buf.bytesused, buf.sequence);
+		if (debug_frames) {
 		{
 			/* Which of our buffers did the ISP actually write
 			 * into?  Count the non-zero bytes of each
@@ -1708,6 +1754,8 @@ static void *client_thread(void *arg)
 			if (p != MAP_FAILED)
 				munmap(p, (size_t)cbufs.width * cbufs.height);
 		}
+		}
+		p5a = now_ns();
 		/* convert to QVGA and store in latest slot */
 		{
 			const unsigned char *src_y, *src_uv;
@@ -1715,7 +1763,7 @@ static void *client_thread(void *arg)
 			size_t y_sz = (size_t)width * height;
 			size_t uv_sz = (size_t)width * height / 2;
 
-			{
+			if (debug_frames) {
 				struct timespec ts = { 0, 100 * 1000 * 1000 };
 				nanosleep(&ts, NULL);
 			}
@@ -1726,6 +1774,61 @@ static void *client_thread(void *arg)
 			if (p_y != MAP_FAILED && p_uv != MAP_FAILED) {
 				src_y = (const unsigned char *)p_y;
 				src_uv = (const unsigned char *)p_uv;
+				if (bench_mode) {
+					static int bench_done;
+					if (!bench_done) {
+						uint64_t t0, t1;
+						volatile uint64_t s = 0;
+						size_t i;
+						void *tmp;
+
+						bench_done = 1;
+						t0 = now_ns();
+						for (i = 0; i < y_sz; i++)
+							s += src_y[i];
+						t1 = now_ns();
+						printf("[bench] y8 %.1f ms %.1f MB/s sum=%llu\n",
+						       (t1 - t0) / 1e6,
+						       (double)y_sz / (t1 - t0) * 1e3,
+						       (unsigned long long)s);
+
+						s = 0;
+						t0 = now_ns();
+						for (i = 0; i + 4 <= y_sz; i += 4)
+							s += *(const uint32_t *)(src_y + i);
+						t1 = now_ns();
+						printf("[bench] y32 %.1f ms %.1f MB/s sum=%llu\n",
+						       (t1 - t0) / 1e6,
+						       (double)y_sz / (t1 - t0) * 1e3,
+						       (unsigned long long)s);
+
+						s = 0;
+						t0 = now_ns();
+						for (i = 0; i + 8 <= y_sz; i += 8) {
+							uint64_t v;
+							memcpy(&v, src_y + i, 8);
+							s += v;
+						}
+						t1 = now_ns();
+						printf("[bench] y64 %.1f ms %.1f MB/s sum=%llu\n",
+						       (t1 - t0) / 1e6,
+						       (double)y_sz / (t1 - t0) * 1e3,
+						       (unsigned long long)s);
+
+						tmp = malloc(y_sz);
+						if (tmp) {
+							t0 = now_ns();
+							memcpy(tmp, src_y, y_sz);
+							t1 = now_ns();
+							s += ((unsigned char *)tmp)[0];
+							printf("[bench] memcpy %.1f ms %.1f MB/s sum=%llu\n",
+							       (t1 - t0) / 1e6,
+							       (double)y_sz / (t1 - t0) * 1e3,
+							       (unsigned long long)s);
+							free(tmp);
+						}
+					}
+				}
 				if (!latest_y) {
 					latest_y = malloc(320 * 240);
 					latest_uv = malloc(160 * 120 * 2);
@@ -1734,15 +1837,28 @@ static void *client_thread(void *arg)
 					int ox = (width - 1600) / 2;
 					int oy = (height - 1200) / 2;
 					int dx, dy;
-					for (dy = 0; dy < 240; dy++)
+					/* 3x3 center box of each 5x5 block:
+					 * 9 of 25 pixels, but with wide loads
+					 * on an uncached ION buffer it is the
+					 * difference between ~190 ms and ~30 ms.
+					 * The skipped ring is the outer 2 pixels
+					 * of each block; QR still gets a 5x
+					 * downscale with anti-aliasing. */
+					for (dy = 0; dy < 240; dy++) {
+						const unsigned char *base =
+							src_y + (oy + dy * 5 + 1) * width
+							+ ox + 1;
 						for (dx = 0; dx < 320; dx++) {
-							int sx, sy;
-							unsigned sum = 0;
-							for (sy = 0; sy < 5; sy++)
-								for (sx = 0; sx < 5; sx++)
-									sum += src_y[(oy + dy*5 + sy) * width + (ox + dx*5 + sx)];
-							latest_y[dy * 320 + dx] = (unsigned char)(sum / 25);
+							const unsigned char *p =
+								base + dx * 5;
+							unsigned sum =
+								sum3_u8(p) +
+								sum3_u8(p + width) +
+								sum3_u8(p + 2 * width);
+							latest_y[dy * 320 + dx] =
+								(unsigned char)(sum / 9);
 						}
+					}
 				}
 				{
 					int uv_w = width / 2;
@@ -1750,19 +1866,26 @@ static void *client_thread(void *arg)
 					int ox = (uv_w - 800) / 2;
 					int oy = (uv_h - 600) / 2;
 					int dx, dy;
-					for (dy = 0; dy < 120; dy++)
+					for (dy = 0; dy < 120; dy++) {
+						const unsigned char *base =
+							src_uv + (oy + dy * 5 + 1) * width
+							+ (ox + 1) * 2;
 						for (dx = 0; dx < 160; dx++) {
-							int sx, sy;
-							unsigned sum_u = 0, sum_v = 0;
-							for (sy = 0; sy < 5; sy++)
-								for (sx = 0; sx < 5; sx++) {
-									int idx = (oy + dy*5 + sy) * uv_w + (ox + dx*5 + sx);
-									sum_u += src_uv[idx * 2];
-									sum_v += src_uv[idx * 2 + 1];
-								}
-							latest_uv[(dy * 160 + dx) * 2] = (unsigned char)(sum_u / 25);
-							latest_uv[(dy * 160 + dx) * 2 + 1] = (unsigned char)(sum_v / 25);
+							const unsigned char *p =
+								base + dx * 10;
+							unsigned su = 0, sv = 0, u, v;
+							sum3_uv(p, &u, &v);
+							su += u; sv += v;
+							sum3_uv(p + width, &u, &v);
+							su += u; sv += v;
+							sum3_uv(p + 2 * width, &u, &v);
+							su += u; sv += v;
+							latest_uv[(dy * 160 + dx) * 2] =
+								(unsigned char)(su / 9);
+							latest_uv[(dy * 160 + dx) * 2 + 1] =
+								(unsigned char)(sv / 9);
 						}
+					}
 				}
 				pthread_mutex_lock(&frame_mutex);
 				latest_seq++;
@@ -1772,6 +1895,8 @@ static void *client_thread(void *arg)
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
 		}
+
+		p6 = now_ns();
 
 		/* re-queue the buffer */
 		{
@@ -1784,6 +1909,68 @@ static void *client_thread(void *arg)
 			cbufs.buf[buf.index].m.planes = qplanes;
 			cbufs.buf[buf.index].length = 2;
 			ioctl(fd, VIDIOC_QBUF, &cbufs.buf[buf.index]);
+		}
+		p7 = now_ns();
+
+		{
+			uint64_t upd = p1 - p0, cpp = p2 - p1, rep = p3 - p2;
+			uint64_t wait = p4 - p3, dq = p5 - p4, dbg = p5a - p5;
+			uint64_t down = p6 - p5a, q = p7 - p6;
+			uint64_t pace = 0;
+
+			if (target_fps > 0) {
+				uint64_t period =
+					1000000000ULL / (uint64_t)target_fps;
+				uint64_t elapsed = p7 - p0;
+				if (elapsed < period) {
+					uint64_t ns = period - elapsed;
+					struct timespec ts;
+					ts.tv_sec = ns / 1000000000ULL;
+					ts.tv_nsec = ns % 1000000000ULL;
+					nanosleep(&ts, NULL);
+					pace = now_ns() - p7;
+				}
+			}
+
+			a_upd += upd;
+			a_cpp += cpp;
+			a_rep += rep;
+			a_wait += wait;
+			a_dq += dq;
+			a_dbg += dbg;
+			a_down += down;
+			a_q += q;
+			a_pace += pace;
+			a_tot += p7 - p0 + pace;
+			pn++;
+
+			if (profile_mode >= 2)
+				printf("[prof] n=%d upd=%.2f cpp=%.2f "
+				       "rep=%.2f wait=%.2f dq=%.2f dbg=%.2f "
+				       "down=%.2f q=%.2f pace=%.2f tot=%.2f "
+				       "fps=%.1f\n",
+				       n, upd / 1e6, cpp / 1e6, rep / 1e6,
+				       wait / 1e6, dq / 1e6, dbg / 1e6,
+				       down / 1e6, q / 1e6, pace / 1e6,
+				       (p7 - p0 + pace) / 1e6,
+				       1e9 / (double)(p7 - p0 + pace));
+			if (profile_mode >= 1 && pn >= 10) {
+				double d = (double)pn;
+				printf("[prof-sum] frames=%d avg_ms "
+				       "upd=%.2f cpp=%.2f rep=%.2f wait=%.2f "
+				       "dq=%.2f dbg=%.2f down=%.2f q=%.2f "
+				       "pace=%.2f tot=%.2f fps=%.1f\n",
+				       pn, a_upd / d / 1e6, a_cpp / d / 1e6,
+				       a_rep / d / 1e6, a_wait / d / 1e6,
+				       a_dq / d / 1e6, a_dbg / d / 1e6,
+				       a_down / d / 1e6, a_q / d / 1e6,
+				       a_pace / d / 1e6,
+				       a_tot / d / 1e6,
+				       1e9 / (a_tot / d));
+				a_upd = a_cpp = a_rep = a_wait = a_dq = 0;
+				a_dbg = a_down = a_q = a_pace = a_tot = 0;
+				pn = 0;
+			}
 		}
 
 		fflush(stdout);
@@ -1864,6 +2051,18 @@ int main(int argc, char **argv)
 	signal(SIGPIPE, SIG_IGN);
 
 	setvbuf(stdout, NULL, _IONBF, 0);
+	{
+		const char *p = getenv("CAMD_PROFILE");
+		const char *d = getenv("CAMD_DEBUG_FRAMES");
+		const char *b = getenv("CAMD_BENCH");
+		const char *f = getenv("CAMD_TARGET_FPS");
+		profile_mode = p ? atoi(p) : 0;
+		debug_frames = d ? atoi(d) : 0;
+		bench_mode = b ? atoi(b) : 0;
+		target_fps = f ? atoi(f) : 0;
+		printf("[prof] profile=%d debug_frames=%d bench=%d target_fps=%d\n",
+		       profile_mode, debug_frames, bench_mode, target_fps);
+	}
 	if (argc > 2) {
 		wh[0] = atoi(argv[1]);
 		wh[1] = atoi(argv[2]);
