@@ -745,6 +745,7 @@ static int latest_ready = 0;
  * run time.
  */
 static int replay_config = 1;	/* the initial configuration */
+static int full_chroma;		/* full-height CBCR + full-size buffer */
 static int replay_cycle = 1;	/* and the per-frame cycle */
 
 static int isp_replay(const struct cam_upload *u, int n, const char *what)
@@ -1023,22 +1024,19 @@ static int isp_start(void)
 	scmd.plane_cfg[0].output_plane_format = Y_PLANE;
 	scmd.plane_cfg[1].output_width = cbufs.width;
 	/*
-	 * NV12 chroma is half-height: its buffer is width*height/2.
-	 * Programming the full luma height here makes the CBCR write
-	 * master run a second chroma plane's worth of data past the
-	 * buffer, into unmapped IOVA; the resulting vfe_iommu
-	 * translation-fault storm ends in a watchdog reset.
-	 *
-	 * NOTE: height/2 is a workaround, not the final fix.  With
-	 * different Y/C heights the two write masters can report
-	 * "Write master ping pong mismatch" on long runs and the ISP
-	 * tasklet queue overflows.  The proper fix is full-height
-	 * CBCR with a full-height chroma buffer (width*height), or a
-	 * driver fix that keeps the Y/C pair in lockstep.
+	 * NV12 chroma is normally half-height: its buffer is
+	 * width*height/2.  Full luma height without a full-size buffer
+	 * makes the CBCR write master run past the buffer into unmapped
+	 * IOVA.  CAMD_FULL_CHROMA=1 keeps the CBCR plane at full height
+	 * and allocates a width*height chroma buffer, which keeps the Y/C
+	 * write masters paired (no ping-pong mismatch) if the hardware
+	 * really writes a full-height chroma plane.
 	 */
-	scmd.plane_cfg[1].output_height = cbufs.height / 2;
+	scmd.plane_cfg[1].output_height =
+		full_chroma ? cbufs.height : cbufs.height / 2;
 	scmd.plane_cfg[1].output_stride = cbufs.width;
-	scmd.plane_cfg[1].output_scan_lines = cbufs.height / 2;
+	scmd.plane_cfg[1].output_scan_lines =
+		full_chroma ? cbufs.height : cbufs.height / 2;
 	scmd.plane_cfg[1].output_plane_format = CBCR_PLANE;
 	if (ioctl(isp_fd, VIDIOC_MSM_ISP_REQUEST_STREAM, &scmd) < 0) {
 		printf("[isp] REQUEST_STREAM: %s\n", strerror(errno));
@@ -1528,7 +1526,9 @@ static void *client_thread(void *arg)
 		int buf_w = cam->width;
 		int buf_h = cam->height;
 		int fd_y = ion_alloc_fd((size_t)buf_w * buf_h, m);
-		int fd_c = ion_alloc_fd((size_t)buf_w * buf_h / 2, m);
+		int fd_c = ion_alloc_fd(
+			full_chroma ? (size_t)buf_w * buf_h
+				    : (size_t)buf_w * buf_h / 2, m);
 		if (fd_y < 0 || fd_c < 0) {
 			printf("[client] dma-buf allocation failed\n");
 			return NULL;
@@ -1547,7 +1547,8 @@ static void *client_thread(void *arg)
 		planes[0].m.userptr = (unsigned long)bufs[i];
 		planes[0].length = width * height;
 		planes[1].m.userptr = cbufs.planes[i][1].m.userptr;
-		planes[1].length = (width * height) / 2;
+		planes[1].length = full_chroma ? width * height
+					       : (width * height) / 2;
 		buf.m.planes = planes;
 		buf.length = 2;
 		if (ioctl(fd, VIDIOC_QBUF, &buf) < 0) {
@@ -1566,7 +1567,8 @@ static void *client_thread(void *arg)
 	for (i = 0; i < (int)rb.count && i < 8; i++) {
 		cbufs.planes[i][0].m.userptr = (unsigned long)bufs[i];
 		cbufs.planes[i][0].length = width * height;
-		cbufs.planes[i][1].length = (width * height) / 2;
+		cbufs.planes[i][1].length = full_chroma ? width * height
+							: (width * height) / 2;
 		memset(&cbufs.buf[i], 0, sizeof(cbufs.buf[i]));
 		cbufs.buf[i].index = i;
 		cbufs.buf[i].type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -1905,7 +1907,8 @@ static void *client_thread(void *arg)
 			qplanes[0].m.userptr = (unsigned long)bufs[buf.index];
 			qplanes[0].length = width * height;
 			qplanes[1].m.userptr = cbufs.planes[buf.index][1].m.userptr;
-			qplanes[1].length = (width * height) / 2;
+			qplanes[1].length = full_chroma ? width * height
+							: (width * height) / 2;
 			cbufs.buf[buf.index].m.planes = qplanes;
 			cbufs.buf[buf.index].length = 2;
 			ioctl(fd, VIDIOC_QBUF, &cbufs.buf[buf.index]);
@@ -1956,11 +1959,12 @@ static void *client_thread(void *arg)
 				       1e9 / (double)(p7 - p0 + pace));
 			if (profile_mode >= 1 && pn >= 10) {
 				double d = (double)pn;
-				printf("[prof-sum] frames=%d avg_ms "
+				printf("[prof-sum] wall=%ld frames=%d avg_ms "
 				       "upd=%.2f cpp=%.2f rep=%.2f wait=%.2f "
 				       "dq=%.2f dbg=%.2f down=%.2f q=%.2f "
 				       "pace=%.2f tot=%.2f fps=%.1f\n",
-				       pn, a_upd / d / 1e6, a_cpp / d / 1e6,
+				       (long)time(NULL), pn,
+				       a_upd / d / 1e6, a_cpp / d / 1e6,
 				       a_rep / d / 1e6, a_wait / d / 1e6,
 				       a_dq / d / 1e6, a_dbg / d / 1e6,
 				       a_down / d / 1e6, a_q / d / 1e6,
@@ -2056,12 +2060,15 @@ int main(int argc, char **argv)
 		const char *d = getenv("CAMD_DEBUG_FRAMES");
 		const char *b = getenv("CAMD_BENCH");
 		const char *f = getenv("CAMD_TARGET_FPS");
+		const char *fc = getenv("CAMD_FULL_CHROMA");
 		profile_mode = p ? atoi(p) : 0;
 		debug_frames = d ? atoi(d) : 0;
 		bench_mode = b ? atoi(b) : 0;
 		target_fps = f ? atoi(f) : 0;
-		printf("[prof] profile=%d debug_frames=%d bench=%d target_fps=%d\n",
-		       profile_mode, debug_frames, bench_mode, target_fps);
+		full_chroma = fc ? atoi(fc) : 0;
+		printf("[prof] profile=%d debug_frames=%d bench=%d target_fps=%d full_chroma=%d\n",
+		       profile_mode, debug_frames, bench_mode, target_fps,
+		       full_chroma);
 	}
 	if (argc > 2) {
 		wh[0] = atoi(argv[1]);
