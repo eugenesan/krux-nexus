@@ -25,10 +25,13 @@
 - [x] Instrumented harness (thermal sampler + detached supervisor + last_kmsg collection)
 - [x] Confirm AE writes are not the trigger (faults start before the test connects)
 - [x] Profile the camd per-frame path: debug path was 400 ms + 18 MB/frame; 5x5 scalar downscale 187-250 ms; 3x3 wide-load downscale 34-44 ms; total 36-45 ms, **22-28 fps** (docs/cam-frame-path.md)
-- [ ] Disable `MSM_CPP_DUMP_FRM_CMD` (186 printk lines per timed-out frame)
-- [ ] Fix `msm_cpp_do_timeout_work`: drop the frame and return; do not `msm_cpp_write()`/resend from the workqueue
-- [ ] Mask/fix the `msm_isp_process_stats_irq` panic on the CAMIF_RAW path (stats IRQ against an expired/unconfigured stream)
-- [ ] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes + render` loop
+- [x] Disable `MSM_CPP_DUMP_FRM_CMD` (186 printk lines per timed-out frame)
+- [x] Fix `msm_cpp_do_timeout_work`: drop the frame and return; do not `msm_cpp_write()`/resend from the workqueue
+- [x] Guard `msm_isp_process_stats_irq` on the CAMIF_RAW path
+- [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
+- [ ] Remove the 70 ms downscale spikes: full-height CBCR + full-height chroma buffer, NEON/cached ION, or capture-thread affinity
+- [ ] Add a blocking `snapshot` waiting for a new `latest_seq` (avoid duplicate frame copies/decodes)
+- [ ] Re-run 20 fps until the average is consistently >=20 fps, then proceed to AE VTS/exposure sweep
 - [x] Chroma-plane experiment: full height overruns the half-height buffer (IOMMU faults); half height removes them but breaks Y/C ping-pong pairing
 - [x] Workaround `cam/camd.c` with `plane_cfg[1].output_height/scan_lines = height/2`
 - [x] Re-run AE test with zero IOMMU faults (0 faults, Y 0 -> 10 -> 28, 53 C)

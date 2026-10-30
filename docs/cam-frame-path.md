@@ -120,7 +120,7 @@ completion; the kernel panics first.
 
 ```sh
 # Fresh camera boot (new camd process per boot; do not reuse a dirty CPP).
-BOOT_IMG=/tmp/opencode/boot-nocons.img \
+BOOT_IMG=/tmp/opencode/boot-fix-nocons.img \
   scripts/cam/ae-thermal-test.sh boot
 
 adb push /tmp/opencode/camd-paced /data/krux/camd-paced
@@ -139,16 +139,71 @@ Always run the profiler in the foreground or through a separate adb stream
 so the timing lines survive a reset; a log on `/data` may lose its tail when
 the watchdog fires.
 
+## Kernel fix and 20 fps re-run (2026-10-30)
+
+Patches on `airgap/cam-ksu` (`6a10b79fc03`):
+
+- `MSM_CPP_DUMP_FRM_CMD = 0`.
+- `msm_cpp_do_timeout_work` drops the timed-out frame and returns; no
+  `msm_cpp_write()` and no resend from the workqueue.
+- `msm_isp_process_stats_irq` guards against an unconfigured stats path.
+
+Boot image: `/tmp/opencode/boot-fix-nocons.img`, kernel
+`#1 SMP PREEMPT Fri Oct 30 14:15:25 MST 2026`.
+
+Result of the 20 fps paced + Python run:
+
+- `msm_cpp_dump_frame_cmd`: **0**
+- `the frame timed out`: **0**
+- `msm_isp_process_stats_irq` panic: **0**
+- `Watchdog bark`: **0**
+- `Unexpected IOMMU`: **0**
+- `Write master ping pong mismatch`: **59** (warning only)
+
+The first run used the unthrottled client (94 frames, 14.8 fps average;
+groups 8.6-20.0). A throttled client (50 ms sleep, render every 3rd frame)
+with the CPU governor pinned to `performance` gave:
+
+- steady groups: **20.0 fps**
+- typical groups: 18-20 fps
+- worst group: 12.1 fps (`down=70.6 ms`)
+- average: **~17.3 fps**
+
+Python side (steady state, after the first-frame warm-up):
+
+- `snapshot` 3-4 ms
+- `find_qrcodes` 2-5 ms
+- `lcd.display` 0-9 ms (every 3rd frame in the throttled test)
+- loop work ~6-10 ms; **decode/render are not the bottleneck**
+
+The remaining 20 fps gap is **camd downscale spikes** (35-40 ms typical,
+70 ms spikes) plus the Y/C ping-pong warnings. The `interactive` governor
+with a 300 MHz minimum was one contributor; `performance` helped but did
+not remove the spikes.
+
+Next tuning, in order:
+
+1. Full-height CBCR **and a full-height chroma buffer** (`width*height`) to
+   remove the ping-pong mismatch and the memory contention it implies.
+2. NEON/128-bit downscale or cached ION mapping to remove the 70 ms spikes.
+3. A blocking `snapshot` that waits for a new `latest_seq` (the current
+   client can spin on duplicate frames; the throttled test approximates
+   the right behavior with a 50 ms sleep).
+
 ## Conclusions
 
 - The 0.6-0.8 fps was mostly **camd debug code**, then the **uncached 5x5
   CPU downscale**.
 - With the debug path gated and the 3x3 wide-load downscale, camd runs at
-  **22-28 fps** (603 frames/30 s), which clears the 20 fps capture target.
-- The camera/CPP stage latency is not the bottleneck (`poll` ~0-6 ms).
-- The next work is kernel stability: disable the CPP dump, stop the unsafe
-  timeout resend, fix/mask the stats IRQ, then re-run the 20 fps profile
-  together with the Python `snapshot + find_qrcodes + render` loop.
+  **22-28 fps** camd-only (603 frames/30 s).
+- The kernel panic path is fixed: 20 fps camd + Python decode/render now
+  runs without CPP dump, timeout, stats panic, watchdog or IOMMU faults.
+- 20.0 fps is reached in steady windows; the average under load is ~17 fps
+  because of 70 ms downscale spikes and the remaining ping-pong warnings.
+- The camera/CPP stage latency is not the bottleneck (`poll` ~0-6 ms), and
+  Python decode/render is 6-10 ms per frame.
+- The next work is the output-side VFE geometry (full-height CBCR + buffer)
+  and the downscale spikes, not another panic-path fix.
 - The 3x3 center box is a speed/quality trade-off; if QR quality suffers,
   a 4x4 or 5x5 wide-load variant is the next step, not a return to scalar
   reads.
