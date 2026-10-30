@@ -15,6 +15,18 @@ PATCHES = {
         # Add "W" and "E" commands after the 'F' handler's closing brace
         (
             "\t\t\t}\n"
+            "\t\t\t/* AE: set VTS (frame length) for longer exposure */\n"
+            "\t\t\tif (buf[0] == 'V') {\n"
+            "\t\t\t\tunsigned char v[2];\n"
+            "\t\t\t\tif (read(cfd, v, 2) == 2) {\n"
+            "\t\t\t\t\tstruct imx179_reg regs[2] = {\n"
+            "\t\t\t\t\t\t{ 0x0340, v[0], 0 },\n"
+            "\t\t\t\t\t\t{ 0x0341, v[1], 0 },\n"
+            "\t\t\t\t\t};\n"
+            "\t\t\t\t\tsensor_write_regs(regs, 2);\n"
+            "\t\t\t\t\twrite(cfd, \"OK\", 2);\n"
+            "\t\t\t\t}\n"
+            "\t\t\t}\n"
             "\t\t}\n"
             "\t\tclose(cfd);\n",
             "\t\t\t}\n"
