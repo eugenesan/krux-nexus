@@ -116,6 +116,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-EOF
-chmod +x tools/vfe-instrument.py
-echo "created"
