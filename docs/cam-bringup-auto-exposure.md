@@ -341,3 +341,24 @@ echo "written"
 - Recovery mode (TWRP) is more stable than Android mode for testing.
 - camd runs at ~0.02-0.22 fps in recovery (very slow, but functional).
 - Killing mm-qcamera-daemon and cameraserver before running camd is essential.
+
+### Test results (2026-10-30, recovery mode, active cooling)
+
+**Verified:**
+- Register write protocol works (`test_simple.py`: sent 4 bytes, got `b'OK'`).
+- `set_exposure(2000)` succeeds (no error).
+- `set_gain(0x0180)` succeeds (no error).
+- `camd` produces frames (GOT A FRAME, ~1.9M non-zero bytes).
+- CPP firmware loads (chromatrix sent, status 0).
+- Snapshot works when camd has produced a frame (Y mean: 0, very dark).
+
+**Not verified (device thermal instability):**
+- Whether register writes change image brightness (device crashes before comparison).
+- Auto-exposure convergence.
+- QR scanning with brighter image.
+
+**Device stability:**
+- Device crashes within ~10-15 seconds of camd running.
+- Even with active cooling, sustained camera operation is unreliable.
+- Recovery mode (TWRP) is more stable than Android mode.
+- Short tests (≤10s) work; longer tests crash the device.

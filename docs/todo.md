@@ -13,7 +13,7 @@
 ### Auto-exposure (docs/cam-bringup-auto-exposure.md)
 - [x] Step 1: camd "W"/"E" socket commands (verified: response b"OK")
 - [x] Step 2: sensor.py `__write_reg` + `set_exposure`/`set_gain` (verified: no error)
-- [~] Step 3: verify register writes during streaming (protocol works, brightness change unverified due to device instability)
+- [~] Step 3: verify register writes during streaming (protocol works: W->OK, set_exposure/set_gain no error; brightness change unverified due to device thermal crashes)
 - [ ] Step 4: exposure sweep to calibrate ranges
 - [ ] Step 5: auto-exposure algorithm in Python
 - [ ] Step 6: move AE to camd (C)
