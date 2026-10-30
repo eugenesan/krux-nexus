@@ -318,3 +318,26 @@ Steps 3-7: device needed (deploy + test).
 - If auto-exposure fails (sensor doesn't respond to register writes), fall back to manual brightness control via the Krux settings page.
 EOF
 echo "written"
+---
+
+## Test results (2026-10-29, recovery mode)
+
+### Verified on device
+- **Register write protocol works**: `test_simple.py` sent `W` + 3 bytes, received `b'OK'` (response time < 3s).
+- **set_exposure() succeeds**: no error, camd responds OK.
+- **set_gain() succeeds**: no error, camd responds OK.
+- **camd produces frames**: GOT A FRAME, ~1.9M non-zero bytes per frame.
+- **CPP firmware loads**: chromatrix sent (266 words, status 0).
+
+### Not yet verified (device too unstable)
+- Whether register writes change image brightness (snapshot returns EAGAIN because
+  camd's frame buffer is empty when the snapshot arrives — timing issue).
+- Auto-exposure convergence.
+- QR scanning with brighter image.
+
+### Device stability notes
+- Device crashes within ~10-15 seconds of camd running (thermal).
+- Better ventilation helps but doesn't fully prevent crashes.
+- Recovery mode (TWRP) is more stable than Android mode for testing.
+- camd runs at ~0.02-0.22 fps in recovery (very slow, but functional).
+- Killing mm-qcamera-daemon and cameraserver before running camd is essential.

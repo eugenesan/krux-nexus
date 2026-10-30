@@ -11,9 +11,9 @@
 - [ ] camd not running when no camera page is open
 
 ### Auto-exposure (docs/cam-bringup-auto-exposure.md)
-- [ ] Step 1: camd "W"/"E" socket commands
-- [ ] Step 2: sensor.py `__write_reg` + `set_exposure`/`set_gain`
-- [ ] Step 3: verify register writes during streaming
+- [x] Step 1: camd "W"/"E" socket commands (verified: response b"OK")
+- [x] Step 2: sensor.py `__write_reg` + `set_exposure`/`set_gain` (verified: no error)
+- [~] Step 3: verify register writes during streaming (protocol works, brightness change unverified due to device instability)
 - [ ] Step 4: exposure sweep to calibrate ranges
 - [ ] Step 5: auto-exposure algorithm in Python
 - [ ] Step 6: move AE to camd (C)
