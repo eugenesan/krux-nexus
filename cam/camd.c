@@ -450,7 +450,7 @@ static int sensor_write_array(const struct sensor_write *w)
  * config change, the geometry (the captures 0 to 6) and then the
  * stream-on (the capture 8).
  */
-static const int vendor_sequence_order[] = { 0, 1, 2, 3, 4, 5, 6, 8 };
+static const int vendor_sequence_order[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 #define VENDOR_SEQUENCE_STEPS \
 	(sizeof(vendor_sequence_order) / sizeof(vendor_sequence_order[0]))
 
@@ -1985,6 +1985,19 @@ static void *client_thread(void *arg)
 	return NULL;
 }
 
+static int socket_read_exact(int fd, void *buf, size_t n)
+{
+	unsigned char *p = buf;
+	while (n > 0) {
+		ssize_t r = read(fd, p, n);
+		if (r <= 0)
+			return -1;
+		p += r;
+		n -= r;
+	}
+	return 0;
+}
+
 static void *socket_thread(void *arg)
 {
 	int sfd, cfd;
@@ -2041,6 +2054,40 @@ static void *socket_thread(void *arg)
 					pthread_mutex_unlock(&frame_mutex);
 					write(cfd, hdr, 32);
 				}
+			} else if (buf[0] == 'W') {
+				unsigned char p[3];
+				if (socket_read_exact(cfd, p, 3) == 0) {
+					struct imx179_reg r;
+					r.addr = (p[0] << 8) | p[1];
+					r.data = p[2];
+					r.delay = 0;
+					write(cfd, sensor_write_regs(&r, 1) == 0 ?
+					      "OK" : "ER", 2);
+				}
+			} else if (buf[0] == 'E') {
+				unsigned char p[4];
+				if (socket_read_exact(cfd, p, 4) == 0) {
+					struct imx179_reg r[4] = {
+						{ 0x0202, p[0], 0 },
+						{ 0x0203, p[1], 0 },
+						{ 0x0204, p[2], 0 },
+						{ 0x0205, p[3], 0 },
+					};
+					write(cfd, sensor_write_regs(r, 4) == 0 ?
+					      "OK" : "ER", 2);
+				}
+			} else if (buf[0] == 'V') {
+				unsigned char p[2];
+				if (socket_read_exact(cfd, p, 2) == 0) {
+					struct imx179_reg r[2] = {
+						{ 0x0340, p[0], 0 },
+						{ 0x0341, p[1], 0 },
+					};
+					write(cfd, sensor_write_regs(r, 2) == 0 ?
+					      "OK" : "ER", 2);
+				}
+			} else if (buf[0] == 'Q' || buf[0] == 'S') {
+				write(cfd, "OK", 2);
 			}
 		}
 		close(cfd);
@@ -2061,11 +2108,13 @@ int main(int argc, char **argv)
 		const char *b = getenv("CAMD_BENCH");
 		const char *f = getenv("CAMD_TARGET_FPS");
 		const char *fc = getenv("CAMD_FULL_CHROMA");
+		const char *vs = getenv("CAMD_VENDOR_SEQ");
 		profile_mode = p ? atoi(p) : 0;
 		debug_frames = d ? atoi(d) : 0;
 		bench_mode = b ? atoi(b) : 0;
 		target_fps = f ? atoi(f) : 0;
 		full_chroma = fc ? atoi(fc) : 0;
+		use_vendor_sensor_seq = vs ? atoi(vs) : 0;
 		printf("[prof] profile=%d debug_frames=%d bench=%d target_fps=%d full_chroma=%d\n",
 		       profile_mode, debug_frames, bench_mode, target_fps,
 		       full_chroma);
