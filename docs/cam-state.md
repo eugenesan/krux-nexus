@@ -17,13 +17,17 @@ optional and blocked.
 | Entropy page | Statistics work; the full mid-gray/no-clip AE policy is not active |
 | Runtime startup | Wired in `rootfs/init-stub.c`; boot image/ramdisk must be rebuilt to use it |
 | Exposure control | `W`/`E`/`V` in the camd source; the validated fast runtime binary does not have them yet |
-| Stability | Fast unpaced build: 512 frames/20 s once; 30 fps reaches the watchdog; paced 15 fps can starve the CPP |
+| Kernel CPP fix | Cherry-picked onto `airgap/master-cleanup` as `cdcc09b3682`; rebuilt kernel/boot image boots |
+| Stability | Fast unpaced build: 512 frames/20 s once; 30 fps reaches the watchdog; paced 15 fps can starve the CPP; long streams still hit the ping-pong/tasklet warning |
 | PIX_VIEWFINDER | Not delivering completed frames; full-res preview config/cycle captured; optional |
 
 ### What is known to work
 
 - `camd-fast` unpaced: 512 frames in 20 s (~25.6 fps), 31 ms
   downscale, no CPP stall in that run.
+- CPP timeout fix cherry-picked onto `airgap/master-cleanup`
+  (`cdcc09b3682`); rebuilt boot image boots and passes a short
+  smoke test (5 frames of 320×240, 199 camd frames, no CPP panic).
 - Smoke test: 10 frames of 320×240.
 - Entropy statistics: `l_mean`, `l_stdev`, `l_min`, `l_max`,
   `clipped_low`, `clipped_high`.

@@ -57,6 +57,11 @@ is built.
   camera for the test).
 - `camd-fast` unpaced: 512 frames in 20 s (~25.6 fps), 31 ms downscale,
   no CPP stall in that run.
+- CPP timeout fix cherry-picked onto `airgap/master-cleanup`
+  (`cdcc09b3682`); the rebuilt kernel/boot image boots and passes a
+  short smoke test (5 frames, 199 camd frames, no CPP panic).  The
+  half-height chroma ping-pong/tasklet warning remains under longer
+  streams.
 - The 15 fps paced path in the current source can starve the CPP
   (`msm_cpp_cfg` `EAGAIN`); 30 fps can reach the watchdog. Use the
   unpaced `camd-fast` plus the Python 15 fps throttle.

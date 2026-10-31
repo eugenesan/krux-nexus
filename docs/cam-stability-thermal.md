@@ -8,6 +8,15 @@
 > CPP/VFE wedged, and the next test must start from a fresh boot.
 > The Python client now throttles to 15 fps while the daemon runs
 > unpaced.
+>
+> **2026-10-31: the CPP fix is now on `airgap/master-cleanup`.**
+> `6a10b79fc03` was cherry-picked as `cdcc09b3682`; the rebuilt kernel
+> and `/tmp/opencode/boot-fix-nocons.img` boot and pass a short smoke
+> test (5 frames of 320×240, 199 camd frames, no CPP panic).  The saved
+> log confirms the timeout handler now prints
+> `dropping it (no hardware reload)`.  The separate half-height chroma
+> ping-pong/tasklet warning still appears under a longer stream, so the
+> camera boot+run must stay short and atomic until that is fixed.
 
 Date: 2026-10-30
 Device: LG Nexus 5 (hammerhead), IMX179 rear camera, recovery ramdisk +

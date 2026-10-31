@@ -148,8 +148,11 @@ Patches on `airgap/cam-ksu` (`6a10b79fc03`):
   `msm_cpp_write()` and no resend from the workqueue.
 - `msm_isp_process_stats_irq` guards against an unconfigured stats path.
 
-Boot image: `/tmp/opencode/boot-fix-nocons.img`, kernel
-`#1 SMP PREEMPT Fri Oct 30 14:15:25 MST 2026`.
+Boot image: `/tmp/opencode/boot-fix-nocons.img`, rebuilt from
+`airgap/master-cleanup` + the cherry-picked CPP fix (`cdcc09b3682`);
+kernel `#1 SMP PREEMPT Sat Oct 31 03:13:57 MST 2026`.  The previous
+KernelSU-based image is kept at
+`/tmp/opencode/boot-fix-nocons-camksu.img`.
 
 Result of the 20 fps paced + Python run:
 

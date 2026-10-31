@@ -1,10 +1,12 @@
 # Plan — camera on the hammerhead
 
-Status 2026-10-30 late. The camera path is wired through
+Status 2026-10-31. The camera path is wired through
 `camd`/`sensor.py`/`image`/`shannon`; the remaining work is making the
 camera run repeatable, testing real QR/entropy in Krux, and then deciding
-whether PIX is needed. The original phase plan below is retained for its
-kernel/V4L2 detail; the current execution order is:
+whether PIX is needed.  The CPP timeout fix is now on
+`airgap/master-cleanup` (`cdcc09b3682`), and the rebuilt kernel/boot image
+passes a short smoke test.  The original phase plan below is retained for
+its kernel/V4L2 detail; the current execution order is:
 
 1. Rebuild the stub ramdisk/boot image so `rootfs/init-stub.c` starts
    `camd` automatically. Verify the socket and a cold-boot camera page.
