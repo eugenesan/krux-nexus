@@ -22,8 +22,8 @@
 # build-standard directory and object files are gitignored; the checked-in
 # source remains the source of truth.
 #
-#   SRC=DIR        the upstream micropython checkout to build (default:
-#                  the micropython submodule in this project)
+#   SRC=DIR        the MicroPython checkout to build (default:
+#                  krux/firmware/micropython in this project)
 #   SYSROOT=DIR    the armel sysroot (default: /tmp/opencode/armel-sysroot)
 #   OUT=FILE       where the binary lands (default:
 #                  rootfs/micropython-arm32)
@@ -32,7 +32,7 @@
 # packages in vendor/toolchain.ubuntu by scripts/build-armel-sysroot.sh.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC=${SRC:-$HERE/../../micropython}
+SRC=${SRC:-$HERE/../../krux/firmware/micropython}
 OUT=${OUT:-$HERE/../../rootfs/micropython-arm32}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}

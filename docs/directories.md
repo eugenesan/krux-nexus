@@ -1,18 +1,20 @@
 # Project layout (post-restructure)
 
-The project has three git submodules (`krux`, `micropython`, `linux`) plus the
+The project has two top-level git submodules (`krux`, `linux`) plus the
 device-side work (rootfs, camera, NFC, scripts). All documentation lives under
-`docs/`.
+`docs/`. MicroPython and cUR are submodules of the Krux fork, at
+`krux/firmware/micropython` and `krux/firmware/micropython/lib/cUR`.
 
 Top-level:
 
 - `README.md` - project overview (route B)
 - `docs/` - all documentation (see `docs/README.md` for the index)
-- `krux/` - Krux firmware (submodule, branch `nexus-port`; `krux/firmware/MaixPy`
-  is intentionally uninitialized — only needed for the original MaixPy build,
-  not the MicroPython route)
-- `micropython/` - MicroPython (submodule, branch `master`; the port's C modules
-  live in `ports/unix/`)
+- `krux/` - Krux firmware (submodule, branch `nexus-port`). Its MicroPython
+  dependency is `krux/firmware/micropython` (submodule, branch `master`); the
+  port's C modules live in its `ports/unix/`. cUR is
+  `krux/firmware/micropython/lib/cUR`. `krux/firmware/MaixPy` is intentionally
+  uninitialized — only needed for the original MaixPy build, not the
+  MicroPython route.
 - `linux/` - kernel (submodule, branch `airgap/master-cleanup`)
 - `cam/` - camera: imaging server (`imaging8.c`), daemon (`camd.c`), sensor
   register tables, CPP firmware.  `camd` binary is gitignored.

@@ -4,6 +4,3 @@
 [submodule "krux"]
 	path = krux
 	url = https://github.com/eugenesan/krux.git
-[submodule "micropython"]
-	path = micropython
-	url = https://github.com/eugenesan/micropython.git

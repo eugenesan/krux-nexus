@@ -111,17 +111,16 @@ wrong produces a device that boots to nothing at all.
 bash scripts/build/build-micropython.sh
 ```
 
-About three minutes.  It builds the `micropython` submodule at HEAD
-(unix port, 1.30.0-dev)
-with the port's own modules -- the display, the input devices, the
-NFC, the I2C bus and the rest of the `machine` module -- and leaves
-`rootfs/micropython-arm32`.
+About three minutes.  It builds the MicroPython checkout in
+`krux/firmware/micropython` at HEAD (unix port, 1.30.0-dev) with the port's
+own modules -- the display, the input devices, the NFC, the I2C bus and the
+rest of the `machine` module -- and leaves `rootfs/micropython-arm32`.
 
-The build tree is disposable and goes to `BUILD=` (by default
-`/tmp/opencode/mp-build`); the source tree is the `micropython`
-submodule, which is a git checkout and is
-**not** copied around: the build makes a worktree of it at the tag it
-builds.
+The source tree is the nested `krux/firmware/micropython` submodule. The
+engine's `build-standard` directory and object files are gitignored and
+disposable; no separate source worktree is created. The cUR sources are the
+nested `krux/firmware/micropython/lib/cUR` submodule and are staged only for
+the duration of the build.
 
 ## 5. Deploy
 
@@ -219,11 +218,11 @@ fastboot boot rootfs/stock/boot-stub.img
 
 ## What is NOT in this repository, and why
 
-* **the kernel** (`linux/`), **the firmware** (`krux/`) and
-  **MicroPython** (`micropython/`) are git submodules.  They are large
-  and they have their own history; the port's own changes are committed
-  *inside* them (branch `nexus-port` in `krux`, `master` in
-  `micropython`).
+* **the kernel** (`linux/`) and **Krux firmware** (`krux/`) are top-level
+  git submodules. MicroPython and cUR are nested submodules of the Krux fork
+  (`krux/firmware/micropython` and its `lib/cUR`). They are large and have
+  their own history; the port's changes are committed *inside* them (branch
+  `nexus-port` in `krux`, `master` in MicroPython).
 * **the AOSP prebuilt** softfloat toolchain (136 MB) is not tracked; it
   is fetched by the build scripts when needed.
 * **the stock boot images** are in `artifacts/` (gitignored); the
@@ -255,8 +254,5 @@ The **toolchain** is the exception: the unpacked Arch toolchain is
 at `/home/user/Develop/toolchains/arch-16.2.0` and the build is
 pointed at it with `TOOLCHAIN_PATH`.
 
-(The one thing that must *not* be moved is the micropython build
-tree: it is a git **worktree**, and its links point into
-`micropython/.git/worktrees/...`, so moving it
-breaks the submodule check.  If it is moved, remove it and let the
-build make it again.)
+(The MicroPython source now lives in the Krux fork; its `build-standard`
+directory is disposable and can be removed or rebuilt at any time.)
