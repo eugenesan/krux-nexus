@@ -2,8 +2,23 @@
 
 ## Camera
 
+### Integration/wiring (2026-10-30 late)
+- [x] Fix `_image.from_nv12` argument/lifetime and use GC-managed image buffers
+- [x] `sensor.snapshot()` header/ready/sequence handling and 15 fps client throttle
+- [x] Add real luma statistics plus min/max/clipping counts
+- [x] Add the `shannon.entropy_img16b()` module
+- [x] Add camd `W`/`E`/`V`/`Q`/`S` socket commands in the source
+- [x] Start camd from the firmware init stub and bundle it in the ramdisk
+- [x] Smoke test (320×240), entropy statistics, `shannon`, and QR-decode path
+- [ ] Rebuild the stub ramdisk/boot image and verify camd auto-start on a cold boot
+- [ ] Real static QR and animated UR in the full Krux UI
+- [ ] Entropy page in the full Krux UI (well-lit mid-gray scene)
+- [ ] Build a stable control-capable camd (or stable paced build) and enable AE
+- [ ] 50 reset/run/close cycles and 30-min stability on the chosen path
+- [ ] Decide whether PIX is needed for 20 fps/10 fps animated UR; otherwise keep CAMIF_RAW+CPP
+
 ### Stage 4 acceptance (docs/cam-bringup-stage4.md)
-- [ ] QR decode on real QR code (bright lighting; image is dark, l_mean≈1-2)
+- [ ] QR decode on real QR code (use a lit LCD/printed code; fixed vendor exposure for now)
 - [ ] Scene-dependent entropy (l_stdev varies with scene)
 - [ ] 50 reset/run/close cycles (no crash, no camif error)
 - [ ] 30-min long-run stability (no oops, reboot, fd leak, >8 KB GC loss; 20/15 fps animated, 8 fps static)
@@ -15,8 +30,8 @@
 - [x] Step 1: camd "W"/"E" socket commands (verified: response b"OK")
 - [x] Step 2: sensor.py `__write_reg` + `set_exposure`/`set_gain` (verified: no error)
 - [x] Step 3: verify register writes during streaming (verified 2026-10-30: Y mean 2 -> 9 before the fix, then 0 -> 10 -> 28 after the chroma fix; 0 IOMMU faults)
-- [ ] Step 4: exposure/VTS/gain sweep at fixed 20 fps and 15 fps VTS (needs `set_vts` deployed); record p90/p10/clipping
-- [ ] Step 5: AE algorithm in Python: `qr_screen` (p90/p10, anti-banding ladder, fixed VTS, lock) and `entropy` (mid-gray/no-clip)
+- [ ] Step 4: exposure/VTS/gain sweep at fixed 20 fps and 15 fps VTS; `set_vts` is now in `sensor.py`, but the validated runtime camd lacks W/E/V, so this needs a stable control-capable build
+- [ ] Step 5: AE algorithm in Python: `qr_screen` (p90/p10, anti-banding ladder, fixed VTS, lock) and `entropy` (mid-gray/no-clip); `Camera._auto_expose()` is implemented but disabled
 - [ ] Step 6: move AE to camd (C), with mode/lock/manual commands
 - [ ] Step 7: integrate with Krux camera pages (QR waits for convergence; entropy mode; manual override)
 
@@ -38,16 +53,18 @@
 - [ ] Re-enable the 30-min Stage 4 stability run on the chosen path
 - [ ] Check the remaining `camif error 0x660` input-side messages
 
-### VFE overflow fix (docs/cam-bringup-vfe.md) — now on the critical path for 20 fps
+### VFE overflow fix (docs/cam-bringup-vfe.md) — optional, after the fallback test
 - [x] Source analysis (done)
 - [x] Instrumentation patches (VFE40 clock/hw/WM, ISP-IF input)
 - [x] Build + boot instrumented kernel (on top of the CPP-timeout fix)
 - [x] Run PIX_VIEWFINDER + capture dmesg: 0 frames, 301-599 `pix0 overflow`, 1 `camif violation`
 - [x] Compare against CAMIF_RAW on the same kernel: 93 frames, 0 overflow, 0 violation
 - [x] Rule out clock (320 MHz), hw version (8974 V2), input selection, CAMIF last_pixel, cam_cycle/capture, VFE PIX0 enable
-- [ ] Capture the vendor's **binned preview** ISP `VIDIOC_MSM_VFE_REG_CFG` sequence and regenerate `cam_initial`/`cam_cycle`
-- [ ] Apply fix and verify 0 overflow + frames
-- [ ] Or accept CAMIF_RAW+CPP at ~15 fps (5 fps UR) instead of 20 fps
+- [x] Capture the vendor preview ISP sequence: full-res 3280×2464, preview initial/cycle (`cam_config.h`, `cam/cam_cycle_preview.h`); the vendor has no binned preview sensor mode
+- [x] Test full-res + preview initial/cycle and binned + preview cycle; 260 MHz removes input overflow but the VFE write master still does not complete
+- [ ] Capture the vendor CSID/PHY/ISP-IF/VFE CAMIF/WM output state during live preview
+- [ ] Apply a PIX fix and verify 0 overflow + frames
+- [x] Use CAMIF_RAW+CPP as the initial fallback (fast unpaced build + 15 fps Python client)
 
 ### Optional
 - [ ] Auto-exposure via I2C registers (0x0202/0x0203 exposure, 0x0204/0x0205 gain)
@@ -72,5 +89,3 @@
 - [ ] Update docs/cam-plan.md with final camera decisions
 - [ ] Update docs/project-log.md with completion entry
 - [ ] Final review of all docs for accuracy
-EOF
-echo "created"

@@ -1,5 +1,15 @@
 # Camera bring-up — Auto-exposure (auto-brightness)
 
+> **Current state (2026-10-30 late).** The `W`/`E`/`V` socket commands are
+> implemented in `cam/camd.c`, and `krux/src/sensor.py` has
+> `__write_reg`/`set_exposure`/`set_gain`/`set_exposure_gain`/`set_vts`.
+> `Camera._auto_expose()` is implemented but **disabled by default**,
+> because the validated fast runtime camd (`camd-fast`) is unpaced and
+> does not include those commands.  The fallback uses the fixed vendor
+> exposure; the QR p90/p10 and entropy mid-gray/no-clip policies below are
+> still future work.  Do not enable auto-exposure until a stable
+> control-capable camd build is available.
+
 Paste this into a fresh session.  This is a feature implementation task that
 requires both code changes (no device needed for steps 1-3) and device
 testing (steps 4-7).

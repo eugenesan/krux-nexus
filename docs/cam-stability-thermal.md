@@ -1,5 +1,14 @@
 # Camera stability: software fault, not thermal
 
+> **2026-10-30 late update.** The fast unpaced camd build produced
+> 512 frames in 20 s (~25.6 fps) with no CPP stall or watchdog in one
+> clean run. A 30 fps run reached the watchdog; the paced 15 fps path in
+> the current source can starve the CPP with `msm_cpp_cfg` `EAGAIN`.
+> Treat each camera boot+run as atomic: a failed run leaves the
+> CPP/VFE wedged, and the next test must start from a fresh boot.
+> The Python client now throttles to 15 fps while the daemon runs
+> unpaced.
+
 Date: 2026-10-30
 Device: LG Nexus 5 (hammerhead), IMX179 rear camera, recovery ramdisk +
 KernelSU camera kernel (`airgap/cam-ksu`, `ee54a78345f`), `fastboot boot` only.

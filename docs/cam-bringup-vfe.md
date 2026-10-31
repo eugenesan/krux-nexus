@@ -46,6 +46,63 @@
 > The VFE instrumentation/clock experiment was reverted from the kernel
 > tree; the stable kernel remains the CPP-timeout fix at 266.67 MHz.
 
+> **2026-10-30 late update — the vendor preview captured; PIX still blocked.**
+>
+> The camera app's "Camera service is unavailable" was not a kernel or
+> vendor-partition problem: on p25 `/system/bin/cameraserver` and
+> `/system/etc/init/cameraserver.rc` had been renamed `.bak` for the
+> port's earlier tests. Restoring both brings up `media.camera`, both
+> cameras and live vendor preview (`org.lineageos.aperture`).
+>
+> With the vendor stack running on the capture kernel we captured a full
+> preview session: 7,420 ISP uploads, 1,139 CPP uploads and 43 sensor
+> arrays (`/tmp/opencode/cap-preview.tar`, 8,647 files). The sensor mode
+> is **full-res 3280x2464** (VTS 2504, HTS 3440), not binned 1640x1232;
+> per-frame AE moves VTS to 3147/3153. Therefore the vendor has no binned
+> preview sensor mode to copy.
+>
+> The existing `cam_config.h` (56 initial uploads) is the preview's
+> initial configuration: `0x444=0x6020`, `0x464=0x18000fc`, `0x638=7`.
+> The preview's per-frame cycle is the 7-upload sequence in
+> `cam/data/vendor/cyc/` (also `cam/cam_cycle_preview.h`, `0x444=0x6020`).
+> The 6-upload `cam/cam_cycle.h` is the **capture** cycle (`0x444=0x403f`)
+> and overwrites the preview geometry on every frame.
+>
+> Fresh-boot results:
+>
+> | sensor | initial | cycle | clock | frames | result |
+> |---|---|---|---:|---:|---|
+> | binned 1640x1232 | preview | capture (0x403f) | 60.6 MHz | 0 | 721 pix0 overflow |
+> | binned 1640x1232 | preview | preview (0x6020) | 60.6 MHz | 0 | 721 pix0 overflow |
+> | binned 1640x1232 | preview | preview (0x6020) | 260 MHz | 0 | no input overflow; `image master 0 bus overflow` |
+> | full-res 3280x2464 | preview | preview (0x6020) | 260 MHz | 0 | no error, no data |
+> | full-res + `CAMD_VENDOR_SEQ=1` | preview | preview (0x6020) | 260 MHz | 0 | no error, no data |
+> | full-res + 3280x2464 buffer | preview | preview (0x6020) | 260 MHz | 0 | no error, no data |
+>
+> The 260 MHz pixel clock removes the ISP-IF input overflow, but the VFE
+> write master still never completes a frame. The full-res sensor arrays
+> 0..9 are byte-identical to the live vendor preview capture; adding the
+> vendor's post-stream 14-register AE writes (arrays 9/10) does not make
+> the full-res stream reach the VFE. The remaining difference is on the
+> vendor's side: the CSID-PHY rate/settle, ISP-IF routing or the VFE's
+> CAMIF/WM output setup, not the ISP register program. A 640x480
+> CAMIF_RAW run after these tests only produced one frame and write-master
+> ping-pong mismatches; repeated camera runs in one boot wedge the VFE, so
+> the fallback must be measured on its own fresh boot.
+>
+> The fallback is healthy with the fast build: `camd-fast` unpaced produced
+> 512 frames in 20 s (~25.6 fps), 31 ms downscale, no CPP stall and no
+> watchdog (225 ping-pong warnings only). The old `camd-paced` build is the
+> slow one (115 ms downscale, ~7.6 fps); the current source's 10 ms path
+> spins on duplicate buffers. Use `camd-fast` for the 15 fps client path.
+>
+> Conclusion: reproducing the vendor preview is **full-res sensor + VFE
+> preview register program**, and `PIX_VIEWFINDER` still does not deliver a
+> completed frame. The 20 fps option remains blocked; the CAMIF_RAW+CPP
+> path is the working fallback. The capture-side register/cycle artifacts
+> are preserved, and `CAMD_VENDOR_SEQ=1` selects the vendor sensor arrays
+> (page sequence + mode + 14-register preview mode + stream-on).
+
 Paste this into a fresh session.  This is a deep-dive task that requires
 both source analysis (no device needed) and device testing (device required).
 

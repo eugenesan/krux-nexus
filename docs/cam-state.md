@@ -1,9 +1,57 @@
 # STATE — the camera, in one page
 
-**The camera has never worked under our kernel.**  The vendor's own
-camera app fails the same way ours does, so this is not our
-imaging server's fault; it is our kernel.  Everything below is
-measured, and everything below was measured *under our kernel*.
+## Current state (2026-10-30 late)
+
+The camera path now works end-to-end at the module level, but it is
+**not yet repeatably stable under sustained camera load**.  The
+validated capture path is `CAMIF_RAW + CPP`; `PIX_VIEWFINDER` remains
+optional and blocked.
+
+| Area | State |
+|---|---|
+| `camd` capture | Working: CAMIF_RAW + CPP v1.2.0, 320×240 NV12 over `/data/krux/camd.sock` |
+| MicroPython snapshot | Working: `KCF1` header/sequence handling, 320×240 frames, ~15 fps client throttle |
+| Image module | Working: `from_nv12`, QR decode, luma statistics, clipping counts; buffers are GC-managed |
+| Entropy helper | Working: `shannon.entropy_img16b()` module |
+| QR decode path | Runs without error; a real printed/displayed QR has not yet been exercised |
+| Entropy page | Statistics work; the full mid-gray/no-clip AE policy is not active |
+| Runtime startup | Wired in `rootfs/init-stub.c`; boot image/ramdisk must be rebuilt to use it |
+| Exposure control | `W`/`E`/`V` in the camd source; the validated fast runtime binary does not have them yet |
+| Stability | Fast unpaced build: 512 frames/20 s once; 30 fps reaches the watchdog; paced 15 fps can starve the CPP |
+| PIX_VIEWFINDER | Not delivering completed frames; full-res preview config/cycle captured; optional |
+
+### What is known to work
+
+- `camd-fast` unpaced: 512 frames in 20 s (~25.6 fps), 31 ms
+  downscale, no CPP stall in that run.
+- Smoke test: 10 frames of 320×240.
+- Entropy statistics: `l_mean`, `l_stdev`, `l_min`, `l_max`,
+  `clipped_low`, `clipped_high`.
+- `shannon.entropy_img16b()` returns a value on the device.
+- QR decode path runs on the captured frames.
+
+### What remains
+
+- Rebuild the stub ramdisk/boot image and verify `camd` starts from
+  init, before the Krux app.
+- Test with a real QR code (static and animated UR) and the full Krux
+  UI, then the entropy page.
+- Make the camera boot+run cycle repeatable: one clean boot per camera
+  run, no reuse after a failed run.
+- Build a stable control-capable camd (or a stable paced build) and
+  enable the QR/entropy AE policy.
+- Re-run the 10-minute / 1,000-snapshot stability test.
+- Only then decide whether PIX_VIEWFINDER is needed for 20 fps or
+  simplification.
+
+See `docs/cam-integration.md` for the wiring, `docs/cam-frame-path.md`
+for the frame-rate work, and `docs/cam-bringup-vfe.md` for the optional
+PIX investigation.
+
+## Historical investigation (2026-10-20/21)
+
+The notes below are the earlier bring-up history.  They are kept for
+the measurements and the reasoning, not as the current state.
 
 ## Where it stops
 

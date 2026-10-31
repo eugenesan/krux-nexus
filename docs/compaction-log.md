@@ -1792,3 +1792,168 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - Test scripts are in `scripts/misc/test_*.sh`. The device is unstable under sustained load (thermal/watchdog); use shorter runs.
 - The image is dark (Y mean≈1-2) due to fixed exposure (1248/1252 lines). QR detection requires bright lighting.
 - `camd` must be started externally (no subprocess in MicroPython); sensor.py assumes it's already running.
+
+## 2026-10-30 18:53:42 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning and entropy), now focused on implementing automatic brightness (auto-exposure) end to end.
+- Determine whether device crashes during camera testing are caused by our binaries/kernel or by overheating from repeated Android boots.
+
+## Requirements
+- Work only on the camera; do not touch SeedKeeper or NFC.
+- Final path must exclude modem, Wi-Fi, Bluetooth, vendor HAL, and Android framework.
+- Reversible boots only (`fastboot boot`, never flash).
+- One device, one thread at a time; camera boot+run cycle is atomic.
+- Keep port code under `krux/src/` and `micropython/ports/unix/`.
+- Use a kernel with KernelSU patches for root access.
+- Device camera will be exposed to a decently lit scene for testing.
+- Complete work without user interaction where possible; if device becomes unusable or a decision is needed, message the user with an ASCII 0x07 (BEL) character.
+- After Android boot, allow a cooldown delay: try 3 minutes, then 5 minutes if 3 is insufficient.
+- User wants thermal evidence sampled: (1) after boot completes, (2) after cooldown delay, (3) during the test.
+
+## Decisions
+- `CAMIF_RAW` + CPP v1.2.0 remains the capture path (`PIX_VIEWFINDER` blocked by `VFE0 pix0 overflow`).
+- Path A (native V4L2 + camd daemon) over HAL3; Unix socket `/data/krux/camd.sock` for air-gap compliance.
+- Hard-float toolchain (`arm-linux-gnueabihf-*`) for all recovery binaries and kernel builds.
+- devtmpfs `=y` for camera builds, `=n` for air-gap default; currently `=y`.
+- KernelSU cherry-picks live on `airgap/cam-ksu`; main repo `linux` pointer stays on `airgap/master-cleanup` (95f4b0f).
+- AE exposed via camd socket commands: `W` (write reg: reg_hi,reg_lo,val), `E` (exposure hi/lo + gain hi/lo), `V` (VTS hi/lo). `ae-patch.py` is the source of truth; source stays clean and patches apply at build time.
+- Group hold (reg `0x0104`: 1=hold, 0=release) added around AE writes; it appears in the vendor init tables (`imx179_settings_3`/`_6`).
+
+## Work State
+### Completed
+- Stages 1–3: camera kernel boots with devtmpfs, `CAMIF_RAW` delivers NV12 frames, camd + sensor.py + native `_image` (quirc) + LCD display working; smoke and 100-frame stability passed.
+- Docs reorganized: `docs/plan-camera.md` → `docs/cam-plan.md`; `continue-prompt.md` dropped; `docs/todo.md` created.
+- Built and committed VFE overflow analysis + tooling (`docs/cam-bringup-vfe.md`, `tools/vfe-instrument.py`, `scripts/cam/build-vfe-kernel.sh`, `test-vfe.sh`, `compare-vfe.sh`).
+- Auto-exposure Steps 1–2 done and committed: camd `W`/`E`/`V` commands with group hold; `sensor.py` gained `__write_reg`, `set_exposure`, `set_gain`, `set_exposure_gain`, `set_vts`.
+- Verified on device: camd produces frames (`GOT A FRAME`, ~1.9M non-zero bytes); CPP firmware loads (`chromatrix sent`, status 0); `W` returns `b'OK'`; `set_exposure`/`set_gain` succeed; register writes reach sensor (`[sensor] wrote 1 registers`).
+- **Register writes DO change brightness**: baseline Y mean 5 → 9 after exposure=2000 (+80%), measured after 5-min cooldown.
+- All changes committed and clean across main repo, `krux`, `micropython`; nothing pushed to origin.
+
+### Active
+- (none)
+
+### Blocked
+- Device crashes/reboots within ~10–15 s of camd running; each crash boots Android (several minutes at peak load), which heats the device.
+- Cause unresolved: user suspects our software may crash the kernel rather than pure overheating; no thermal/panic evidence captured yet (`/proc/last_kmsg` and pstore absent; dmesg only shows KernelSU `sys_reboot` entries).
+- AE Steps 3–7 (brightness/VTS sweep, AE algorithm, move AE into camd C, Krux page integration) not done.
+- VFE overflow fix not implemented (source analysis + tooling only).
+- Stage 4 acceptance (QR on real code, scene-dependent entropy, 50 cycles, 30-min stability, air-gap audit) not run.
+
+## Next Move
+1. Boot KernelSU camera kernel (`/tmp/opencode/boot-ksucam.img`), wait 5 min.
+2. Sample thermal zones (`/sys/class/thermal/thermal_zone*/temp`) after boot, after cooldown, and during the test; compare with crash timing and dmesg to determine thermal vs software fault.
+3. Run the brightness test again including `set_vts()` to raise frame length, then `sweep-exposure.sh`.
+4. If brightness scales, implement AE algorithm in Python, then port to camd (C) and integrate Krux pages.
+5. Return to VFE fix and Stage 4 acceptance once device is stable.
+
+## Relevant Files
+- `docs/cam-bringup-auto-exposure.md`: current AE plan, commands, and recorded test results.
+- `tools/ae-patch.py`: canonical AE patch source (W/E/V commands + group hold).
+- `cam/camd.c`: daemon; socket command loop and sensor write helpers.
+- `krux/src/sensor.py`: client API including `__write_reg`/`set_exposure`/`set_gain`/`set_exposure_gain`/`set_vts`.
+- `cam/imx179_regs.h`: register tables; `settings_7` = binned mode; `0x0104` group hold.
+- `scripts/cam/build-ae-camd.sh`: builds static AE camd.
+- `scripts/cam/test-registers.sh`, `test-ae.sh`, `sweep-exposure.sh`: AE test scripts.
+- `docs/cam-bringup-vfe.md`, `tools/vfe-instrument.py`, `scripts/cam/build-vfe-kernel.sh`: VFE investigation.
+- `docs/todo.md`: remaining project tasks.
+- `docs/cam-state.md`, `docs/cam-plan.md`, `docs/project-log.md`: current state and decisions.
+- `rootfs/bootimg.py`: unpack/pack boot images.
+- `/home/user/Develop/src/krux-nexus/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img`: ramdisk source for boots.
+
+## Important Context
+- KernelSU camera boot image is `/tmp/opencode/boot-ksucam.img` (~21 MB), built from `linux` branch `airgap/cam-ksu` (`ee54a78345f`) plus TWRP ramdisk; rebuild if `/tmp` is wiped.
+- Standard camd invocation: `./camd 1640 1232 0x40000000 rear 0 /data/krux/cpp_firmware_v1_2_0.fw 2 binned cfg nocycle 0 0x2b 0 0 300 0 0 0 0x12 0 1 0xffffffff 0 0 0 1 0`.
+- Kill holders before camd: `mm-qcamera-daemon` and `cameraserver`; binaries at `/vendor/bin/mm-qcamera-daemon` and `/system/vendor/bin/hw/android.hardware.camera.provider-service.lineage` (rename to `.bak`).
+- Root access: in recovery shell often uid=0 directly; `su` may be missing. In Android, `su -c` works (KernelSU). Some commands silently fail without root — check `id`.
+- IMX179 binned mode exposure is 1248 of VTS 1252 lines; raising exposure beyond that requires increasing VTS (`0x0340/0x0341`).
+- Gain alone did not raise brightness after exposure maxed; exposure change did (5 → 9).
+- Tool `sleep 180`/`300` exceeds the 120 s shell timeout; wait in 60 s chunks.
+- camd frame rate in recovery is ~0.01–0.2 fps; first frame takes ~8–10 s.
+- `camd` must be started externally (no subprocess in MicroPython); `sensor.py` assumes it is running.
+- Repair/rename of camera daemons is undone by reboot; repeat each boot.
+
+## 2026-10-31 01:21:52 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Bring up the IMX179 rear camera on the air-gapped LG Nexus 5 for Krux QR scanning (animated UR) and entropy, currently focused on reaching 20 fps capture / 15 fps decode.
+- Immediate task: capture the vendor’s **binned 1640×1232 preview** VFE/ISP configuration to fix the PIX_VIEWFINDER overflow; keep CAMIF_RAW+CPP at ~15 fps as fallback.
+
+## Requirements
+- Camera only; do not touch SeedKeeper or NFC.
+- Final path must exclude modem, Wi-Fi, Bluetooth, vendor HAL, and Android framework.
+- Reversible boots only (`fastboot boot`, never flash); camera boot+run cycle atomic; one device/thread at a time.
+- Keep port code under `krux/src/` and `micropython/ports/unix/`; use a KernelSU kernel for root during testing.
+- Animated UR 5–10 fps; primary QR source is LCD/OLED screen; target **20 fps capture / 15 fps decode**, floor 15/10 for 5 fps UR; 8 fps only static-QR floor.
+- Exposure lock after convergence is acceptable; entropy uses separate mid-gray/no-clip policy.
+- Prefer option #1 (capture binned preview config); option #2 (accept ~15 fps CAMIF_RAW) is fallback.
+- If device becomes unusable or a decision is needed, message the user with ASCII BEL (0x07).
+
+## Decisions
+- CAMIF_RAW+CPP is the stable current path (~14–15 fps); 20 fps requires PIX_VIEWFINDER/VFE.
+- Kernel CPP panic fix is kept: `MSM_CPP_DUMP_FRM_CMD=0`, timeout handler drops frame and returns (no CPP writes/resend), stats IRQ guarded.
+- 320 MHz VFE clock, full-line CAMIF `last_pixel=1639`, `cam_cycle`/`cam_capture`, and PIX0-enable writes do **not** fix PIX overflow.
+- Full-height CBCR + full-height chroma buffer removes ping-pong (0) but stalls CPP after ~24 frames; half-height remains default.
+- Existing vendor capture is **full-res 3280×2464 only**; binned preview config must be captured.
+- CAPTURE: correct vendor tree is p25 system partition `/system/vendor`; p27 is cache, not vendor.
+
+## Work State
+### Completed
+- Frame-path profile and optimization: debug path gated; 3×3 wide-load downscale; camd-only 22–28 fps; Python decode 2–5 ms, render 0–9 ms.
+- Kernel CPP panic fixed on `airgap/cam-ksu` commit `6a10b79fc03`; stable boot image `/tmp/opencode/boot-fix-nocons.img`; no dump/timeout/stats panic/watchdog/IOMMU after fix.
+- VFE instrumentation build/run: hw `0x1001001a` (8974 V2), 320 MHz; CAMIF_RAW 93 frames/0 overflow; PIX_VIEWFINDER 0 frames/301–599 overflow, 1 `camif violation`.
+- Rejected VFE fixes: clock 320 MHz, `last_pixel=1639`, `cam_cycle`/`cam_capture`, VFE `CTRL_0=0x80` before/after `CONFIG_DONE`.
+- Decoded existing capture: sensor full-res 3280×2464, VTS 2504, HTS 3440; no binned mode.
+- Built debug-capture kernel `/tmp/opencode/ko-cap` and `boot-cap.img`; Android boots with it.
+- Restored vendor daemons on p25 `/system/vendor`: `mm-qcamera-daemon` and `android.hardware.camera.provider-service.lineage`.
+- Confirmed `cameraserver` (pid 625) and `mm-qcamera-daemon` (pid 707) are running in capture Android.
+
+### Active
+- Capture binned vendor preview configuration by running the vendor camera on the debug-capture Android build.
+- First attempt produced only `sensor_cfg_0_n62.bin`, `sensor_cfg_1_n92.bin`, `sensorio_0/1/2`, and `isp_cfg_0/1_n1_l4.bin`; no preview VFE cycle.
+
+### Blocked
+- Camera app reports `CameraManagerGlobal: Camera service is unavailable` even though `cameraserver` and `mm-qcamera-daemon` are running; app returns to home screen, so preview does not complete.
+- Capture files are root-only (`-rw-rw---- root root`); `adb pull` as shell fails — must pull via TWRP.
+- `sensorio_2_t6_s3026325600.bin` write returned `-22` (huge bogus size; capture artifact, possibly not fatal).
+- `boot-cap2.img` (capture kernel + installed DTB) hung before adb/fastboot; avoid.
+- `boot-cap3.img` incorrectly mounts p27 at `/system/vendor`; wrong because p27 is cache; avoid.
+
+## Next Move
+1. Boot TWRP (`/tmp/opencode/boot-fix-nocons.img`), mount `/data`, pull `/data/local/tmp/*.bin`; parse `sensor_cfg_0_n62`/`_1_n92` with `tools/cam-capture-summary.py` to confirm binned 1640×1232 geometry.
+2. Fix the vendor camera preview: inspect `dumpsys media.camera`, app logcat, camera permission/provider state; try `STILL_IMAGE_CAMERA`, grant `android.permission.CAMERA`, restart `vendor.camera.provider`/`cameraserver`, or use video record to force the binned mode.
+3. Capture a full initial + per-frame ISP cycle for the binned session; pull via TWRP.
+4. Generate binned `cam_config.h`/`cam_cycle.h` with `cam/tools/gen-cam-config.py`; compile a shadow-header `camd-binned`; test PIX_VIEWFINDER (source 1) on `/tmp/opencode/boot-fix-nocons.img`.
+5. If PIX works, verify 20 fps and proceed to AE; otherwise fall back to CAMIF_RAW ~15 fps and document the 20 fps gap.
+
+## Relevant Files
+- `docs/cam-bringup-vfe.md`: VFE results, rejected fixes, next binned-preview capture.
+- `docs/cam-frame-path.md`: frame-path timings, 20 fps gap, throughput ceiling.
+- `docs/cam-stability-thermal.md`: kernel crash/IOMMU/CPP evidence and thermal verdict.
+- `cam/camd.c`: CAMIF geometry 1639, `CAMD_FULL_CHROMA`, profile controls; PIX0 helper removed.
+- `cam/data/vendor/`: full-res vendor capture (`sensor/`, `seq/`, `cyc/`).
+- `cam/tools/gen-cam-config.py`: generates `cam_config.h`/`cam_cycle.h`.
+- `tools/cam-capture-summary.py`: sensor geometry + ISP cycle summary.
+- `/tmp/opencode/ko-cap/`: debug-capture kernel build.
+- `/tmp/opencode/boot-cap.img`: capture kernel + stock Android ramdisk (vendor fixed via p25).
+- `/tmp/opencode/boot-fix-nocons.img`: stable CPP-fix kernel/TWRP recovery.
+- `/tmp/opencode/linux-ksu`: `airgap/cam-ksu` worktree, CPP fix commit `6a10b79fc03`.
+- `/tmp/opencode/linux-cap`: `airgap/debug-capture` worktree with capture code.
+- `krux/src/sensor.py`: has `set_vts` but not deployed to `/data/krux/sensor.py`.
+- `scripts/cam/compare-vfe.sh`, `scripts/cam/test-vfe.sh`: VFE parameter extraction/run helpers.
+
+## Important Context
+- Vendor tree: `/vendor -> /system/vendor` on p25; p27 is `/cache`; daemons restored under `/system/vendor/bin`.
+- Capture kernel config/DTB does **not** mount vendor; do not mount p27 as vendor. `boot-cap.img` with stock ramdisk uses p25 `/system/vendor` correctly.
+- Capture kernel is `airgap/debug-capture` `e9bf776e758`; writes VFE/sensor/CPP captures to `/data/local/tmp` with kernel credentials, files root-only.
+- Capture files seen: `sensor_cfg_0_n62.bin`, `sensor_cfg_1_n92.bin`, `isp_cfg_0_n1_l4.bin`, `isp_cfg_1_n1_l4.bin`, `sensorio_0/1/2`.
+- Existing full-res sensor geometry: W 3280, H 2464, VTS 2504, HTS 3440; binned would be W 1640, H 1232, VTS ~1252.
+- Camera app `org.lineageos.aperture`; video activity `org.lineageos.aperture/.VideoCamera`; logcat shows repeated `Camera service is unavailable`.
+- Stable kernel has CCP fix; VFE experimental 320 MHz image `/tmp/opencode/boot-vfe-fix-nocons.img` and instrumentation were reverted from the worktree.
+- Main repo `linux` pointer remains `airgap/master-cleanup`; kernel fix commit lives on `airgap/cam-ksu`.
+- Commits: `2da79b6` (full-line CAMIF geometry/compare fix), `7dd550f` (VFE results), `ee54b5a` (vfe-instrument cleanup), `389b8f1` (full-chroma/profile), `85377a8` (frame-path profile), `6a10b79fc03` (kernel CPP fix).
+- Device currently in Android with capture kernel; no KSU/root; `adb root` disabled (`ro.debuggable=0`); use TWRP for root/file pulls.

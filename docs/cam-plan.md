@@ -1,9 +1,30 @@
 # Plan — camera on the hammerhead
 
-Status 2026-10-27. This is the ordered plan to make the IMX179 feed Krux's
-`camera`/`sensor` pages on the air-gapped Nexus 5. It assumes the existing
-tree: `linux` at `airgap/master-cleanup` (`95f4b0f38ce`), the port on
-`krux/nexus-port`, and the imaging server in `cam/imaging8.c`.
+Status 2026-10-30 late. The camera path is wired through
+`camd`/`sensor.py`/`image`/`shannon`; the remaining work is making the
+camera run repeatable, testing real QR/entropy in Krux, and then deciding
+whether PIX is needed. The original phase plan below is retained for its
+kernel/V4L2 detail; the current execution order is:
+
+1. Rebuild the stub ramdisk/boot image so `rootfs/init-stub.c` starts
+   `camd` automatically. Verify the socket and a cold-boot camera page.
+2. Run the smoke test, then a real static QR, then an animated UR
+   (5–10 parts/s) on the device, with the validated unpaced camd and the
+   Python 15 fps throttle.
+3. Run the entropy page with a well-lit, mid-gray scene; validate
+   `shannon` and the statistics/clipping path. Add the mid-gray/no-clip
+   AE policy only after a stable control-capable camd exists.
+4. Make the camera boot+run cycle atomic and repeatable; run 10 minutes /
+   1,000 snapshots with thermal and watchdog logging.
+5. Build a stable control-capable camd (W/E/V) or a stable paced build;
+   re-enable `Camera._auto_expose()` and the QR p90/p10 policy.
+6. Only if the 20 fps/10 fps animated-UR requirement or the CPP
+   complexity demands it, return to PIX_VIEWFINDER with the captured
+   preview initial/cycle and CSID/PHY/VFE-output instrumentation.
+
+The original plan assumes the existing tree: `linux` at
+`airgap/master-cleanup` (`95f4b0f38ce`), the port on `krux/nexus-port`,
+and the imaging server in `cam/imaging8.c`.
 
 Two facts change the earlier "the kernel is broken" framing:
 

@@ -217,6 +217,22 @@ The CPP path sustains roughly **14-15 fps**, not 20. The 70 ms downscale
 spikes occur even with no Python client, so they are camera/memory
 contention, not client load.
 
+### Fast-build re-measurement (2026-10-30 late)
+
+`camd-fast` (the 3x3 wide-load build, `/tmp/opencode/camd-fast`, md5
+`38e2beec8d5a7655632a80593203a238`) unpaced on a fresh camera boot with
+the CPU governor at `performance`:
+
+- **512 frames in 20 s (~25.6 fps)**, `down=31 ms`, no CPP stall, no
+  watchdog;
+- 225 `Write master ping pong mismatch` warnings (half-height chroma);
+- no `pix0 overflow` during streaming.
+
+The older `camd-paced` binary is the slow one (115 ms downscale,
+~7.6 fps). The current-source build is faster (10 ms) but spins on
+duplicate buffers when unpaced; `camd-fast` is the validated capture
+binary. The 15 fps Python client can throttle this 25 fps capture.
+
 ### Consequence
 
 The 20 fps target for 10 fps animated UR now requires the **PIX_VIEWFINDER
