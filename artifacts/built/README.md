@@ -10,6 +10,8 @@ host `/tmp` reboot:
 - `boot.img` — stable y-only + CAMIF-mask TWRP boot image
 - `camd` — matching camera daemon binary
 - `camd.c` — exact daemon source used for that binary
+- `zImage-dtb` — y-only/CAMIF-mask kernel image embedded in the boot image
+- `kernel.config` — kernel configuration used for that image
 - `logs/` — camera and standalone Krux test evidence
 - `SHA256SUMS` — checksums of the preserved artifacts
 
