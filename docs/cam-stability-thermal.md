@@ -11,7 +11,7 @@
 >
 > **2026-10-31: the CPP fix is now on `airgap/master-cleanup`.**
 > `6a10b79fc03` was cherry-picked as `cdcc09b3682`; the rebuilt kernel
-> and `/tmp/opencode/boot-fix-nocons.img` boot and pass a short smoke
+> and `artifacts/built/cam-yonly/boot.img` boot and pass a short smoke
 > test (5 frames of 320×240, 199 camd frames, no CPP panic).  The saved
 > log confirms the timeout handler now prints
 > `dropping it (no hardware reload)`.  The separate half-height chroma
@@ -31,8 +31,8 @@
 > mismatches, **0** tasklet overflows, 52 initial CAMIF-status lines, 20
 > CPP `EAGAIN` messages, no watchdog, and a 3-frame 320×240 smoke test.
 > The 30 s long-stream blocker is resolved.  Image:
-> `/tmp/opencode/boot-yonly4.img` (now the stable test image); matching
-> camd: `/tmp/opencode/camd-yonly`.
+> `artifacts/built/cam-yonly/boot.img` (now the stable test image); matching
+> camd: `artifacts/built/cam-yonly/camd`.
 >
 > **2026-10-31 10-minute / 1,000-snapshot acceptance.**
 >
