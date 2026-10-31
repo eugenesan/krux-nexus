@@ -46,14 +46,25 @@ git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 || {
 # there (it is 71 MB of unpacked .deb, and it does not change).
 [ -d "$SYSROOT" ] || sh "$HERE/../build-armel-sysroot.sh" "$SYSROOT"
 
-# cUR is a mainline-MicroPython user C module for the firmware.  The host
-# tests build the same submodule as a CPython extension; this wrapper selects
-# the portable SHA-256 backend and feeds the MicroPython wrapper to the build.
-CUR_USERMOD=${CUR_USERMOD:-$HERE/../../krux/firmware/cUR-usermod}
-[ -e "$CUR_USERMOD/uUR.c" ] || {
-	echo "cUR submodule is not initialized: run 'git submodule update --init vendor/cUR' in the Krux submodule" >&2
+# cUR is a mainline-MicroPython user C module.  Both its makefile and its
+# source submodule live in our MicroPython fork (ports/unix/modules/cUR and
+# lib/cUR).  Stage a copy of the source next to the port makefile so the
+# compiler's objects stay inside the disposable build tree.
+CUR_SOURCE_DIR=$SRC/lib/cUR
+CUR_PORT_MAKEFILE=$SRC/ports/unix/modules/cUR/micropython.mk
+CUR_STAGE=$SRC/ports/unix/build-cUR
+[ -e "$CUR_SOURCE_DIR/uUR.c" ] || {
+	echo "cUR submodule is not initialized: run 'git submodule update --init --recursive lib/cUR' in the micropython submodule" >&2
 	exit 1
 }
+[ -f "$CUR_PORT_MAKEFILE" ] || {
+	echo "missing MicroPython cUR makefile: $CUR_PORT_MAKEFILE" >&2
+	exit 1
+}
+rm -rf "$CUR_STAGE"
+mkdir -p "$CUR_STAGE"
+cp "$CUR_PORT_MAKEFILE" "$CUR_STAGE/"
+cp -a "$CUR_SOURCE_DIR/uUR.c" "$CUR_SOURCE_DIR/src" "$CUR_STAGE/"
 
 # Build in the checked-out MicroPython source.  A separate worktree was
 # previously used here, but it made the build depend on a second checkout and
@@ -76,9 +87,8 @@ cp "$TREE/mpy-cross/build/mpy-cross" "$TREE/ports/unix/build/mpy-cross"
 # 2. the port itself, for the target
 cd "$TREE/ports/unix"
 make clean >/dev/null 2>&1 || true
-# cUR is included through firmware/cUR-usermod/cUR (a symlink into the
-# submodule).  Remove any objects from an earlier host build as well as the
-# regular build directory before the cross compile.
+# Remove objects from an earlier host build as well as the regular build
+# directory before the cross compile.
 rm -rf build-standard vendor
 make -j"$(nproc)" \
 	CROSS_COMPILE=$CC_CROSS \
@@ -88,11 +98,12 @@ make -j"$(nproc)" \
 	MICROPY_PY_FFI=0 \
 	MICROPY_PY_CRYPTOLIB_CONSTS=1 \
 	MICROPY_PY_CRYPTOLIB_CTR=1 \
-	USER_C_MODULES="$CUR_USERMOD" \
+	USER_C_MODULES="$CUR_STAGE" \
 	CFLAGS_EXTRA="--sysroot=$SYSROOT" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
 
 file build-standard/micropython
 mkdir -p "$(dirname "$OUT")"
 cp build-standard/micropython "$OUT"
+rm -rf "$CUR_STAGE"
 echo "  -> $OUT"
