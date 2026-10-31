@@ -1015,6 +1015,11 @@ static int isp_start(void)
 	scmd.stream_id = 0;
 	scmd.output_format = ISP_PIX_FMT_NV12;
 	scmd.stream_src = isp_stream_src;
+	/* QR and entropy use luma only.  The VFE CBCR WM still writes the
+	 * half-height NV12 chroma plane, but it is not in the completion
+	 * group, so a half-height CBCR done cannot desynchronise the Y/C
+	 * ping-pong bits or flood the tasklet queue. */
+	scmd.y_only = (isp_stream_src == CAMIF_RAW) ? 1 : 0;
 	scmd.init_frame_drop = 0;
 	scmd.frame_skip_pattern = NO_SKIP;
 	scmd.plane_cfg[0].output_width = cbufs.width;

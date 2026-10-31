@@ -44,6 +44,9 @@
 - [x] Fix `msm_cpp_do_timeout_work`: drop the frame and return; do not `msm_cpp_write()`/resend from the workqueue
 - [x] Guard `msm_isp_process_stats_irq` on the CAMIF_RAW path
 - [x] Cherry-pick the CPP timeout fix onto `airgap/master-cleanup` (`cdcc09b3682`), rebuild the kernel/boot image, and run a short smoke test (5 frames, no CPP panic)
+- [x] Add the `y_only` VFE completion flag and re-apply the Y-only composite/IRQ mask after VFE uploads; 30 s test: 0 ping-pong, tasklet reduced to 10 initial lines
+- [ ] Fix the remaining CAMIF input-side `camif error status: 0x660` storm that resets the device after ~10 s
+- [ ] Re-run 30 s / 10 min stability after the CAMIF fix
 - [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
 - [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
 - [x] Full-height CBCR + full-height chroma buffer: ping-pong 0, but CPP stalls at ~24 frames with `CFG: EAGAIN`; not viable with the captured CPP message

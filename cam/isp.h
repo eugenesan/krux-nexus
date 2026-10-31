@@ -172,6 +172,7 @@ struct msm_vfe_axi_stream_request_cmd {
 	uint32_t init_frame_drop;
 	uint32_t frame_skip_pattern;
 	uint8_t buf_divert;
+	uint8_t y_only;		/* complete on Y only; CBCR is not waited on */
 	uint32_t axi_stream_handle;
 };
 

@@ -68,6 +68,10 @@ is built.
 - A later fast-build run on a reused/dirty camera boot produced only
   3 frames and dropped adb; this is the atomic-boot hazard, not a new
   snapshot-path failure.
+- The `y_only` VFE completion flag removed the ping-pong mismatch and
+  reduced the tasklet overflow to 10 initial lines.  A separate CAMIF
+  `camif error status: 0x660` storm still resets the device after ~10 s;
+  long-stream stability is not yet solved.
 
 ## Next steps (ordered)
 

@@ -17,6 +17,20 @@
 > `dropping it (no hardware reload)`.  The separate half-height chroma
 > ping-pong/tasklet warning still appears under a longer stream, so the
 > camera boot+run must stay short and atomic until that is fixed.
+>
+> **2026-10-31 `y_only` experiment.**  Added a `y_only` stream flag:
+> the VFE composite group contains only the Y write master, the CBCR WM
+> still writes half-height NV12 but is not waited on, and the Y-only
+> composite/IRQ mask is re-applied after every VFE register upload.
+> Result on a 30 s stream: **0** ping-pong mismatches and only 10
+> initial tasklet-overflow lines (down from the sustained storm).  A
+> separate `camif error status: 0x660` storm then produced ~3,180
+> messages and a watchdog reset after ~10 s.  The y-only path fixes the
+> ping-pong/tasklet problem, but the CAMIF input-side error still blocks
+> long streams.  Experimental image: `/tmp/opencode/boot-yonly3.img`;
+> the stable test image remains
+> `/tmp/opencode/boot-fix-nocons.img` (master-cleanup + CPP fix, no
+> y-only).
 
 Date: 2026-10-30
 Device: LG Nexus 5 (hammerhead), IMX179 rear camera, recovery ramdisk +
