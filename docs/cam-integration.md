@@ -68,10 +68,11 @@ is built.
 - A later fast-build run on a reused/dirty camera boot produced only
   3 frames and dropped adb; this is the atomic-boot hazard, not a new
   snapshot-path failure.
-- The `y_only` VFE completion flag removed the ping-pong mismatch and
-  reduced the tasklet overflow to 10 initial lines.  A separate CAMIF
-  `camif error status: 0x660` storm still resets the device after ~10 s;
-  long-stream stability is not yet solved.
+- The `y_only` VFE completion flag plus the CAMIF error-IRQ mask
+  produced a stable 30 s stream: 2468 camd frames, 0 ping-pong,
+  0 tasklet overflow, 20 CPP `EAGAIN`, no watchdog, and a 3-frame
+  320×240 smoke test.  The remaining work is 10-minute/1,000-snapshot
+  stability and the real QR/UR/entropy pages.
 
 ## Next steps (ordered)
 

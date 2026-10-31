@@ -18,8 +18,8 @@ optional and blocked.
 | Runtime startup | Wired in `rootfs/init-stub.c`; boot image/ramdisk must be rebuilt to use it |
 | Exposure control | `W`/`E`/`V` in the camd source; the validated fast runtime binary does not have them yet |
 | Kernel CPP fix | Cherry-picked onto `airgap/master-cleanup` as `cdcc09b3682`; rebuilt kernel/boot image boots |
-| Y-only completion | `y_only` stream flag added: no ping-pong mismatch, tasklet storm reduced to 10 initial lines; separate CAMIF `0x660` storm remains |
-| Stability | Fast unpaced build: 512 frames/20 s once; 30 fps reaches the watchdog; paced 15 fps can starve the CPP; long streams still hit the CAMIF `0x660` error |
+| Y-only completion | `y_only` stream flag + CAMIF error-IRQ mask: 30 s stream with 0 ping-pong, 0 tasklet overflow |
+| Stability | 30 s stream: 2468 camd frames, 20 CPP `EAGAIN`, no watchdog; 3-frame smoke passed |
 | PIX_VIEWFINDER | Not delivering completed frames; full-res preview config/cycle captured; optional |
 
 ### What is known to work
@@ -29,9 +29,9 @@ optional and blocked.
 - CPP timeout fix cherry-picked onto `airgap/master-cleanup`
   (`cdcc09b3682`); rebuilt boot image boots and passes a short
   smoke test (5 frames of 320×240, 199 camd frames, no CPP panic).
-- `y_only` VFE completion removes the ping-pong mismatch and reduces
-  the tasklet overflow to 10 initial lines.
-- Smoke test: 10 frames of 320×240.
+- `y_only` VFE completion + CAMIF error-IRQ mask: 30 s stream with
+  0 ping-pong, 0 tasklet overflow, 2468 camd frames, no watchdog.
+- Smoke test: 10 frames of 320×240 (short smoke after the long run: 3).
 - Entropy statistics: `l_mean`, `l_stdev`, `l_min`, `l_max`,
   `clipped_low`, `clipped_high`.
 - `shannon.entropy_img16b()` returns a value on the device.

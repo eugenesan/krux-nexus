@@ -5,11 +5,12 @@ Status 2026-10-31. The camera path is wired through
 camera run repeatable, testing real QR/entropy in Krux, and then deciding
 whether PIX is needed.  The CPP timeout fix is now on
 `airgap/master-cleanup` (`cdcc09b3682`), and the rebuilt kernel/boot image
-passes a short smoke test.  The `y_only` completion flag removes the
-ping-pong mismatch, but a separate CAMIF `0x660` error storm still resets
-the device after ~10 s; long-stream stability is the next blocker.  The
-original phase plan below is retained for its kernel/V4L2 detail; the
-current execution order is:
+passes a short smoke test.  The `y_only` completion flag and the CAMIF
+`0x660` error-IRQ mask now give a stable 30 s stream (0 ping-pong,
+0 tasklet, 2468 frames, no watchdog) plus a short smoke test.  The next
+blocker is 10-minute/1,000-snapshot stability and the real QR/UR/entropy
+pages.  The original phase plan below is retained for its kernel/V4L2
+detail; the current execution order is:
 
 1. Rebuild the stub ramdisk/boot image so `rootfs/init-stub.c` starts
    `camd` automatically. Verify the socket and a cold-boot camera page.
