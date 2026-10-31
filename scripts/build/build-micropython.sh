@@ -18,21 +18,10 @@
 #
 # WHERE THE FILES LIVE
 # --------------------
-# The upstream tree is NOT copied around: it is a git worktree of the
-# `micropython` submodule at the tag we build, and it lives in the
-# project.  Only the *build output* (the object files, and the tree's own
-# build/ directory) is disposable, so it goes to a BUILD= directory that
-# defaults to tmpfs.
+# The build runs in the checked-out `micropython` submodule.  Its
+# build-standard directory and object files are gitignored; the checked-in
+# source remains the source of truth.
 #
-# This is the same split the kernel build uses: the source tree is in the
-# project, the build output goes to /tmp/opencode/ko-build.  A build tree
-# is a few gigabytes of intermediate objects that nobody wants in a
-# backup, and it is rebuilt many times a day; the source tree is edited
-# by hand and must survive.
-#
-#   BUILD=DIR      where the build tree and its objects go (default: a
-#                  tmpfs directory).  Safe to delete at any time; the
-#                  next build recreates it.
 #   SRC=DIR        the upstream micropython checkout to build (default:
 #                  the micropython submodule in this project)
 #   SYSROOT=DIR    the armel sysroot (default: /tmp/opencode/armel-sysroot)
@@ -43,9 +32,7 @@
 # packages in vendor/toolchain.ubuntu by scripts/build-armel-sysroot.sh.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-TAG=${TAG:-HEAD}
 SRC=${SRC:-$HERE/../../micropython}
-BUILD=${BUILD:-/tmp/opencode/mp-build}
 OUT=${OUT:-$HERE/../../rootfs/micropython-arm32}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
@@ -59,16 +46,19 @@ git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 || {
 # there (it is 71 MB of unpacked .deb, and it does not change).
 [ -d "$SYSROOT" ] || sh "$HERE/../build-armel-sysroot.sh" "$SYSROOT"
 
-# The tree we build: a worktree of the vendored checkout at $TAG.  It is
-# disposable -- the tag in the project is the source of truth.
-TREE="$BUILD/micropython-port"
-mkdir -p "$BUILD"
-if [ ! -e "$TREE" ]; then
-	# a worktree that was deleted from under us leaves its registration
-	# behind, and git then refuses to re-create it
-	git -C "$SRC" worktree prune
-	git -C "$SRC" worktree add --detach "$TREE" "$TAG"
-fi
+# cUR is a mainline-MicroPython user C module for the firmware.  The host
+# tests build the same submodule as a CPython extension; this wrapper selects
+# the portable SHA-256 backend and feeds the MicroPython wrapper to the build.
+CUR_USERMOD=${CUR_USERMOD:-$HERE/../../krux/firmware/cUR-usermod}
+[ -e "$CUR_USERMOD/uUR.c" ] || {
+	echo "cUR submodule is not initialized: run 'git submodule update --init vendor/cUR' in the Krux submodule" >&2
+	exit 1
+}
+
+# Build in the checked-out MicroPython source.  A separate worktree was
+# previously used here, but it made the build depend on a second checkout and
+# complicated the cUR source paths.  build-standard is ignored by git.
+TREE="$SRC"
 
 # The unix port needs two of upstream's submodules: mbedtls (the TLS
 # backend) and micropython-lib (the standard library, frozen into the
@@ -86,6 +76,10 @@ cp "$TREE/mpy-cross/build/mpy-cross" "$TREE/ports/unix/build/mpy-cross"
 # 2. the port itself, for the target
 cd "$TREE/ports/unix"
 make clean >/dev/null 2>&1 || true
+# cUR is included through firmware/cUR-usermod/cUR (a symlink into the
+# submodule).  Remove any objects from an earlier host build as well as the
+# regular build directory before the cross compile.
+rm -rf build-standard vendor
 make -j"$(nproc)" \
 	CROSS_COMPILE=$CC_CROSS \
 	HOSTCC=gcc \
@@ -94,6 +88,7 @@ make -j"$(nproc)" \
 	MICROPY_PY_FFI=0 \
 	MICROPY_PY_CRYPTOLIB_CONSTS=1 \
 	MICROPY_PY_CRYPTOLIB_CTR=1 \
+	USER_C_MODULES="$CUR_USERMOD" \
 	CFLAGS_EXTRA="--sysroot=$SYSROOT" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
 
