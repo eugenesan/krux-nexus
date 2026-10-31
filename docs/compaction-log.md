@@ -1957,3 +1957,92 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - Main repo `linux` pointer remains `airgap/master-cleanup`; kernel fix commit lives on `airgap/cam-ksu`.
 - Commits: `2da79b6` (full-line CAMIF geometry/compare fix), `7dd550f` (VFE results), `ee54b5a` (vfe-instrument cleanup), `389b8f1` (full-chroma/profile), `85377a8` (frame-path profile), `6a10b79fc03` (kernel CPP fix).
 - Device currently in Android with capture kernel; no KSU/root; `adb root` disabled (`ro.debuggable=0`); use TWRP for root/file pulls.
+
+## 2026-10-31 13:38:05 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Finish the Nexus 5 camera/Krux integration, then implement SeedKeeper UI and on-card new-mnemonic generation while real-device testing is unavailable.
+- Latest user task: reformat “View Secrets”, replace fixed-delay SeedKeeper info screens with dismiss-on-touch dummy menus, and add New Mnemonic → SeedKeeper Card.
+
+## Requirements
+- Camera work: reversible `fastboot boot` only; one device/thread; air-gapped path excludes modem, Wi-Fi, Bluetooth, vendor HAL and Android framework; target 20 fps capture / 15 fps decode, floor 15/10 for 5 fps UR; PIX optional for later.
+- Camera tests must be one atomic boot+run cycle; do not reuse a dirty camera boot.
+- SeedKeeper task: no real device testing until the user is available; implement/test offline where possible.
+- “View Secrets” must be a selection menu like Load/Delete; SeedKeeper full-screen fixed-delay info must become a dummy menu requiring touch.
+- New Mnemonic must include a SeedKeeper Card option alongside Camera, Words, D6 and D20.
+- Use `https://github.com/Toporin/Seedkeeper-Applet` / `Specifications.md` as the SeedKeeper API reference.
+
+## Decisions
+- Camera fallback remains CAMIF_RAW + CPP; PIX_VIEWFINDER is optional.
+- Y-only VFE completion is used for QR/entropy: only Y is in the composite group; half-height CBCR writes but is not waited on.
+- CAMIF `0x660` error IRQ is masked for the Y-only path; SOF/EOF and violation paths remain.
+- Stable camera image is `/tmp/opencode/boot-fix-nocons.img` (y-only + CAMIF mask); matching camd is `/tmp/opencode/camd-yonly`.
+- Python client throttles to 15 fps while camd runs unpaced.
+- SeedKeeper new mnemonic plan: use applet `INS_GENERATE_RANDOM_SECRET=0xA3` with `INS_GENERATE_MASTERSEED=0xA0` fallback, export 16/32 random bytes as BIP-39 entropy, import a BIP-39-format Masterseed, delete the temporary secret, then load the words.
+- SeedKeeper dummy info screen: one-item `Menu` (`OK`, `back_label=None`, `offset=height-2*FONT_HEIGHT`) with info text drawn above.
+
+## Work State
+### Completed
+- Camera wiring: camd snapshot protocol, `image.from_nv12` lifetime/args, luma stats/clipping, 15 fps client throttle, `shannon.entropy_img16b`, init-stub camd startup source, camd test harness.
+- Camera kernel: `airgap/master-cleanup` has CPP fix `cdcc09b3682`, y-only completion `916fb726a2a`, CAMIF mask `bc0ddf04a08`.
+- 10-minute stream passed: 50,798 camd frames, max 63 °C, 0 ping-pong, 0 tasklet, 410 CPP `EAGAIN`, 146 CAMIF lines, no watchdog.
+- 1,000-snapshot test passed after correcting the test: `gc.mem_free` 863,264, loss 2,304 bytes, 0 ping-pong/tasklet, no watchdog.
+- Test script fixed to `gc.collect()` before/after and every 100 frames, and `del img`.
+- Camera docs updated; main tree and `linux` submodule clean.
+- Main commits: `5580508` (y-only), `45ee6fc` (CAMIF), `122b757` (10 min/1,000 acceptance).
+- Submodule commits reauthored: `micropython e01fbb28f`, `krux ff9a5cd9`; main integration/docs commits also Eugene.
+- SeedKeeper API researched; no SeedKeeper code changes made yet.
+
+### Active
+- Implement SeedKeeper changes:
+  - `View Secrets` selection menu and secret detail dummy menu.
+  - Replace fixed-delay info in `free_space()` and `card_info()` with dummy menu.
+  - Add SeedKeeper new-mnemonic generation to `Login.new_key()`.
+
+### Blocked
+- Real-device SeedKeeper testing: user unavailable.
+- Camera real QR/UR and entropy pages, AE policy: device testing deferred.
+- Current `boot-fix-nocons.img` is the TWRP test image; the final firmware init-stub/ramdisk with automatic camd startup still needs rebuilding.
+- Stable fast camd lacks `W/E/V`; `Camera._auto_expose()` remains disabled.
+
+## Next Move
+1. Implement `_info_menu()` in `krux/src/krux/pages/seedkeeper.py`; use it for secret details, free space and card info.
+2. Rework `view_secrets()` to list headers in a `Menu`, then show the selected secret in `_info_menu()`.
+3. Add `INS_GENERATE_RANDOM_SECRET`/`INS_GENERATE_MASTERSEED` methods to `krux/src/krux/seedkeeper.py`; add `0x9C26`/unsupported fallback handling.
+4. Add `SeedKeeperPage.create_new_mnemonic()`: PIN/card, card RNG entropy, BIP-39 derivation, label prompt, BIP-39 import, temp-secret delete, `load_key_fn(words)`.
+5. Add “Via SeedKeeper Card” to `Login.new_key()` when `seedkeeper_available()`.
+6. Run host/simulator tests; commit SeedKeeper work separately.
+7. When device is available: real QR/UR, entropy, AE, SeedKeeper card tests, final init-stub boot image.
+
+## Relevant Files
+- `krux/src/krux/pages/seedkeeper.py`: View Secrets, Free Space, Card Info, card session and new-mnemonic page logic.
+- `krux/src/krux/seedkeeper.py`: APDU protocol; needs A3/A0 generate commands.
+- `krux/src/krux/pages/login.py`: `Login.new_key()` menu and new-mnemonic callbacks.
+- `krux/src/krux/pages/__init__.py`: `Page`, `Menu`, `flash_text`, `_clicked_item`.
+- `krux/src/krux/display.py`: `FONT_HEIGHT`, `DEFAULT_PADDING`, drawing helpers.
+- `krux/src/krux/pages/mnemonic_loader.py`: `choose_len_mnemonic`, `_load_key_from_words`.
+- `krux/src/krux/pages/home_pages/mnemonic_backup.py`: SeedKeeper save path.
+- `cam/camd.c`: y-only `scmd.y_only`; camd socket/W/E/V.
+- `cam/isp.h` and `linux/include/media/msmb_isp.h`: `y_only` stream ABI.
+- `linux/drivers/media/platform/msm/camera_v2/isp/msm_isp_util.c`: y-only reapply and CAMIF error mask.
+- `linux/drivers/media/platform/msm/camera_v2/isp/msm_isp40.c`: per-WM IRQ clearing.
+- `linux/drivers/media/platform/msm/camera_v2/isp/msm_isp_axi_util.c`: composite mask and done-buffer plane selection.
+- `docs/cam-integration.md`, `docs/cam-state.md`, `docs/cam-stability-thermal.md`: camera status and test results.
+- `/tmp/opencode/boot-fix-nocons.img`, `/tmp/opencode/camd-yonly`: stable camera test artifacts.
+- `scripts/misc/test_stability.sh`: corrected GC-aware 1,000-snapshot test.
+
+## Important Context
+- Device is currently in TWRP on the stable y-only kernel; `camd` is stopped.
+- Stable camera image kernel reports `3.4.113-...-g916fb726a2a-dirty`; source now has the CAMIF commit `bc0ddf04a08`; rebuild from clean source if exact provenance is needed.
+- 10-minute test thermal max was `tsens_tz_sensor6=63`; no thermal trip.
+- First 1,000-snapshot run falsely reported `LEAK` (536,384 bytes) because it did not call `gc.collect()`; corrected test is stable at 2,304 bytes loss.
+- `camd` deployed at `/data/krux/camd`; fast source is `/tmp/opencode/camd-85377.c`; y-only binary is `/tmp/opencode/camd-yonly`.
+- SeedKeeper applet v0.2 `generateRandomSecret` APDU: `CLA=0xB0, INS=0xA3, P1=secret_size, P2=export_rights`, data `[secret_type, subtype, flag_save_entropy, label_size, label, entropy_size, entropy]`; returns `id(2)+fingerprint(4)`. It stores `TYPE_MASTERSEED=0x10` as `[size|secret]`, secret = `sha512(external_entropy|internal_entropy)` trimmed.
+- Deprecated `INS_GENERATE_MASTERSEED=0xA0`: P1 seed size 16-64, P2 export rights, data `[label_size|label]`; same return; useful as v0.1 fallback.
+- Current BIP-39 import format: `sk.pack_bip39_secret(master_seed, entropy, passphrase)` + `sk.make_header(TYPE_MASTERSEED, label, subtype=SUBTYPE_BIP39)`.
+- `View Secrets` currently loops `flash_text(... duration=FLASH_MSG_TIME*3)`; `free_space`/`card_info` do the same.
+- `Menu` adds a Back item unless `back_label=None`; `run_loop()` returns `(index,status)`; `back_index` is the last item.
+- Main tree and `linux`/`krux`/`micropython` submodules are clean; no uncommitted changes.
+- Kernel fix exists on `airgap/master-cleanup`; do not merge the KernelSU commits from `airgap/cam-ksu` into the shipping kernel.
