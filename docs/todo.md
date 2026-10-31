@@ -40,12 +40,14 @@
 
 ### VFE overflow fix (docs/cam-bringup-vfe.md) — now on the critical path for 20 fps
 - [x] Source analysis (done)
-- [ ] Instrumentation patches (tools/vfe-instrument.py ready)
-- [ ] Build + boot instrumented kernel (device needed)
-- [ ] Run PIX_VIEWFINDER + capture dmesg (device needed)
-- [ ] Compare ROM vs air-gap params (device needed)
-- [ ] Apply fix (clock/ISP-IF/WM/bandwidth)
-- [ ] Verify (0 overflow, GOT A FRAME)
+- [x] Instrumentation patches (VFE40 clock/hw/WM, ISP-IF input)
+- [x] Build + boot instrumented kernel (on top of the CPP-timeout fix)
+- [x] Run PIX_VIEWFINDER + capture dmesg: 0 frames, 301-599 `pix0 overflow`, 1 `camif violation`
+- [x] Compare against CAMIF_RAW on the same kernel: 93 frames, 0 overflow, 0 violation
+- [x] Rule out clock (320 MHz), hw version (8974 V2), input selection, CAMIF last_pixel, cam_cycle/capture, VFE PIX0 enable
+- [ ] Capture the vendor's **binned preview** ISP `VIDIOC_MSM_VFE_REG_CFG` sequence and regenerate `cam_initial`/`cam_cycle`
+- [ ] Apply fix and verify 0 overflow + frames
+- [ ] Or accept CAMIF_RAW+CPP at ~15 fps (5 fps UR) instead of 20 fps
 
 ### Optional
 - [ ] Auto-exposure via I2C registers (0x0202/0x0203 exposure, 0x0204/0x0205 gain)

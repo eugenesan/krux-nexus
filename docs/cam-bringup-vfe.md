@@ -16,6 +16,36 @@
 > measurements, the harness, and both fixes.  The notes below remain the
 > `PIX_VIEWFINDER` overflow analysis.
 
+> **2026-10-30 device result (instrumented kernel).**  Built the VFE40/
+> ISP-IF instrumented kernel on top of the CPP-timeout fix
+> (`6a10b79fc03`) and ran both paths from a fresh camera boot.
+>
+> | Path | Frames | pix0 overflow | camif error | camif violation |
+> |---|---:|---:|---:|---:|
+> | CAMIF_RAW (source 2 + CPP) | 93 / 8 s | **0** | 532 | 0 |
+> | PIX_VIEWFINDER (source 1) | **0** | 301-599 | 0 | 1 |
+>
+> VFE40: `hw_version=0x1001001a` (8974 V2); `vfe_clk_src` and
+> `camss_csi_vfe_clk` = 320 MHz (266.67 MHz tested too, same result);
+> ISP-IF `INPUT_SEL` vfe=0 intftype=0 csid=0 val=0.
+>
+> Tried and rejected:
+> - 320 MHz VFE clock (no change).
+> - Full-line CAMIF geometry `last_pixel=1639` (per cam-plan A6; no change).
+> - Vendor per-frame `cam_cycle`, with and without `cam_capture` (no change).
+> - VFE `CTRL_0` PIX0-enable write before and after `CONFIG_DONE` (no change).
+>
+> Conclusion: clock, hw version and input routing are correct; CAMIF_RAW
+> drains while PIX_VIEWFINDER does not. The captured vendor uploads
+> (`cam_config.h` / `cam_cycle.h`) come from the vendor photo session and
+> do not configure the binned VFE processing/output path. The next step is
+> to capture the vendor's **binned preview** ISP `VIDIOC_MSM_VFE_REG_CFG`
+> sequence (initial + per-frame) and regenerate the headers, or accept the
+> CAMIF_RAW+CPP path at ~15 fps (5 fps UR) instead of 20 fps.
+>
+> The VFE instrumentation/clock experiment was reverted from the kernel
+> tree; the stable kernel remains the CPP-timeout fix at 266.67 MHz.
+
 Paste this into a fresh session.  This is a deep-dive task that requires
 both source analysis (no device needed) and device testing (device required).
 
