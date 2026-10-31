@@ -32,6 +32,3 @@ grep -c "halt timeout" "$FILE" || echo "0"
 
 echo "NULL stream:"
 grep -c "NULL stream" "$FILE" || echo "0"
-EOF
-chmod +x scripts/cam/compare-vfe.sh
-echo "created"

@@ -880,7 +880,7 @@ static int ispif_config(void)
 	cfg.params.entries[0].crop_enable = crop_enable;
 	cfg.params.entries[0].crop_start_pixel = 0;
 	cfg.params.entries[0].crop_end_pixel =
-		cam->binned ? 1631 : cam->width - 1;	/* 1631 / 3279 */
+		cam->binned ? 1639 : cam->width - 1;	/* full line: 1639 / 3279 */
 	if (ispif_ioctl(&cfg, "CFG") < 0)
 		return -1;
 
@@ -907,7 +907,7 @@ static int ispif_config(void)
 	cfg.params.entries[0].crop_enable = crop_enable;
 	cfg.params.entries[0].crop_start_pixel = 0;
 	cfg.params.entries[0].crop_end_pixel =
-		cam->binned ? 1631 : cam->width - 1;	/* 1631 / 3279 */
+		cam->binned ? 1639 : cam->width - 1;	/* full line: 1639 / 3279 */
 	if (ispif_ioctl(&cfg, "START_FRAME_BOUNDARY") < 0)
 		return -1;
 
@@ -996,7 +996,7 @@ static int isp_start(void)
 	 * active area.  These are the values the ROM's camera HAL sends.
 	 */
 	icfg.d.pix_cfg.camif_cfg.last_pixel =
-		cam->binned ? 1631 : cam->width - 1;	/* 1631 / 3279 */
+		cam->binned ? 1639 : cam->width - 1;	/* full line: 1639 / 3279 */
 	icfg.d.pix_cfg.camif_cfg.last_line =
 		cam->binned ? 1231 : cam->height - 1;	/* 1231 / 2463 */
 	icfg.d.pix_cfg.camif_cfg.first_line = 0;
