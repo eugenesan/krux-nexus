@@ -19,7 +19,7 @@ optional and blocked.
 | Exposure control | `W`/`E`/`V` in the camd source; the validated fast runtime binary does not have them yet |
 | Kernel CPP fix | Cherry-picked onto `airgap/master-cleanup` as `cdcc09b3682`; rebuilt kernel/boot image boots |
 | Y-only completion | `y_only` stream flag + CAMIF error-IRQ mask: 30 s stream with 0 ping-pong, 0 tasklet overflow |
-| Stability | 30 s stream: 2468 camd frames, 20 CPP `EAGAIN`, no watchdog; 3-frame smoke passed |
+| Stability | 10 min: 50,798 camd frames, max 63 °C, 0 ping-pong, 0 tasklet, no watchdog; 1,000 snapshots: GC loss 2,304 bytes, stable |
 | PIX_VIEWFINDER | Not delivering completed frames; full-res preview config/cycle captured; optional |
 
 ### What is known to work
@@ -31,6 +31,8 @@ optional and blocked.
   smoke test (5 frames of 320×240, 199 camd frames, no CPP panic).
 - `y_only` VFE completion + CAMIF error-IRQ mask: 30 s stream with
   0 ping-pong, 0 tasklet overflow, 2468 camd frames, no watchdog.
+- 10-minute stream: 50,798 camd frames, max 63 °C, no watchdog.
+- 1,000 snapshots: GC loss 2,304 bytes (stable), 0 ping-pong/tasklet.
 - Smoke test: 10 frames of 320×240 (short smoke after the long run: 3).
 - Entropy statistics: `l_mean`, `l_stdev`, `l_min`, `l_max`,
   `clipped_low`, `clipped_high`.

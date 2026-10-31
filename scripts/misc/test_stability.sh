@@ -12,11 +12,15 @@ sensor.reset()
 sensor.set_pixformat(sensor.RGB565)
 sensor.set_framesize(sensor.QVGA)
 sensor.run(1)
+gc.collect()
 before = gc.mem_free()
 for i in range(1000):
     img = sensor.snapshot()
     if i % 100 == 0:
+        gc.collect()
         print(i, gc.mem_free())
+del img
+gc.collect()
 after = gc.mem_free()
 sensor.run(0)
 print(\"1000 frames done, loss:\", before - after)

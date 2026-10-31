@@ -71,8 +71,10 @@ is built.
 - The `y_only` VFE completion flag plus the CAMIF error-IRQ mask
   produced a stable 30 s stream: 2468 camd frames, 0 ping-pong,
   0 tasklet overflow, 20 CPP `EAGAIN`, no watchdog, and a 3-frame
-  320×240 smoke test.  The remaining work is 10-minute/1,000-snapshot
-  stability and the real QR/UR/entropy pages.
+  320×240 smoke test.
+- 10-minute stream: 50,798 camd frames, max 63 °C, 0 ping-pong,
+  0 tasklet, no watchdog.  1,000 snapshots: GC loss 2,304 bytes,
+  stable.  The remaining work is the real QR/UR/entropy pages and AE.
 
 ## Next steps (ordered)
 

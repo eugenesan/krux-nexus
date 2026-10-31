@@ -46,8 +46,9 @@
 - [x] Cherry-pick the CPP timeout fix onto `airgap/master-cleanup` (`cdcc09b3682`), rebuild the kernel/boot image, and run a short smoke test (5 frames, no CPP panic)
 - [x] Add the `y_only` VFE completion flag and re-apply the Y-only composite/IRQ mask after VFE uploads
 - [x] Mask the CAMIF `0x660` error IRQ for the Y-only path; 30 s test: 0 ping-pong, 0 tasklet, 2468 frames, no watchdog, 3-frame smoke passed
-- [ ] Re-run 10-minute / 1,000-snapshot stability on the y-only path
+- [x] Re-run 10-minute / 1,000-snapshot stability on the y-only path: 50,798 frames/10 min, max 63 °C, no watchdog; 1,000 snapshots GC loss 2,304 bytes, stable
 - [ ] Real QR/UR and entropy pages on the y-only path
+- [ ] Re-enable/implement the QR and entropy AE policy
 - [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
 - [x] Re-run the paced 20 fps profile with the Python `snapshot + find_qrcodes` loop: no panic/timeout/dump; 20.0 fps in steady groups, ~17.3 fps average, 59 ping-pong warnings
 - [x] Full-height CBCR + full-height chroma buffer: ping-pong 0, but CPP stalls at ~24 frames with `CFG: EAGAIN`; not viable with the captured CPP message

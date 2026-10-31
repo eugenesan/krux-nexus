@@ -34,8 +34,19 @@
 > `/tmp/opencode/boot-yonly4.img` (now the stable test image); matching
 > camd: `/tmp/opencode/camd-yonly`.
 >
-> Remaining: 10-minute/1,000-snapshot stability, real QR/UR and entropy
-> pages, and the AE policy.
+> **2026-10-31 10-minute / 1,000-snapshot acceptance.**
+>
+> - 10-minute fresh y-only stream: **50,798 camd frames**, max
+>   **63 °C**, 0 ping-pong, 0 tasklet overflow, 410 CPP `EAGAIN`,
+>   146 CAMIF-status lines, **no watchdog**.
+> - 1,000 snapshots on a fresh boot: **6,886 camd frames**,
+>   `gc.mem_free` 863,264 before/after, **loss 2,304 bytes** (stable),
+>   0 ping-pong, 0 tasklet, 138 CAMIF-status lines, no watchdog.
+> - The first 1,000-snapshot run used the old test without
+>   `gc.collect()` and reported a 536 KB "leak"; the image buffers are
+>   GC-managed and the corrected test is stable.
+>
+> Remaining: real QR/UR and entropy pages, and the AE policy.
 
 Date: 2026-10-30
 Device: LG Nexus 5 (hammerhead), IMX179 rear camera, recovery ramdisk +
