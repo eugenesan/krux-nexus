@@ -127,6 +127,17 @@ if [ "$BUNDLE" = "1" ]; then
 	mkdir -p "$BUNDLE_DIR/krux" "$BUNDLE_DIR/flash" "$BUNDLE_DIR/embit"
 	cp "$MICROPYTHON" "$BUNDLE_DIR/micropython"
 	chmod 755 "$BUNDLE_DIR/micropython"
+	CAMD_BIN="$ROOT/cam/camd"
+	if [ -x "$CAMD_BIN" ]; then
+		cp "$CAMD_BIN" "$BUNDLE_DIR/camd"
+		chmod 755 "$BUNDLE_DIR/camd"
+	else
+		echo "  !! no camd at $CAMD_BIN -- the firmware has no camera" >&2
+	fi
+	CPP_FW_BUNDLE="$ROOT/cam/fw/cpp_firmware_v1_2_0.fw"
+	if [ -f "$CPP_FW_BUNDLE" ]; then
+		cp "$CPP_FW_BUNDLE" "$BUNDLE_DIR/cpp_firmware_v1_2_0.fw"
+	fi
 	cp "$KRUX_SRC"/*.py "$BUNDLE_DIR/"
 	cp -R "$KRUX_SRC/krux/." "$BUNDLE_DIR/krux/"
 	cp -R "$KRUX_SRC/flash/." "$BUNDLE_DIR/flash/"

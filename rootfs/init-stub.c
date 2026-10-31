@@ -30,6 +30,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <pthread.h>
@@ -76,6 +77,10 @@
  * put there. */
 #define SETTINGS_DIR "/data/krux/flash"
 #define SD_DIR "/data/krux/sd"
+
+/* the camera daemon and its socket */
+#define CAMD_SOCKET "/data/krux/camd.sock"
+#define CAMD_LOG "/data/krux/camd.log"
 
 /* TWRP's own user interface, which we keep for the volume up key */
 #define RECOVERY_BIN "/sbin/recovery.stock"
@@ -164,6 +169,69 @@ static void redirect_the_output(void) {
     }
 }
 
+/* Start the camera daemon before the firmware.  It owns the V4L2/ISP
+ * state machine; the MicroPython sensor module is only its socket client.
+ * The fallback configuration is the CAMIF_RAW + CPP path that was
+ * validated on this device. */
+static void start_camd(const char *dir) {
+    char camd[PATH_MAX];
+    char fw[PATH_MAX];
+    pid_t pid;
+    int i;
+
+    snprintf(camd, sizeof(camd), "%s/camd", dir);
+    if (access(camd, X_OK) != 0) {
+        say("no camd next to the firmware");
+        return;
+    }
+    snprintf(fw, sizeof(fw), "%s/cpp_firmware_v1_2_0.fw", dir);
+    if (access(fw, R_OK) != 0) {
+        snprintf(fw, sizeof(fw), "/lib/firmware/cpp_firmware_v1_2_0.fw");
+    }
+
+    unlink(CAMD_SOCKET);
+    pid = fork();
+    if (pid == 0) {
+        int fd;
+        setsid();
+        if (chdir(dir) != 0) {
+            /* keep going: the paths passed below are absolute */
+        }
+        fd = open(CAMD_LOG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            if (fd > STDERR_FILENO) {
+                close(fd);
+            }
+        }
+        execl(camd, "camd",
+              "1640", "1232", "0x40000000", "rear", "0",
+              fw, "2", "binned", "cfg", "nocycle",
+              "0", "0x2b", "0", "0", "300",
+              "0", "0", "0", "0x12", "0", "1",
+              "0xffffffff", "0", "0", "0", "1", "0",
+              (char *)NULL);
+        _exit(127);
+    }
+    if (pid < 0) {
+        say("could not fork camd");
+        return;
+    }
+
+    /* The firmware's sensor client retries, but waiting here keeps the
+     * first "Loading Camera..." from spending its whole budget on a
+     * daemon that is still opening the ISP. */
+    for (i = 0; i < 80; i++) {
+        if (access(CAMD_SOCKET, F_OK) == 0) {
+            say("camd is ready");
+            return;
+        }
+        usleep(100000);
+    }
+    say("camd did not create its socket");
+}
+
 static void *start_the_firmware(void *arg) {
     (void)arg;
     /* the panel: TWRP's screen saver may have dimmed it, and the
@@ -226,6 +294,7 @@ static void *start_the_firmware(void *arg) {
         }
         snprintf(binary, sizeof(binary), "%s/micropython", dir);
         snprintf(main_py, sizeof(main_py), "%s/boot.py", dir);
+        start_camd(dir);
         if (chdir(dir) != 0) {
             say("no firmware directory");
         }
