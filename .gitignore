@@ -32,7 +32,8 @@ artifacts/
 *.pyc
 __pycache__/
 
-sync.sh
+# sync scripts
+sync*.*
 
 # local agent state
 .opencode/

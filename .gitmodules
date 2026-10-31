@@ -1,6 +1,6 @@
 [submodule "linux"]
 	path = linux
-	url = https://github.com/eugenesan/android_kernel_lge_hammerhead
+	url = git@github.com:eugenesan/android_kernel_lge_hammerhead.git
 [submodule "krux"]
 	path = krux
-	url = https://github.com/eugenesan/krux.git
+	url = git@github.com:eugenesan/krux.git
