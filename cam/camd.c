@@ -726,6 +726,8 @@ static int client_buf_fd[8];
 
 /* latest QVGA frame slot */
 static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
+#define OUT_W 640
+#define OUT_H 480
 static unsigned char *latest_y = NULL;
 static unsigned char *latest_uv = NULL;
 static int latest_seq = 0;
@@ -1837,60 +1839,45 @@ static void *client_thread(void *arg)
 					}
 				}
 				if (!latest_y) {
-					latest_y = malloc(320 * 240);
-					latest_uv = malloc(160 * 120 * 2);
+					latest_y = malloc(OUT_W * OUT_H);
+					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
 				}
 				{
-					int ox = (width - 1600) / 2;
-					int oy = (height - 1200) / 2;
+					/* VGA: a 2x2 box from the centred 1280x960 crop. */
+					int ox = (width - OUT_W * 2) / 2;
+					int oy = (height - OUT_H * 2) / 2;
 					int dx, dy;
-					/* 3x3 center box of each 5x5 block:
-					 * 9 of 25 pixels, but with wide loads
-					 * on an uncached ION buffer it is the
-					 * difference between ~190 ms and ~30 ms.
-					 * The skipped ring is the outer 2 pixels
-					 * of each block; QR still gets a 5x
-					 * downscale with anti-aliasing. */
-					for (dy = 0; dy < 240; dy++) {
+					for (dy = 0; dy < OUT_H; dy++) {
 						const unsigned char *base =
-							src_y + (oy + dy * 5 + 1) * width
-							+ ox + 1;
-						for (dx = 0; dx < 320; dx++) {
-							const unsigned char *p =
-								base + dx * 5;
-							unsigned sum =
-								sum3_u8(p) +
-								sum3_u8(p + width) +
-								sum3_u8(p + 2 * width);
-							latest_y[dy * 320 + dx] =
-								(unsigned char)(sum / 9);
+							src_y + (oy + dy * 2) * width + ox;
+						for (dx = 0; dx < OUT_W; dx++) {
+							const unsigned char *q = base + dx * 2;
+							unsigned sum = q[0] + q[1] +
+								q[width] + q[width + 1];
+							latest_y[dy * OUT_W + dx] =
+								(unsigned char)(sum / 4);
 						}
 					}
 				}
 				{
 					int uv_w = width / 2;
 					int uv_h = height / 2;
-					int ox = (uv_w - 800) / 2;
-					int oy = (uv_h - 600) / 2;
+					int ox = (uv_w - (OUT_W / 2) * 2) / 2;
+					int oy = (uv_h - (OUT_H / 2) * 2) / 2;
 					int dx, dy;
-					for (dy = 0; dy < 120; dy++) {
-						const unsigned char *base =
-							src_uv + (oy + dy * 5 + 1) * width
-							+ (ox + 1) * 2;
-						for (dx = 0; dx < 160; dx++) {
-							const unsigned char *p =
-								base + dx * 10;
-							unsigned su = 0, sv = 0, u, v;
-							sum3_uv(p, &u, &v);
-							su += u; sv += v;
-							sum3_uv(p + width, &u, &v);
-							su += u; sv += v;
-							sum3_uv(p + 2 * width, &u, &v);
-							su += u; sv += v;
-							latest_uv[(dy * 160 + dx) * 2] =
-								(unsigned char)(su / 9);
-							latest_uv[(dy * 160 + dx) * 2 + 1] =
-								(unsigned char)(sv / 9);
+					for (dy = 0; dy < OUT_H / 2; dy++) {
+						for (dx = 0; dx < OUT_W / 2; dx++) {
+							const unsigned char *q =
+								src_uv + (oy + dy * 2) * width
+								+ (ox + dx * 2) * 2;
+							unsigned su = q[0] + q[2] +
+								q[width] + q[width + 2];
+							unsigned sv = q[1] + q[3] +
+								q[width + 1] + q[width + 3];
+							latest_uv[(dy * (OUT_W / 2) + dx) * 2] =
+								(unsigned char)(su / 4);
+							latest_uv[(dy * (OUT_W / 2) + dx) * 2 + 1] =
+								(unsigned char)(sv / 4);
 						}
 					}
 				}
@@ -2039,20 +2026,20 @@ static void *socket_thread(void *arg)
 					pthread_mutex_unlock(&frame_mutex);
 					hdr[4] = seq & 0xff; hdr[5] = (seq>>8)&0xff;
 					hdr[6] = (seq>>16)&0xff; hdr[7] = (seq>>24)&0xff;
-					hdr[8] = 320 & 0xff; hdr[9] = (320>>8)&0xff;
-					hdr[10] = 240 & 0xff; hdr[11] = (240>>8)&0xff;
-					hdr[12] = 320 & 0xff; hdr[13] = (320>>8)&0xff;
-					hdr[14] = 240 & 0xff; hdr[15] = (240>>8)&0xff;
-					hdr[16] = 320 & 0xff; hdr[17] = (320>>8)&0xff;
-					hdr[20] = 160 & 0xff; hdr[21] = (160>>8)&0xff;
-					hdr[24] = (320*240) & 0xff; hdr[25] = ((320*240)>>8)&0xff;
-					hdr[26] = ((320*240)>>16)&0xff; hdr[27] = ((320*240)>>24)&0xff;
-					hdr[28] = (160*120*2) & 0xff; hdr[29] = ((160*120*2)>>8)&0xff;
-					hdr[30] = ((160*120*2)>>16)&0xff; hdr[31] = ((160*120*2)>>24)&0xff;
+					hdr[8] = OUT_W & 0xff; hdr[9] = (OUT_W>>8)&0xff;
+					hdr[10] = OUT_H & 0xff; hdr[11] = (OUT_H>>8)&0xff;
+					hdr[12] = OUT_W & 0xff; hdr[13] = (OUT_W>>8)&0xff;
+					hdr[14] = OUT_H & 0xff; hdr[15] = (OUT_H>>8)&0xff;
+					hdr[16] = OUT_W & 0xff; hdr[17] = (OUT_W>>8)&0xff;
+					hdr[20] = (OUT_W/2) & 0xff; hdr[21] = ((OUT_W/2)>>8)&0xff;
+					hdr[24] = (OUT_W*OUT_H) & 0xff; hdr[25] = ((OUT_W*OUT_H)>>8)&0xff;
+					hdr[26] = ((OUT_W*OUT_H)>>16)&0xff; hdr[27] = ((OUT_W*OUT_H)>>24)&0xff;
+					hdr[28] = ((OUT_W/2)*(OUT_H/2)*2) & 0xff; hdr[29] = (((OUT_W/2)*(OUT_H/2)*2)>>8)&0xff;
+					hdr[30] = (((OUT_W/2)*(OUT_H/2)*2)>>16)&0xff; hdr[31] = (((OUT_W/2)*(OUT_H/2)*2)>>24)&0xff;
 					write(cfd, hdr, 32);
 					pthread_mutex_lock(&frame_mutex);
-					write(cfd, latest_y, 320*240);
-					write(cfd, latest_uv, 160*120*2);
+					write(cfd, latest_y, OUT_W*OUT_H);
+					write(cfd, latest_uv, (OUT_W/2)*(OUT_H/2)*2);
 					pthread_mutex_unlock(&frame_mutex);
 				} else {
 					hdr[31] = 1;
