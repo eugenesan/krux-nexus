@@ -2018,12 +2018,26 @@ static void *socket_thread(void *arg)
 				unsigned char hdr[32];
 				memset(hdr, 0, 32);
 				memcpy(hdr, "KCF1", 4);
+				int seq;
+				int ready;
+				unsigned char *copy = NULL;
+				size_t ysz = OUT_W * OUT_H;
+				size_t uvsz = (OUT_W / 2) * (OUT_H / 2) * 2;
+
 				pthread_mutex_lock(&frame_mutex);
-				int seq = latest_seq;
-				int ready = latest_ready;
+				seq = latest_seq;
+				ready = latest_ready;
 				if (ready && latest_y && latest_uv) {
+					copy = malloc(ysz + uvsz);
+					if (copy) {
+						memcpy(copy, latest_y, ysz);
+						memcpy(copy + ysz, latest_uv, uvsz);
+					}
+				}
+				pthread_mutex_unlock(&frame_mutex);
+
+				if (copy) {
 					hdr[31] = 0;
-					pthread_mutex_unlock(&frame_mutex);
 					hdr[4] = seq & 0xff; hdr[5] = (seq>>8)&0xff;
 					hdr[6] = (seq>>16)&0xff; hdr[7] = (seq>>24)&0xff;
 					hdr[8] = OUT_W & 0xff; hdr[9] = (OUT_W>>8)&0xff;
@@ -2032,18 +2046,15 @@ static void *socket_thread(void *arg)
 					hdr[14] = OUT_H & 0xff; hdr[15] = (OUT_H>>8)&0xff;
 					hdr[16] = OUT_W & 0xff; hdr[17] = (OUT_W>>8)&0xff;
 					hdr[20] = (OUT_W/2) & 0xff; hdr[21] = ((OUT_W/2)>>8)&0xff;
-					hdr[24] = (OUT_W*OUT_H) & 0xff; hdr[25] = ((OUT_W*OUT_H)>>8)&0xff;
-					hdr[26] = ((OUT_W*OUT_H)>>16)&0xff; hdr[27] = ((OUT_W*OUT_H)>>24)&0xff;
-					hdr[28] = ((OUT_W/2)*(OUT_H/2)*2) & 0xff; hdr[29] = (((OUT_W/2)*(OUT_H/2)*2)>>8)&0xff;
-					hdr[30] = (((OUT_W/2)*(OUT_H/2)*2)>>16)&0xff; hdr[31] = (((OUT_W/2)*(OUT_H/2)*2)>>24)&0xff;
+					hdr[24] = (ysz) & 0xff; hdr[25] = ((ysz)>>8)&0xff;
+					hdr[26] = ((ysz)>>16)&0xff; hdr[27] = ((ysz)>>24)&0xff;
+					hdr[28] = (uvsz) & 0xff; hdr[29] = ((uvsz)>>8)&0xff;
+					hdr[30] = ((uvsz)>>16)&0xff; hdr[31] = ((uvsz)>>24)&0xff;
 					write(cfd, hdr, 32);
-					pthread_mutex_lock(&frame_mutex);
-					write(cfd, latest_y, OUT_W*OUT_H);
-					write(cfd, latest_uv, (OUT_W/2)*(OUT_H/2)*2);
-					pthread_mutex_unlock(&frame_mutex);
+					write(cfd, copy, ysz + uvsz);
+					free(copy);
 				} else {
 					hdr[31] = 1;
-					pthread_mutex_unlock(&frame_mutex);
 					write(cfd, hdr, 32);
 				}
 			} else if (buf[0] == 'W') {
