@@ -299,7 +299,12 @@ static void *start_the_firmware(void *arg) {
             say("no firmware directory");
         }
         say("starting the firmware");
-        execl(binary, "micropython", main_py, (char *)NULL);
+        /* The unix port's default GC heap is 1 MiB.  Krux's full UI plus
+         * a 320x240 RGB565 camera frame (153,600 bytes) and the QR
+         * decoder need more than that; 8 MiB leaves ample headroom and
+         * is well within this device's RAM. */
+        execl(binary, "micropython", "-X", "heapsize=8M", main_py,
+              (char *)NULL);
     }
     say("the firmware did not start");
     return NULL;
