@@ -1843,41 +1843,35 @@ static void *client_thread(void *arg)
 					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
 				}
 				{
-					/* VGA: a 2x2 box from the centred 1280x960 crop. */
-					int ox = (width - OUT_W * 2) / 2;
-					int oy = (height - OUT_H * 2) / 2;
+					/* 1:1 centre crop: 640x480 native pixels from
+					 * the binned sensor.  This is a ~2.5x zoom
+					 * over the old full-FOV downscale and gives
+					 * dense PSBT/Datum/descriptor QRs enough
+					 * pixels to decode. */
+					int ox = (width - OUT_W) / 2;
+					int oy = (height - OUT_H) / 2;
 					int dx, dy;
 					for (dy = 0; dy < OUT_H; dy++) {
-						const unsigned char *base =
-							src_y + (oy + dy * 2) * width + ox;
-						for (dx = 0; dx < OUT_W; dx++) {
-							const unsigned char *q = base + dx * 2;
-							unsigned sum = q[0] + q[1] +
-								q[width] + q[width + 1];
-							latest_y[dy * OUT_W + dx] =
-								(unsigned char)(sum / 4);
-						}
+						const unsigned char *src =
+							src_y + (oy + dy) * width + ox;
+						for (dx = 0; dx < OUT_W; dx++)
+							latest_y[dy * OUT_W + dx] = src[dx];
 					}
 				}
 				{
 					int uv_w = width / 2;
 					int uv_h = height / 2;
-					int ox = (uv_w - (OUT_W / 2) * 2) / 2;
-					int oy = (uv_h - (OUT_H / 2) * 2) / 2;
+					int ox = (uv_w - (OUT_W / 2)) / 2;
+					int oy = (uv_h - (OUT_H / 2)) / 2;
 					int dx, dy;
 					for (dy = 0; dy < OUT_H / 2; dy++) {
+						const unsigned char *src =
+							src_uv + (oy + dy) * width + ox * 2;
 						for (dx = 0; dx < OUT_W / 2; dx++) {
-							const unsigned char *q =
-								src_uv + (oy + dy * 2) * width
-								+ (ox + dx * 2) * 2;
-							unsigned su = q[0] + q[2] +
-								q[width] + q[width + 2];
-							unsigned sv = q[1] + q[3] +
-								q[width + 1] + q[width + 3];
 							latest_uv[(dy * (OUT_W / 2) + dx) * 2] =
-								(unsigned char)(su / 4);
+								src[dx * 2];
 							latest_uv[(dy * (OUT_W / 2) + dx) * 2 + 1] =
-								(unsigned char)(sv / 4);
+								src[dx * 2 + 1];
 						}
 					}
 				}
