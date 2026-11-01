@@ -2093,6 +2093,11 @@ static void *socket_thread(void *arg)
 				}
 			} else if (buf[0] == 'Q' || buf[0] == 'S') {
 				write(cfd, "OK", 2);
+				/* The init supervisor starts a fresh camd for every
+				 * camera session: reusing the CPP queue across
+				 * sessions leaves the second preview dark. */
+				if (buf[0] == 'Q')
+					_exit(0);
 			}
 		}
 		close(cfd);

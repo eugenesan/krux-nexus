@@ -205,14 +205,27 @@ static void start_camd(const char *dir) {
                 close(fd);
             }
         }
-        execl(camd, "camd",
-              "1640", "1232", "0x40000000", "rear", "0",
-              fw, "2", "binned", "cfg", "nocycle",
-              "0", "0x2b", "0", "0", "300",
-              "0", "0", "0", "0x12", "0", "1",
-              "0xffffffff", "0", "0", "0", "1", "0",
-              (char *)NULL);
-        _exit(127);
+        /* Supervisor: sensor.run(0) sends Q, camd exits, and the next
+         * camera session gets a fresh process (and therefore a fresh
+         * CPP queue) instead of a dark, stale preview. */
+        for (;;) {
+            pid_t c = fork();
+            if (c == 0) {
+                execl(camd, "camd",
+                      "1640", "1232", "0x40000000", "rear", "0",
+                      fw, "2", "binned", "cfg", "nocycle",
+                      "0", "0x2b", "0", "0", "300",
+                      "0", "0", "0", "0x12", "0", "1",
+                      "0xffffffff", "0", "0", "0", "1", "0",
+                      (char *)NULL);
+                _exit(127);
+            }
+            if (c > 0) {
+                int status;
+                waitpid(c, &status, 0);
+            }
+            sleep(1);
+        }
     }
     if (pid < 0) {
         say("could not fork camd");
