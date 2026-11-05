@@ -157,10 +157,33 @@ The init stub prefers `/opt/krux` when it is present and falls back to
 development. Settings and the log still live on `/data/krux`; the
 firmware and its Python libraries are read-only in the boot image.
 
-The bundled ramdisk is close to hammerhead's boot-partition limit
-(`0x1600000` bytes), so `make-boot-image.sh` fails rather than emitting an
-image that cannot be flashed. The ramdisk is compressed with `gzip -9` for
-this reason.
+The ramdisk build prunes what the stub does not use: TWRP's
+`terminfo` and Python 3.10 trees, the UBSan runtime (no binary has a
+`DT_NEEDED` on it), and the keystore helpers.  `KEEP_KEYSTORE=1` keeps
+the keystore binaries for TWRP FBE.  The CPP firmware is kept only in
+`/lib/firmware`; `/opt/krux` no longer carries a duplicate.  The init
+stub and camd are built with `-Os -s` (camd also uses
+`-ffunction-sections -fdata-sections -Wl,--gc-sections`).
+
+The ramdisk is compressed with **XZ** by default (`COMPRESS=xz`); the
+kernel must have `CONFIG_RD_XZ=y` (it is set in
+`lineageos_hammerhead_defconfig`).  XZ takes the 30.7 MB cpio from
+14.73 MB (gzip -9) down to **8.86 MB**.  With the pruned tree the
+bundled camera image is about **16.1 MB**, leaving several MB under
+hammerhead's boot-partition limit (`0x1600000` bytes).
+`make-boot-image.sh` still fails rather than emitting an image that
+cannot be flashed.  Use `COMPRESS=gzip` for a kernel without
+`CONFIG_RD_XZ`; `lzma` and `lz4` are also accepted, but LZ4 is larger
+than gzip here.
+
+`kexec` is **opt-in** because only the memory-wipe work needs it:
+
+```sh
+KEXEC=artifacts/built/kexec-arm bash rootfs/build-stub-ramdisk.sh --bundle
+```
+
+Without `KEXEC`, neither `/sbin/kexec` nor `/sbin/krux-wipe` is
+installed; the firmware falls back to the normal powerctl shutdown.
 
 ## 6. Boot it
 

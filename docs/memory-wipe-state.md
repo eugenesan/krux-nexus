@@ -138,7 +138,8 @@ TOOLCHAIN=host bash tools/build-kernel.sh --out /tmp/opencode/ko-wipe
 Build the ramdisk (kexec + wrapper) and a test image:
 
 ```sh
-BUNDLE=1 bash rootfs/build-stub-ramdisk.sh --force --bundle
+KEXEC=artifacts/built/kexec-arm BUNDLE=1 \
+  bash rootfs/build-stub-ramdisk.sh --force --bundle
 EXTRA_CMDLINE='wipe=test' RAMDISK=artifacts/built/ramdisk-bundled \
   bash rootfs/make-boot-image.sh \
   artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
@@ -147,8 +148,11 @@ EXTRA_CMDLINE='wipe=test' RAMDISK=artifacts/built/ramdisk-bundled \
 fastboot boot /tmp/opencode/boot-wipe.img
 ```
 
-The full image is 23.0 MB; the boot partition limit is 23,068,672
-bytes, so there is only ~49 KB of headroom.
+The memory-wipe branch was cut before XZ initramfs support.  Before
+building the wipe image, cherry-pick `4bf26c63072`
+(`hammerhead: enable XZ initramfs decompression`) from the camera branch
+or pass `COMPRESS=gzip`.  With XZ the kexec image is about 16.6 MB; the
+camera image without kexec is 16.1 MB.
 
 Kexec test (after booting the stub and pushing the image/DTB):
 

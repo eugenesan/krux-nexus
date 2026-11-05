@@ -81,7 +81,8 @@ Build:
 ```sh
 cd /home/user/Develop/src/krux-nexus
 TOOLCHAIN=host bash tools/build-kernel.sh --out /tmp/opencode/ko-wipe
-BUNDLE=1 bash rootfs/build-stub-ramdisk.sh --force --bundle
+KEXEC=artifacts/built/kexec-arm BUNDLE=1 \
+  bash rootfs/build-stub-ramdisk.sh --force --bundle
 EXTRA_CMDLINE='wipe=test' RAMDISK=artifacts/built/ramdisk-bundled \
   bash rootfs/make-boot-image.sh \
   artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \

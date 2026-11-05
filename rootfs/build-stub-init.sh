@@ -21,7 +21,7 @@ CC=${CC:-arm-linux-gnueabihf-gcc}
 [ -d "$SYSROOT" ] || { echo "no armel sysroot at $SYSROOT (see TOOLCHAIN.md)" >&2; exit 1; }
 
 mkdir -p "$(dirname "$OUT")"
-$CC -O2 -static -Wall \
+$CC -Os -static -s -Wall \
     --sysroot="$SYSROOT" \
     -o "$OUT" \
     "$HERE/init-stub.c" -lpthread

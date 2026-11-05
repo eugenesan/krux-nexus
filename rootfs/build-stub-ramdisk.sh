@@ -42,6 +42,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 FORCE=""
 BUNDLE=${BUNDLE:-0}
+# gzip (default TWRP), xz (best size; needs CONFIG_RD_XZ), lzma or lz4.
+COMPRESS=${COMPRESS:-xz}
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--force)  FORCE=1; shift ;;
@@ -78,23 +80,29 @@ mkdir -p "$WORK/rd"
 # partition is tight.
 rm -rf "$WORK/rd/sbin/etc/terminfo" "$WORK/rd/etc/python"
 
+# TWRP's FBE keystore service and the UBSan runtime are not used by the
+# stub path.  No binary in the ramdisk has a DT_NEEDED on the UBSan
+# library.  KEEP_KEYSTORE=1 keeps the keystore binaries for TWRP FBE.
+if [ "${KEEP_KEYSTORE:-0}" != "1" ]; then
+	rm -f "$WORK/rd/sbin/keystore" "$WORK/rd/sbin/keystore_auth" \
+	      "$WORK/rd/sbin/keystore_cli"
+fi
+rm -f "$WORK/rd/sbin/libclang_rt.ubsan_standalone-arm-android.so"
+
 mv "$WORK/rd/sbin/recovery" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
 
-# 3a. kexec and the wipe wrapper.  The wrapper is always installed so
-# the firmware can try the wipe path; without the binary it falls back
-# to the normal powerctl shutdown.
-KEXEC=${KEXEC:-$ROOT/artifacts/built/kexec-arm}
-if [ -x "$KEXEC" ]; then
+# 3a. kexec and the wipe wrapper, when asked for.  The wrapper is only
+# useful with the binary, so both are optional.
+KEXEC=${KEXEC:-}
+if [ -n "$KEXEC" ] && [ -x "$KEXEC" ]; then
 	cp "$KEXEC" "$WORK/rd/sbin/kexec"
 	chmod 755 "$WORK/rd/sbin/kexec"
-else
-	echo "  note: no kexec at $KEXEC; wipe-on-shutdown will fall back" >&2
+	cp "$HERE/stub/krux-wipe" "$WORK/rd/sbin/krux-wipe"
+	chmod 755 "$WORK/rd/sbin/krux-wipe"
 fi
-cp "$HERE/stub/krux-wipe" "$WORK/rd/sbin/krux-wipe"
-chmod 755 "$WORK/rd/sbin/krux-wipe"
 
 # 3b. the camera's firmware.
 #
@@ -153,10 +161,6 @@ if [ "$BUNDLE" = "1" ]; then
 	else
 		echo "  !! no camd at $CAMD_BIN -- the firmware has no camera" >&2
 	fi
-	CPP_FW_BUNDLE="$ROOT/cam/fw/cpp_firmware_v1_2_0.fw"
-	if [ -f "$CPP_FW_BUNDLE" ]; then
-		cp "$CPP_FW_BUNDLE" "$BUNDLE_DIR/cpp_firmware_v1_2_0.fw"
-	fi
 	cp "$KRUX_SRC"/*.py "$BUNDLE_DIR/"
 	cp -R "$KRUX_SRC/krux/." "$BUNDLE_DIR/krux/"
 	cp -R "$KRUX_SRC/flash/." "$BUNDLE_DIR/flash/"
@@ -166,17 +170,33 @@ if [ "$BUNDLE" = "1" ]; then
 fi
 
 # 4. repack to a scratch file, and compare it with what ships
-mkdir -p "$HERE/stock"
 # -9: the bundled image carries the whole Python tree, and the boot
 # partition is tight; the few extra seconds are worth the space.
-( cd "$WORK/rd" && find . | cpio -o -H newc --quiet | gzip -9 ) > "$WORK/ramdisk-stub.new"
-echo "  built $WORK/ramdisk-stub.new ($(stat -c %s "$WORK/ramdisk-stub.new") bytes)"
+( cd "$WORK/rd" && find . | cpio -o -H newc --quiet ) > "$WORK/ramdisk.cpio"
+case "$COMPRESS" in
+	gzip) gzip -9 -c "$WORK/ramdisk.cpio" > "$WORK/ramdisk-stub.new" ;;
+	xz)   xz -9 --check=crc32 -c "$WORK/ramdisk.cpio" > "$WORK/ramdisk-stub.new" ;;
+	lzma) lzma -9 -c "$WORK/ramdisk.cpio" > "$WORK/ramdisk-stub.new" ;;
+	lz4)  lz4 -9 -c "$WORK/ramdisk.cpio" > "$WORK/ramdisk-stub.new" ;;
+	*) echo "unknown COMPRESS=$COMPRESS (gzip|xz|lzma|lz4)" >&2; exit 1 ;;
+esac
+rm -f "$WORK/ramdisk.cpio"
+echo "  built $WORK/ramdisk-stub.new ($(stat -c %s "$WORK/ramdisk-stub.new") bytes, $COMPRESS)"
 
 if [ -f "$OUT" ] && [ -z "$FORCE" ]; then
 	rm -rf "$WORK/cmp-old" "$WORK/cmp-new"
 	mkdir -p "$WORK/cmp-old" "$WORK/cmp-new"
-	( cd "$WORK/cmp-old" && gzip -dc "$OUT"                    | cpio -idm --quiet 2>/dev/null )
-	( cd "$WORK/cmp-new" && gzip -dc "$WORK/ramdisk-stub.new" | cpio -idm --quiet 2>/dev/null )
+	decompress() {
+		case "$(file -b "$1")" in
+			*gzip*) gzip -dc "$1" ;;
+			*XZ*)   xz -dc "$1" ;;
+			*LZMA*) lzma -dc "$1" ;;
+			*LZ4*)  lz4 -dc "$1" ;;
+			*)      cat "$1" ;;
+		esac
+	}
+	( cd "$WORK/cmp-old" && decompress "$OUT"                    | cpio -idm --quiet 2>/dev/null )
+	( cd "$WORK/cmp-new" && decompress "$WORK/ramdisk-stub.new" | cpio -idm --quiet 2>/dev/null )
 	# --no-dereference: the ramdisk is full of symlinks that point at
 	# paths that do not exist off the device, and plain diff follows
 	# them and reports every one as missing.
