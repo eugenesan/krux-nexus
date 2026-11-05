@@ -94,6 +94,23 @@
 - [ ] Auto-exposure in camd (automatic, no Python involvement)
 - [ ] Manual brightness slider in Krux settings
 
+## Memory wipe
+
+### Kernel wipe mode (docs/memory-wipe-state.md)
+- [x] Add `wipe=` early parameter and `CONFIG_MEMORY_WIPE`
+- [x] Wipe lowmem from the bootmem bitmap (not `memblock.reserved`)
+- [x] Wipe highmem via `kmap_atomic_pfn`
+- [x] `wipe=test[:MB]`, `wipe=verify`, `wipe=info`
+- [x] Defer poweroff to `kernel_init()` so the PMIC path is used
+- [x] Verify `wipe=test` (1487 MB) and `wipe=1` (poweroff) on hardware
+- [x] Fix STRICT_MEMORY_RWX, V2 watchdog, DTB/r2, initrd and load address
+      for the kexec path
+- [ ] Make the kexec handoff reach the new kernel (blocked: needs serial
+      console; see docs/memory-wipe-continue.md)
+- [ ] Wire wipe into both shutdown and reboot in the UI
+- [ ] Cover panics/watchdog resets
+- [ ] Decide on the non-kexec fallback if kexec stays unreliable
+
 ## NFC / SeedKeeper
 
 - [ ] Final air-gap audit (no radios, no privileged/signature permissions)

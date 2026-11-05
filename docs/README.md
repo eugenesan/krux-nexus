@@ -21,6 +21,10 @@
 - cam-autofocus.md - DW9714 VCM: vendor sequence, table, bisect, calibration
 - cam-frame-path.md - actual CAMIF_RAW + CPP frame path and delivery
 - cam-integration.md - camd/firmware integration notes
+- memory-wipe-findings.md - shutdown/secret-lifetime findings
+- memory-wipe-kexec-review.md - review of the kexec wipe plan
+- memory-wipe-state.md - current memory-wipe state and evidence
+- memory-wipe-continue.md - continuation prompt for the wipe work
 - phase0-findings.md - phase 0 bring-up findings
 - directories.md - project layout
 - scripts-triage.md - scripts/tools layout and archive decisions
