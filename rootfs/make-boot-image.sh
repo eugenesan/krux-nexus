@@ -31,6 +31,7 @@ TEMPLATE=${1:-$ROOT/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img}
 KERNEL=${2:-$ROOT/artifacts/built/kernel-stub}
 OUT=${3:-$ROOT/artifacts/built/boot-stub.img}
 RAMDISK=${RAMDISK:-$ROOT/artifacts/built/ramdisk-stub}
+EXTRA_CMDLINE=${EXTRA_CMDLINE:-}
 WORK=${WORK:-/tmp/opencode/boot-stub}
 
 [ -f "$TEMPLATE" ] || { echo "no template boot image at $TEMPLATE" >&2; exit 1; }
@@ -40,7 +41,12 @@ WORK=${WORK:-/tmp/opencode/boot-stub}
 rm -rf "$WORK"; mkdir -p "$WORK"
 python3 "$HERE/bootimg.py" unpack "$TEMPLATE" "$WORK" >/dev/null
 cp "$KERNEL" "$WORK/kernel"
-python3 "$HERE/bootimg.py" pack "$WORK" "$RAMDISK" "$OUT" >/dev/null
+if [ -n "$EXTRA_CMDLINE" ]; then
+	python3 "$HERE/bootimg.py" pack "$WORK" "$RAMDISK" "$OUT" \
+		--extra-cmdline "$EXTRA_CMDLINE" >/dev/null
+else
+	python3 "$HERE/bootimg.py" pack "$WORK" "$RAMDISK" "$OUT" >/dev/null
+fi
 size=$(stat -c %s "$OUT")
 echo "  -> $OUT ($size bytes)"
 # hammerhead's boot partition is 0x1600000 bytes.  A bundled ramdisk is

@@ -83,6 +83,19 @@ cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
 
+# 3a. kexec and the wipe wrapper.  The wrapper is always installed so
+# the firmware can try the wipe path; without the binary it falls back
+# to the normal powerctl shutdown.
+KEXEC=${KEXEC:-$ROOT/artifacts/built/kexec-arm}
+if [ -x "$KEXEC" ]; then
+	cp "$KEXEC" "$WORK/rd/sbin/kexec"
+	chmod 755 "$WORK/rd/sbin/kexec"
+else
+	echo "  note: no kexec at $KEXEC; wipe-on-shutdown will fall back" >&2
+fi
+cp "$HERE/stub/krux-wipe" "$WORK/rd/sbin/krux-wipe"
+chmod 755 "$WORK/rd/sbin/krux-wipe"
+
 # 3b. the camera's firmware.
 #
 # The camera's CPP (the colour processing block) is programmed by the
