@@ -2490,6 +2490,32 @@ static void *client_thread(void *arg)
 									"/data/krux/scan_full.raw.tmp",
 									"/data/krux/scan_full.raw");
 							}
+							{
+								unsigned char mx = 0;
+								int mi;
+								FILE *m;
+								for (mi = 0;
+								     mi < OUT_W * OUT_H;
+								     mi++)
+									if (latest_y[mi] > mx)
+										mx = latest_y[mi];
+								m = fopen(
+									"/data/krux/scan.meta.tmp",
+									"w");
+								if (m) {
+									fprintf(m,
+										"seq=%d mean=%lu max=%u w=%d h=%d focus=%d sharp=%lu\n",
+										latest_seq,
+										s, mx,
+										width, height,
+										act_curr,
+										af_sharpness(latest_y));
+									fclose(m);
+									rename(
+										"/data/krux/scan.meta.tmp",
+										"/data/krux/scan.meta");
+								}
+							}
 						}
 					}
 				}
@@ -2514,7 +2540,13 @@ static void *client_thread(void *arg)
 				}
 				if (focus_step >= 0) {
 					phase = 3;
-				} else if (phase != 3 && ++settle >= 2) {
+				} else if (phase == 3) {
+					static int hold_count;
+					if (++hold_count % 30 == 0)
+						printf("[af] hold step %d score %lu\n",
+						       act_curr,
+						       af_sharpness(latest_y));
+				} else if (++settle >= 2) {
 					unsigned long score = af_sharpness(latest_y);
 					settle = 0;
 					if (phase == 0) {
@@ -2755,6 +2787,7 @@ static void *socket_thread(void *arg)
 					write(cfd, hdr, 32);
 				}
 			} else if (buf[0] == 'R') {
+				printf("[af] refocus request (frame socket)\n");
 				refocus_request = 1;
 				write(cfd, "OK", 2);
 			} else if (buf[0] == 'D') {
@@ -2824,6 +2857,54 @@ static void *socket_thread(void *arg)
 				 * sessions leaves the second preview dark. */
 				if (buf[0] == 'Q')
 					_exit(0);
+			}
+		}
+		close(cfd);
+	}
+	return NULL;
+}
+
+/* A second, independent socket for host-side diagnostics.  The frame
+ * socket is held open by the firmware for the whole session, so a host
+ * client that connects to it would block in accept().  This socket only
+ * sets the same flags and returns immediately. */
+static void *ctl_thread(void *arg)
+{
+	int sfd, cfd;
+	struct sockaddr_un addr;
+	char c;
+
+	unlink("/data/krux/camd-ctl.sock");
+	mkdir("/data/krux", 0755);
+	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (sfd < 0) {
+		perror("ctl socket");
+		return NULL;
+	}
+	memset(&addr, 0, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, "/data/krux/camd-ctl.sock",
+		sizeof(addr.sun_path) - 1);
+	if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		perror("ctl bind");
+		return NULL;
+	}
+	listen(sfd, 4);
+	chmod("/data/krux/camd-ctl.sock", 0666);
+	for (;;) {
+		cfd = accept(sfd, NULL, NULL);
+		if (cfd < 0)
+			continue;
+		if (read(cfd, &c, 1) == 1) {
+			if (c == 'D') {
+				dump_now = 1;
+				write(cfd, "OK", 2);
+			} else if (c == 'R') {
+				printf("[af] refocus request (ctl)\n");
+				refocus_request = 1;
+				write(cfd, "OK", 2);
+			} else {
+				write(cfd, "ER", 2);
 			}
 		}
 		close(cfd);
@@ -2981,6 +3062,10 @@ int main(int argc, char **argv)
 	{
 		pthread_t sockt;
 		pthread_create(&sockt, NULL, socket_thread, NULL);
+	}
+	{
+		pthread_t ctl;
+		pthread_create(&ctl, NULL, ctl_thread, NULL);
 	}
 
 	pthread_join(client, NULL);
