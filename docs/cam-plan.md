@@ -43,7 +43,7 @@ Details of the discoveries are in `cam-state.md`; the short version:
   dropping the unused UBSan runtime, keystore helpers and kexec, and
   building the hard-float MicroPython and camd with `-Os`/gc-sections
   brings the gzip image to 21.96 MB; with the XZ initramfs the camera
-  image is **16.1 MB** (6.9 MB headroom).
+  image is **15.95 MB** (7.1 MB headroom).
 
 ### Execution order from here
 

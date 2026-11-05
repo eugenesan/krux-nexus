@@ -89,6 +89,16 @@ if [ "${KEEP_KEYSTORE:-0}" != "1" ]; then
 fi
 rm -f "$WORK/rd/sbin/libclang_rt.ubsan_standalone-arm-android.so"
 
+# TWRP ships adbd, the linker, libc and libdexfile unstripped.  Strip
+# the symbol tables (the dynamic symbols stay); this saves ~0.9 MB
+# uncompressed without changing what runs.
+STRIP=${STRIP:-arm-linux-gnueabihf-strip}
+if command -v "$STRIP" >/dev/null 2>&1; then
+	for f in adbd linker libc.so libdexfile.so; do
+		[ -f "$WORK/rd/sbin/$f" ] && "$STRIP" "$WORK/rd/sbin/$f"
+	done
+fi
+
 mv "$WORK/rd/sbin/recovery" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"

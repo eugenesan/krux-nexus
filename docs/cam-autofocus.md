@@ -174,7 +174,14 @@ Verified on a lit 60x60 mm QR at 40 cm:
 `/data/krux/focus` at every camera session, so the fixed step can be
 changed without restarting camd.
 
+A second sweep with a brighter scene produced much larger scores
+(342k-440k) and picked **step 14**.  The focus step is scene/light
+dependent; the sweep is the right default, with `/data/krux/focus` for a
+fixed value.
+
 The remaining QR issue at that moment was the **scene brightness**:
 a direct 720x960 luma frame from camd had mean 30 and max 52 even with
 VMAX 0x09d6 and exposure 0x09c0, so the QR was not decodable.  That is a
-lighting/aim question, not a focus or pipeline question.
+lighting/aim question, not a focus or pipeline question.  The camera
+preview needs the 32 MiB heap (the 720x960 RGB565 preview alone is
+1,382,400 bytes); the old 8 MiB heap raised `MemoryError` here.

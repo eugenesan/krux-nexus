@@ -27,7 +27,7 @@
 - [x] Start camd from the firmware init stub and bundle it in the ramdisk
 - [x] Smoke test (320×240), entropy statistics, `shannon`, and QR-decode path
 - [x] Rebuild the stub ramdisk/boot image and verify camd auto-start on a cold boot
-- [ ] Real static QR and animated UR in the full Krux UI
+- [ ] Real static QR and animated UR in the full Krux UI (preview heap raised to 32 MiB)
 - [ ] Entropy page in the full Krux UI (well-lit mid-gray scene)
 - [x] Build a stable control-capable camd and enable AE (bounded mean-driven AE with clipping backoff; converges in lit scenes)
 - [ ] 50 reset/run/close cycles and 30-min stability on the chosen path
