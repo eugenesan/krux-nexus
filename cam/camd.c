@@ -2076,14 +2076,6 @@ static void *client_thread(void *arg)
 				idle = 0;
 			}
 		}
-		if (idle > 5) {
-			/* No camera page is asking for frames: stop the
-			 * per-frame ISP/CPP cycle and the downscale.  The
-			 * queued buffers stay with the driver; the first
-			 * request after this drains them. */
-			usleep(100000);
-			continue;
-		}
 
 		/* The vendor's per-frame order: the chromatrix goes to
 		 * the CPP first (it carries the frame's buffer
@@ -2761,6 +2753,13 @@ static void *client_thread(void *arg)
 				camd_q[camd_q_tail] = buf.index;
 				camd_q_tail = (camd_q_tail + 1) % camd_q_count;
 			}
+		}
+		if (idle) {
+			/* No camera page is asking for frames: keep the
+			 * stream alive but slow it down so the per-frame
+			 * ISP/CPP work does not keep a core busy. */
+			struct timespec its = { 0, 150 * 1000 * 1000 };
+			nanosleep(&its, NULL);
 		}
 		p7 = now_ns();
 
