@@ -15,7 +15,7 @@ successfully; that is the only remaining blocker on the image side.
 | Tearing | Fixed: `latest_y` is rewritten under the frame mutex |
 | Preview | Portrait 720x960, rotated in camd, unsharp mask, 2x digital gain, correct aspect (no crop) |
 | Exposure | VMAX raised to the vendor 0x09d6; bounded mean-driven AE with clipping backoff; continuous AE disabled |
-| QR decode | Static and animated UR/BBQR decode at 720x960; a raw 960x1280 snapshot (`H`) is used every third frame for high-density codes |
+| QR decode | Static/animated UR and BBQR decode; high-density codes use the raw 960x1280 snapshot (`H`) and quirc now supports versions up to 40 |
 | Autofocus | Working: `damping_step=1` fixes the stall; the coarse sweep peaks at **step 21** at 40 cm and the QR decodes. Fixed step is re-read per session (docs/cam-autofocus.md) |
 | Boot image | Bundled camera image is **15.95 MB** (7.1 MB headroom): pruned tree, stripped adbd/linker/libc/libdexfile, `-Os`/gc-sections binaries, and XZ initramfs (`CONFIG_RD_XZ=y`) |
 | Entropy | Statistics path unchanged; keep the delivered frame at 640-720 px for frame rate |

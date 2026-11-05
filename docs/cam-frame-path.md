@@ -295,3 +295,18 @@ frame and runs `find_qrcodes` on it, falling back to the 720 frame on
 the other frames.  The preview and the AE keep using the smaller,
 gained frame, so aiming stays fast and the decoder gets the raw
 contrast.
+
+## Partial-frame filter (2026-11-05)
+
+The capture queue still receives the ISP's raw pass alongside the CPP's
+processed frame.  The raw pass can leave a partial chroma plane, so the
+publisher now drops frames whose sampled luma mean is below **50%** of
+the recent maximum, with a four-frame starvation guard.  This removes
+the periodic dark/partial preview frame (the "35% light gray on the
+left" image) without hiding a real scene change.
+
+The quirc port also had `K_QUIRC_MAX_PROCESS_VERSION 21` and a version
+table ending at 27.  High-density UR/BBQR codes were therefore rejected
+before decoding.  It now supports **version 40**, 1024 regions and a
+larger flood-fill stack; the full-resolution 960x1280 snapshot path is
+what makes those grids resolvable.
