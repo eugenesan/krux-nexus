@@ -38,7 +38,9 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <dirent.h>
 #include <sys/un.h>
+#include <dirent.h>
 #include <signal.h>
 #include <time.h>
 #include <unistd.h>
@@ -55,6 +57,7 @@
 #include "cam_cycle.h"
 #include "cam_chromatrix.h"
 #include "cam_chromatrix_offline.h"
+#include "cam_actuator.h"
 #include "sensor_config.h"
 #include "sensor_live.h"
 
@@ -1007,6 +1010,27 @@ static int cpp_send_chromatrix(void)
 	return 0;
 }
 
+/* Sum of horizontal gradients in the middle of the frame: a simple,
+ * robust focus metric for the VCM sweep. */
+static unsigned long af_sharpness(const unsigned char *p)
+{
+	int x, y;
+	unsigned long s = 0;
+	int x0 = OUT_W / 4, x1 = OUT_W * 3 / 4;
+	int y0 = OUT_H / 4, y1 = OUT_H * 3 / 4;
+
+	if (!p)
+		return 0;
+	for (y = y0; y < y1; y += 2) {
+		const unsigned char *r = p + y * OUT_W;
+		for (x = x0; x < x1 - 1; x += 2) {
+			int d = (int)r[x] - (int)r[x + 1];
+			s += d < 0 ? -d : d;
+		}
+	}
+	return s;
+}
+
 static int isp_start(void)
 {
 	struct msm_isp_buf_request breq;
@@ -1337,6 +1361,203 @@ static int cpp_load_firmware(const char *path)
 	}
 	close(fd);
 	printf("[cpp] firmware loaded\n");
+	return 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * autofocus (DW9714 VCM)
+ *
+ * The vendor HAL sends the step table to the actuator subdev and then
+ * moves the lens; camd never did, which is why close-up images were soft.
+ * ------------------------------------------------------------------ */
+struct act_reg_params {
+	uint32_t write_type;
+	uint32_t hw_mask;
+	uint16_t reg_addr;
+	uint16_t hw_shift;
+	uint16_t data_shift;
+	uint16_t pad;
+};
+
+struct act_reg_setting {
+	uint16_t reg_addr;
+	uint16_t reg_data;
+};
+
+struct act_region {
+	uint16_t step_bound[2];
+	uint16_t code_per_step;
+};
+
+struct act_damping {
+	uint32_t damping_step;
+	uint32_t damping_delay;
+	uint32_t hw_params;
+};
+
+struct act_move {
+	int8_t dir;
+	int8_t sign_dir;
+	int16_t dest_step_pos;
+	int32_t num_steps;
+	int32_t num_steps_inf_pos;
+	struct act_damping *ringing_params;
+};
+
+struct act_set_info {
+	uint32_t act_type;
+	uint8_t reg_tbl_size;
+	uint8_t pad1;
+	uint16_t data_size;
+	uint16_t init_setting_size;
+	uint16_t pad2;
+	uint32_t i2c_addr;
+	uint32_t addr_type;
+	uint32_t data_type;
+	struct act_reg_params *reg_tbl_params;
+	struct act_reg_setting *init_settings;
+	int16_t initial_code;
+	uint16_t pwd_step;
+	uint16_t region_size;
+	uint16_t pad3;
+	uint32_t total_steps;
+	struct act_region *region_params;
+};
+
+struct act_cfg {
+	int32_t cfgtype;
+	uint8_t is_af_supported;
+	uint8_t pad[3];
+	union {
+		struct act_move move;
+		struct act_set_info set_info;
+	} cfg;
+};
+
+#define CFG_GET_ACTUATOR_INFO 0
+#define CFG_SET_ACTUATOR_INFO 1
+#define CFG_SET_DEFAULT_FOCUS 2
+#define CFG_MOVE_FOCUS 3
+#define VIDIOC_MSM_ACTUATOR_CFG \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 6, struct act_cfg)
+
+_Static_assert(sizeof(struct act_cfg) == 56, "actuator ioctl ABI");
+_Static_assert(__builtin_offsetof(struct act_cfg, cfg.set_info.reg_tbl_params) == 32,
+	       "actuator set_info layout");
+
+static int actuator_fd = -1;
+
+static int actuator_open(void)
+{
+	DIR *d;
+	struct dirent *e;
+
+	if (actuator_fd >= 0)
+		return 0;
+	d = opendir("/sys/class/video4linux");
+	if (!d)
+		return -1;
+	while ((e = readdir(d)) != NULL) {
+		char path[128], name[64];
+		FILE *f;
+		int fd;
+
+		if (strncmp(e->d_name, "v4l-subdev", 10))
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/video4linux/%s/name",
+			 e->d_name);
+		f = fopen(path, "r");
+		if (!f)
+			continue;
+		if (!fgets(name, sizeof(name), f)) {
+			fclose(f);
+			continue;
+		}
+		fclose(f);
+		if (strncmp(name, "msm_actuator", 12))
+			continue;
+		snprintf(path, sizeof(path), "/dev/%s", e->d_name);
+		fd = open(path, O_RDWR);
+		if (fd < 0)
+			continue;
+		actuator_fd = fd;
+		printf("[af] actuator %s opened\n", path);
+		closedir(d);
+		return 0;
+	}
+	closedir(d);
+	printf("[af] no actuator subdev found\n");
+	return -1;
+}
+
+static int actuator_set_info(void)
+{
+	static struct act_reg_params regs[1] = {
+		{ 1, 0x000f, 0xffff, 0, 4, 0 },
+	};
+	static struct act_reg_setting init[4] = {
+		{ 0x00ec, 0x00a3 },
+		{ 0x00a1, 0x000d },
+		{ 0x00f2, 0x00d8 },
+		{ 0x00dc, 0x0051 },
+	};
+	static struct act_region region[1] = {
+		{ { ACT_MACRO_BOUND, ACT_INF_BOUND }, ACT_CODE_PER_STEP },
+	};
+	struct act_cfg cfg;
+
+	if (actuator_open() < 0)
+		return -1;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.cfgtype = CFG_SET_ACTUATOR_INFO;
+	cfg.cfg.set_info.act_type = 0;
+	cfg.cfg.set_info.reg_tbl_size = 1;
+	cfg.cfg.set_info.data_size = 10;
+	cfg.cfg.set_info.init_setting_size = 4;
+	cfg.cfg.set_info.i2c_addr = 0x18;
+	cfg.cfg.set_info.addr_type = 1;
+	cfg.cfg.set_info.data_type = 1;
+	cfg.cfg.set_info.reg_tbl_params = regs;
+	cfg.cfg.set_info.init_settings = init;
+	cfg.cfg.set_info.initial_code = ACT_INITIAL_CODE;
+	cfg.cfg.set_info.pwd_step = 0;
+	cfg.cfg.set_info.region_size = 1;
+	cfg.cfg.set_info.total_steps = ACT_TOTAL_STEPS;
+	cfg.cfg.set_info.region_params = region;
+	if (ioctl(actuator_fd, VIDIOC_MSM_ACTUATOR_CFG, &cfg) < 0) {
+		printf("[af] SET_ACTUATOR_INFO: %s\n", strerror(errno));
+		return -1;
+	}
+	printf("[af] actuator configured: %d steps, code %d\n",
+	       ACT_TOTAL_STEPS, ACT_INITIAL_CODE);
+	return 0;
+}
+
+static int actuator_move(int step)
+{
+	struct act_damping damp[1];
+	struct act_cfg cfg;
+
+	if (actuator_fd < 0)
+		return -1;
+	if (step < 0)
+		step = 0;
+	if (step >= ACT_TOTAL_STEPS)
+		step = ACT_TOTAL_STEPS - 1;
+
+	memset(damp, 0, sizeof(damp));
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.cfgtype = CFG_MOVE_FOCUS;
+	cfg.cfg.move.dir = 1;
+	cfg.cfg.move.sign_dir = 1;
+	cfg.cfg.move.dest_step_pos = (int16_t)step;
+	cfg.cfg.move.num_steps = 0;
+	cfg.cfg.move.num_steps_inf_pos = 0;
+	cfg.cfg.move.ringing_params = damp;
+	if (ioctl(actuator_fd, VIDIOC_MSM_ACTUATOR_CFG, &cfg) < 0) {
+		printf("[af] MOVE_FOCUS(%d): %s\n", step, strerror(errno));
+		return -1;
+	}
 	return 0;
 }
 
@@ -2084,6 +2305,68 @@ static void *client_thread(void *arg)
 					}
 				}
 				pthread_mutex_unlock(&frame_mutex);
+			}
+
+			/* One-shot autofocus sweep, coarse then fine.  The lens is
+			 * only moved between frames, and each move is followed by
+			 * settling frames before its sharpness is measured. */
+			{
+				static int phase, step, best_step, settle;
+				static unsigned long best_score;
+				static int fine_lo, fine_hi;
+
+				if (phase != 3) {
+					if (++settle >= 3) {
+						unsigned long score =
+							af_sharpness(latest_y);
+						settle = 0;
+						if (phase == 0) {
+							if (actuator_set_info() == 0) {
+								phase = 1;
+								step = 0;
+								best_step = 0;
+								best_score = 0;
+								actuator_move(step);
+							} else {
+								phase = 3;
+							}
+						} else if (phase == 1) {
+							printf("[af] step %d score %lu\n",
+							       step, score);
+							if (score > best_score) {
+								best_score = score;
+								best_step = step;
+							}
+							step += 4;
+							if (step >= ACT_TOTAL_STEPS) {
+								phase = 2;
+								fine_lo = best_step - 3;
+								if (fine_lo < 0)
+									fine_lo = 0;
+								fine_hi = best_step + 3;
+								if (fine_hi >= ACT_TOTAL_STEPS)
+									fine_hi = ACT_TOTAL_STEPS - 1;
+								step = fine_lo;
+								best_score = 0;
+							}
+							actuator_move(step);
+						} else if (phase == 2) {
+							if (score > best_score) {
+								best_score = score;
+								best_step = step;
+							}
+							step++;
+							if (step > fine_hi) {
+								phase = 3;
+								actuator_move(best_step);
+								printf("[af] focus step %d\n",
+								       best_step);
+							} else {
+								actuator_move(step);
+							}
+						}
+					}
+				}
 			}
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
