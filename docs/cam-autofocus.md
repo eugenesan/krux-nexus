@@ -198,3 +198,17 @@ The fine sweep now keeps the coarse best unless a fine step beats it by
 focus.  The sweep starts at 0 and steps by 3, so a cold lens reaches 21
 after seven moves and the QR can decode mid-sweep (the page exits and
 leaves the lens at 21).  If the sweep completes, it parks at 21.
+
+## Manual focus/exposure (2026-11-05)
+
+The QR page now has a manual exposure path and an on-demand AF sweep:
+
+- **Volume +/−** and the on-screen `−`/`+` buttons adjust exposure
+  (`0x100` per step); the first adjustment locks the AE.
+- **Power** asks camd to run the AF sweep again (`R` socket command),
+  so the lens can be refocused after moving the phone without a reboot.
+- `/data/krux/unsharp` selects the preview/QR sharpening: `0` off,
+  `1` `2*luma-blur`, `2` softer `(3*luma-blur)/2`.  Off keeps
+  high-density modules from looking “thin”.
+- The default is now `af=2` with no fixed `focus`, so the sweep runs at
+  camera start.  A fixed `focus` still skips it for speed.

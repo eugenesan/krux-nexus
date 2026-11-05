@@ -548,6 +548,7 @@ static int focus_step = -1;
 static int luma_gain = 2;
 /* 0 = no unsharp, 1 = 2*luma-b, 2 = softer (3*luma-b)/2. */
 static int unsharp_amount = 1;
+static int refocus_request;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
  * bisected from /data/krux/af without rebuilding. */
@@ -2475,6 +2476,11 @@ static void *client_thread(void *arg)
 				static unsigned long best_score;
 				static int fine_lo, fine_hi;
 
+				if (refocus_request) {
+					refocus_request = 0;
+					phase = 0;
+					settle = 0;
+				}
 				if (focus_step >= 0) {
 					phase = 3;
 				} else if (phase != 3 && ++settle >= 2) {
@@ -2710,6 +2716,9 @@ static void *socket_thread(void *arg)
 					hdr[31] = 1;
 					write(cfd, hdr, 32);
 				}
+			} else if (buf[0] == 'R') {
+				refocus_request = 1;
+				write(cfd, "OK", 2);
 			} else if (buf[0] == 'W') {
 				unsigned char p[3];
 				if (socket_read_exact(cfd, p, 3) == 0) {
