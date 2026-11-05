@@ -283,3 +283,15 @@ what camd was doing:
   mask. The Android port proves 640 px is enough when the lens is
   focused, so this is not the limiting factor.
 
+
+## Full-resolution QR snapshot (2026-11-05)
+
+The preview stays at 720x960, but high-density QRs need more pixels per
+module.  camd now has an `H` socket command that returns the **raw**
+full-resolution portrait frame (960x1280, no luma gain, no unsharp
+mask).  The capture thread builds it only when requested, under the
+same frame mutex as `latest_y`; the QR page requests it every third
+frame and runs `find_qrcodes` on it, falling back to the 720 frame on
+the other frames.  The preview and the AE keep using the smaller,
+gained frame, so aiming stays fast and the decoder gets the raw
+contrast.
