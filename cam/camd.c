@@ -755,8 +755,11 @@ static int client_buf_fd[8];
 
 /* latest QVGA frame slot */
 static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
-#define OUT_W 640
-#define OUT_H 480
+/* The panel and the Krux UI are portrait.  The sensor delivers a landscape
+ * 1640x1232 frame, so the daemon rotates it 90 degrees counter-clockwise
+ * while downscaling: the viewfinder then matches how the phone is held. */
+#define OUT_W 600
+#define OUT_H 800
 static unsigned char *latest_y = NULL;
 static unsigned char *latest_uv = NULL;
 static int latest_seq = 0;
@@ -957,6 +960,13 @@ static int cpp_fd = -1;
  * mostly-dark preview with an occasional correct frame.  Track the next
  * buffer the ISP will fill from the capture loop. */
 static volatile int cpp_input_index = 0;
+/* The ISP consumes capture buffers in the order they were queued, so the
+ * buffer it is about to fill is the head of this FIFO.  Guessing from the
+ * last dequeue instead made every other frame read an unwritten buffer. */
+static int camd_q[16];
+static int camd_q_head;
+static int camd_q_tail;
+static int camd_q_count;
 
 
 /* Hand the chromatrix to the CPP.  Returns 0 on success. */
@@ -1612,6 +1622,16 @@ static void *client_thread(void *arg)
 		}
 	}
 	printf("[client] %d buffers queued\n", rb.count);
+	{
+		int qi;
+		camd_q_count = (int)rb.count;
+		if (camd_q_count > (int)(sizeof(camd_q) / sizeof(camd_q[0])))
+			camd_q_count = (int)(sizeof(camd_q) / sizeof(camd_q[0]));
+		for (qi = 0; qi < camd_q_count; qi++)
+			camd_q[qi] = qi;
+		camd_q_head = 0;
+		camd_q_tail = 0;
+	}
 	fflush(stdout);
 
 	cbufs.count = rb.count;
@@ -1912,31 +1932,46 @@ static void *client_thread(void *arg)
 						}
 					}
 				}
+				if (camd_q_count > 0) {
+					cpp_input_index = camd_q[camd_q_head];
+					camd_q_head = (camd_q_head + 1) % camd_q_count;
+				}
+				/* Hold the frame lock while latest_y is rewritten:
+				 * the socket thread copies it, and a half-written
+				 * frame showed up as tiled/torn tiles. */
+				pthread_mutex_lock(&frame_mutex);
 				if (!latest_y) {
 					latest_y = malloc(OUT_W * OUT_H);
 					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
 				}
 				{
-					/* Full field of view, box-averaged down to the
-					 * frame the daemon delivers.  A centre crop
-					 * gave ~2.5x more pixels per module but only
-					 * a ~30mm field at 2m, which made the
-					 * viewfinder impossible to aim. */
+					/* Full field of view, box-averaged and rotated
+					 * 90 degrees counter-clockwise into portrait.
+					 * dest(x,y) samples source
+					 *   sx = width-1 - y*width/OUT_H
+					 *   sy = x*height/OUT_W
+					 */
 					int dx, dy;
 					for (dy = 0; dy < OUT_H; dy++) {
-						int y0 = dy * height / OUT_H;
-						int y1 = (dy + 1) * height / OUT_H;
-						int sy;
+						int sx0 = width - 1 -
+							(dy + 1) * width / OUT_H;
+						int sx1 = width - 1 -
+							dy * width / OUT_H;
+						if (sx0 < 0)
+							sx0 = 0;
+						if (sx1 > width - 1)
+							sx1 = width - 1;
 						for (dx = 0; dx < OUT_W; dx++) {
-							int x0 = dx * width / OUT_W;
-							int x1 = (dx + 1) * width / OUT_W;
-							int sx;
+							int sy0 = dx * height / OUT_W;
+							int sy1 = (dx + 1) * height / OUT_W;
+							int sx, sy;
 							unsigned long acc = 0;
-							int n = (x1 - x0) * (y1 - y0);
-							for (sy = y0; sy < y1; sy++) {
+							int n = (sx1 - sx0 + 1) *
+								(sy1 - sy0);
+							for (sy = sy0; sy < sy1; sy++) {
 								const unsigned char *row =
 									src_y + sy * width;
-								for (sx = x0; sx < x1; sx++)
+								for (sx = sx0; sx <= sx1; sx++)
 									acc += row[sx];
 							}
 							latest_y[dy * OUT_W + dx] =
@@ -1949,11 +1984,14 @@ static void *client_thread(void *arg)
 					int uv_h = height / 2;
 					int dx, dy;
 					for (dy = 0; dy < OUT_H / 2; dy++) {
-						int sy = dy * uv_h / (OUT_H / 2);
-						const unsigned char *row =
-							src_uv + sy * width;
+						int sx = uv_w - 1 -
+							dy * uv_w / (OUT_H / 2);
+						if (sx < 0)
+							sx = 0;
 						for (dx = 0; dx < OUT_W / 2; dx++) {
-							int sx = dx * uv_w / (OUT_W / 2);
+							int sy = dx * uv_h / (OUT_W / 2);
+							const unsigned char *row =
+								src_uv + sy * width;
 							latest_uv[(dy * (OUT_W / 2) + dx) * 2] =
 								row[sx * 2];
 							latest_uv[(dy * (OUT_W / 2) + dx) * 2 + 1] =
@@ -1961,9 +1999,31 @@ static void *client_thread(void *arg)
 						}
 					}
 				}
-				pthread_mutex_lock(&frame_mutex);
-				latest_seq++;
-				latest_ready = 1;
+				{
+					/* Two producers complete into the capture
+					 * queue (the ISP's raw pass and the CPP's
+					 * processed pass), so every other frame is
+					 * an unprocessed, very dark copy.  Publish
+					 * only frames close to the brightest seen
+					 * recently; otherwise the preview flashes
+					 * dark and the decoder never settles. */
+					static unsigned pub_max;
+					unsigned long s = 0;
+					int k, ns = 0;
+					for (k = 0; k < OUT_W * OUT_H; k += 97) {
+						s += latest_y[k];
+						ns++;
+					}
+					s /= (ns ? ns : 1);
+					if (pub_max > s / 64)
+						pub_max -= s / 64;
+					if (s * 3 >= pub_max) {
+						if (s > pub_max)
+							pub_max = s;
+						latest_seq++;
+						latest_ready = 1;
+					}
+				}
 				pthread_mutex_unlock(&frame_mutex);
 			}
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
@@ -1984,6 +2044,10 @@ static void *client_thread(void *arg)
 			cbufs.buf[buf.index].m.planes = qplanes;
 			cbufs.buf[buf.index].length = 2;
 			ioctl(fd, VIDIOC_QBUF, &cbufs.buf[buf.index]);
+			if (camd_q_count > 0) {
+				camd_q[camd_q_tail] = buf.index;
+				camd_q_tail = (camd_q_tail + 1) % camd_q_count;
+			}
 		}
 		p7 = now_ns();
 
@@ -2165,9 +2229,19 @@ static void *socket_thread(void *arg)
 						{ 0x0202, (p[0] << 8) | p[1], 0 },
 						{ 0x0204, (p[2] << 8) | p[3], 0 },
 					};
-					write(cfd, sensor_write_regs_as(
-						      r, 2, MSM_CAMERA_I2C_WORD_DATA) == 0 ?
-					      "OK" : "ER", 2);
+					int erc = sensor_write_regs_as(
+						r, 2, MSM_CAMERA_I2C_WORD_DATA);
+					if (erc == 0) {
+						uint16_t e1 = 0, e2 = 0, g1 = 0, g2 = 0;
+						sensor_read_reg(0x0202, &e1);
+						sensor_read_reg(0x0203, &e2);
+						sensor_read_reg(0x0204, &g1);
+						sensor_read_reg(0x0205, &g2);
+						printf("[sensor] E exp=0x%02x%02x gain=0x%02x%02x\n",
+						       e1 & 0xff, e2 & 0xff,
+						       g1 & 0xff, g2 & 0xff);
+					}
+					write(cfd, erc == 0 ? "OK" : "ER", 2);
 				}
 			} else if (buf[0] == 'V') {
 				unsigned char p[2];
