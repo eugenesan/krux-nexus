@@ -1533,6 +1533,20 @@ static int actuator_set_info(void)
 	return 0;
 }
 
+static int actuator_move(int step);
+
+/* Move the lens with the sensor paused, then let it stream again. */
+static void af_move(int step)
+{
+	struct timespec ts = { 0, 30 * 1000 * 1000 };
+
+	sensor_write_regs(stream_off_regs, 1);
+	nanosleep(&ts, NULL);
+	actuator_move(step);
+	sensor_write_regs(stream_on_regs, 1);
+	nanosleep(&ts, NULL);
+}
+
 static int actuator_move(int step)
 {
 	struct act_damping damp[1];
@@ -2307,63 +2321,62 @@ static void *client_thread(void *arg)
 				pthread_mutex_unlock(&frame_mutex);
 			}
 
-			/* One-shot autofocus sweep, coarse then fine.  The lens is
-			 * only moved between frames, and each move is followed by
-			 * settling frames before its sharpness is measured. */
+			/* One-shot autofocus sweep, coarse then fine.  The
+			 * lens is moved with the sensor paused: actuator I2C
+			 * traffic on the shared CCI bus disturbs a streaming
+			 * sensor, and the stream stopped after the first move.
+			 */
 			{
 				static int phase, step, best_step, settle;
 				static unsigned long best_score;
 				static int fine_lo, fine_hi;
 
-				if (phase != 3) {
-					if (++settle >= 3) {
-						unsigned long score =
-							af_sharpness(latest_y);
-						settle = 0;
-						if (phase == 0) {
-							if (actuator_set_info() == 0) {
-								phase = 1;
-								step = 0;
-								best_step = 0;
-								best_score = 0;
-								actuator_move(step);
-							} else {
-								phase = 3;
-							}
-						} else if (phase == 1) {
-							printf("[af] step %d score %lu\n",
-							       step, score);
-							if (score > best_score) {
-								best_score = score;
-								best_step = step;
-							}
-							step += 4;
-							if (step >= ACT_TOTAL_STEPS) {
-								phase = 2;
-								fine_lo = best_step - 3;
-								if (fine_lo < 0)
-									fine_lo = 0;
-								fine_hi = best_step + 3;
-								if (fine_hi >= ACT_TOTAL_STEPS)
-									fine_hi = ACT_TOTAL_STEPS - 1;
-								step = fine_lo;
-								best_score = 0;
-							}
-							actuator_move(step);
-						} else if (phase == 2) {
-							if (score > best_score) {
-								best_score = score;
-								best_step = step;
-							}
-							step++;
-							if (step > fine_hi) {
-								phase = 3;
-								actuator_move(best_step);
-								printf("[af] focus step %d\n",
-								       best_step);
-							} else {
-								actuator_move(step);
-							}
+				if (phase != 3 && ++settle >= 2) {
+					unsigned long score = af_sharpness(latest_y);
+					settle = 0;
+					if (phase == 0) {
+						if (actuator_set_info() == 0) {
+							phase = 1;
+							step = 0;
+							best_step = 0;
+							best_score = 0;
+							af_move(0);
+						} else {
+							phase = 3;
+						}
+					} else if (phase == 1) {
+						printf("[af] step %d score %lu\n",
+						       step, score);
+						if (score > best_score) {
+							best_score = score;
+							best_step = step;
+						}
+						step += 4;
+						if (step >= ACT_TOTAL_STEPS) {
+							phase = 2;
+							fine_lo = best_step - 3;
+							if (fine_lo < 0)
+								fine_lo = 0;
+							fine_hi = best_step + 3;
+							if (fine_hi >= ACT_TOTAL_STEPS)
+								fine_hi = ACT_TOTAL_STEPS - 1;
+							step = fine_lo;
+							best_score = 0;
+						}
+						af_move(step);
+					} else if (phase == 2) {
+						if (score > best_score) {
+							best_score = score;
+							best_step = step;
+						}
+						step++;
+						if (step > fine_hi) {
+							phase = 3;
+							af_move(best_step);
+							printf("[af] focus step %d\n",
+							       best_step);
+						} else {
+							af_move(step);
 						}
 					}
 				}
