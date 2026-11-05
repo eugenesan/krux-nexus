@@ -2456,47 +2456,12 @@ static void *client_thread(void *arg)
 					}
 				}
 				{
-					/* Two producers complete into the capture
-					 * queue (the ISP's raw pass and the CPP's
-					 * processed pass), so every other frame is
-					 * an unprocessed, very dark copy.  Publish
-					 * only frames close to the brightest seen
-					 * recently; otherwise the preview flashes
-					 * dark and the decoder never settles. */
-					static unsigned max_seen;
-					static int dropped;
-					unsigned long s = 0;
-					int k, ns = 0;
-					int publish;
-					for (k = 0; k < OUT_W * OUT_H; k += 97) {
-						s += latest_y[k];
-						ns++;
-					}
-					s /= (ns ? ns : 1);
-					/* Adapt quickly when the scene darkens, and never
-					 * suppress more than a few frames in a row: a
-					 * stuck threshold left the client with no new
-					 * frames (and auto-exposure with no input). */
-					max_seen -= max_seen / 32;
-					if (s * 2 >= max_seen) {
-						publish = 1;
-						dropped = 0;
-						if (s > max_seen)
-							max_seen = s;
-					} else {
-						/* A partial CPP frame is typically
-						 * ~35% of the processed frame's mean.
-						 * Drop it, but never starve the client
-						 * for more than a few frames. */
-						dropped++;
-						publish = dropped > 3;
-						if (publish)
-							dropped = 0;
-					}
-					if (publish) {
-						latest_seq++;
-						latest_ready = 1;
-					}
+					/* Publish every frame.  The preview filter
+					 * lives in qr_capture.py: the QR decoder must
+					 * see every frame, while the panel should skip
+					 * the dark/partial ones. */
+					latest_seq++;
+					latest_ready = 1;
 				}
 				pthread_mutex_unlock(&frame_mutex);
 			}

@@ -299,11 +299,12 @@ contrast.
 ## Partial-frame filter (2026-11-05)
 
 The capture queue still receives the ISP's raw pass alongside the CPP's
-processed frame.  The raw pass can leave a partial chroma plane, but the CPP's chroma
-plane is not always populated either, so the publisher cannot use the
-chroma plane as a validity test.  It now drops frames whose sampled
-luma mean is below **50%** of the recent maximum, with a four-frame
-starvation guard.  This removes
+processed frame.  camd now publishes **every** frame, because the QR decoder needs all of
+them.  The preview filter lives in `qr_capture.py`: it skips drawing a
+frame whose luma mean is below 50% of the recent maximum, leaving the
+previous preview image on screen, but still runs `find_qrcodes` on the
+frame.  This keeps the decoder at full rate without the dark/partial
+preview blink.  This removes
 the periodic dark/partial preview frame (the "35% light gray on the
 left" image) without hiding a real scene change.
 
