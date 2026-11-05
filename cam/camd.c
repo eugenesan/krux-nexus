@@ -789,7 +789,8 @@ static unsigned char *latest_uv = NULL;
 static unsigned char *latest_full_y = NULL;
 static unsigned char *latest_full_uv = NULL;
 static int latest_full_w, latest_full_h;
-static int full_request, full_ready;
+static int full_ready;
+static unsigned long full_frame;
 static int latest_seq = 0;
 static int latest_ready = 0;
 
@@ -2322,7 +2323,9 @@ static void *client_thread(void *arg)
 					latest_full_uv = malloc((latest_full_w / 2) *
 								(latest_full_h / 2) * 2);
 				}
-				if (full_request && latest_full_y && latest_full_uv) {
+				full_frame++;
+				if (latest_full_y && latest_full_uv &&
+				    (full_frame % 5) == 0) {
 					int fw = latest_full_w, fh = latest_full_h;
 					int dx, dy;
 					/* Same 90-degree rotation as the preview, at
@@ -2357,7 +2360,6 @@ static void *client_thread(void *arg)
 						}
 					}
 					full_ready = 1;
-					full_request = 0;
 				}
 				{
 					/* Full field of view, box-averaged and rotated
@@ -2736,35 +2738,26 @@ static void *socket_thread(void *arg)
 			} else if (buf[0] == 'H') {
 				unsigned char hdr[32];
 				unsigned char *copy = NULL;
-				int fw = 0, fh = 0, tries;
+				int fw = 0, fh = 0;
 				size_t ysz = 0, uvsz = 0;
 
+				/* Non-blocking: return the most recent full frame
+				 * the capture thread produced in the background. */
 				pthread_mutex_lock(&frame_mutex);
-				full_request = 1;
-				full_ready = 0;
-				pthread_mutex_unlock(&frame_mutex);
-				for (tries = 0; tries < 3000; tries++) {
-					pthread_mutex_lock(&frame_mutex);
-					if (full_ready && latest_full_y &&
-					    latest_full_uv) {
-						fw = latest_full_w;
-						fh = latest_full_h;
-						ysz = (size_t)fw * fh;
-						uvsz = (size_t)(fw / 2) *
-							(fh / 2) * 2;
-						copy = malloc(ysz + uvsz);
-						if (copy) {
-							memcpy(copy, latest_full_y,
-							       ysz);
-							memcpy(copy + ysz,
-							       latest_full_uv, uvsz);
-						}
+				if (full_ready && latest_full_y &&
+				    latest_full_uv) {
+					fw = latest_full_w;
+					fh = latest_full_h;
+					ysz = (size_t)fw * fh;
+					uvsz = (size_t)(fw / 2) * (fh / 2) * 2;
+					copy = malloc(ysz + uvsz);
+					if (copy) {
+						memcpy(copy, latest_full_y, ysz);
+						memcpy(copy + ysz,
+						       latest_full_uv, uvsz);
 					}
-					pthread_mutex_unlock(&frame_mutex);
-					if (copy)
-						break;
-					usleep(1000);
 				}
+				pthread_mutex_unlock(&frame_mutex);
 				memset(hdr, 0, 32);
 				memcpy(hdr, "KCF1", 4);
 				if (!copy) {
