@@ -72,6 +72,11 @@ mkdir -p "$WORK/rd"
 
 # 3. our stub in place of TWRP's recovery
 [ -x "$HERE/stub/krux-init" ] || { echo "no stub/krux-init (build it first)" >&2; exit 1; }
+# Prune what the stub never uses.  TWRP ships terminfo (6.6 MB) and a
+# Python 3.10 tree (3.2 MB); the stub runs neither, and the boot
+# partition is tight.
+rm -rf "$WORK/rd/sbin/etc/terminfo" "$WORK/rd/etc/python"
+
 mv "$WORK/rd/sbin/recovery" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
