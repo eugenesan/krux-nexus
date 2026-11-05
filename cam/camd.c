@@ -1446,6 +1446,10 @@ _Static_assert(__builtin_offsetof(struct act_cfg, cfg.set_info.reg_tbl_params) =
 	       "actuator set_info layout");
 
 static int actuator_fd = -1;
+/* -1 = leave the lens alone.  Driving the VCM without the vendor's
+ * power-up/default-focus sequence stalls the stream (or worse), so it is
+ * opt-in via /data/krux/focus. */
+static int focus_step = -1;
 
 static int actuator_open(void)
 {
@@ -1626,6 +1630,10 @@ static void *server_thread(void *arg)
 			mipi_config();
 			sensor_program_mode();
 			sensor_dump_regs("after programming");
+			if (focus_step >= 0 && actuator_set_info() == 0) {
+				actuator_move(focus_step);
+				printf("[af] parked at step %d\n", focus_step);
+			}
 			break;
 		case PRIV_STREAM_ON:
 			if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
@@ -2321,66 +2329,7 @@ static void *client_thread(void *arg)
 				pthread_mutex_unlock(&frame_mutex);
 			}
 
-			/* One-shot autofocus sweep, coarse then fine.  The
-			 * lens is moved with the sensor paused: actuator I2C
-			 * traffic on the shared CCI bus disturbs a streaming
-			 * sensor, and the stream stopped after the first move.
-			 */
-			{
-				static int phase, step, best_step, settle;
-				static unsigned long best_score;
-				static int fine_lo, fine_hi;
-
-				if (phase != 3 && ++settle >= 2) {
-					unsigned long score = af_sharpness(latest_y);
-					settle = 0;
-					if (phase == 0) {
-						if (actuator_set_info() == 0) {
-							phase = 1;
-							step = 0;
-							best_step = 0;
-							best_score = 0;
-							af_move(0);
-						} else {
-							phase = 3;
-						}
-					} else if (phase == 1) {
-						printf("[af] step %d score %lu\n",
-						       step, score);
-						if (score > best_score) {
-							best_score = score;
-							best_step = step;
-						}
-						step += 4;
-						if (step >= ACT_TOTAL_STEPS) {
-							phase = 2;
-							fine_lo = best_step - 3;
-							if (fine_lo < 0)
-								fine_lo = 0;
-							fine_hi = best_step + 3;
-							if (fine_hi >= ACT_TOTAL_STEPS)
-								fine_hi = ACT_TOTAL_STEPS - 1;
-							step = fine_lo;
-							best_score = 0;
-						}
-						af_move(step);
-					} else if (phase == 2) {
-						if (score > best_score) {
-							best_score = score;
-							best_step = step;
-						}
-						step++;
-						if (step > fine_hi) {
-							phase = 3;
-							af_move(best_step);
-							printf("[af] focus step %d\n",
-							       best_step);
-						} else {
-							af_move(step);
-						}
-					}
-				}
-			}
+			/* Autofocus is applied before streaming (see PRIV_S_FMT). */
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
 		}
@@ -2656,6 +2605,18 @@ int main(int argc, char **argv)
 		printf("[prof] profile=%d debug_frames=%d bench=%d target_fps=%d full_chroma=%d\n",
 		       profile_mode, debug_frames, bench_mode, target_fps,
 		       full_chroma);
+	}
+	{
+		/* Focus is set before streaming: moving the lens while the
+		 * sensor streams stalls the pipeline (shared CCI bus). */
+		FILE *ff = fopen("/data/krux/focus", "r");
+		if (ff) {
+			int v = 0;
+			if (fscanf(ff, "%d", &v) == 1 && v >= 0 &&
+			    v < ACT_TOTAL_STEPS)
+				focus_step = v;
+			fclose(ff);
+		}
 	}
 	if (argc > 2) {
 		wh[0] = atoi(argv[1]);
