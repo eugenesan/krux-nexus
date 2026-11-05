@@ -13,11 +13,14 @@ below.
 | what | how | where it ends up |
 |---|---|---|
 | the **init stub** | `rootfs/build-stub-init.sh` | `rootfs/stub/krux-init` |
-| the **stub ramdisk** | `rootfs/build-stub-ramdisk.sh` | `rootfs/stock/ramdisk-stub` |
-| the **boot image** | `rootfs/make-boot-image.sh` | `rootfs/stock/boot-stub.img` |
+| the **stub ramdisk** | `rootfs/build-stub-ramdisk.sh` | `artifacts/built/ramdisk-stub` |
+| the **boot image** | `rootfs/make-boot-image.sh` | `artifacts/built/boot-stub.img` |
 | the **firmware** (the MicroPython interpreter) | `scripts/build/build-micropython.sh` | `rootfs/micropython-arm32` |
 | the **kernel** | `tools/build-kernel.sh` | the output directory you name |
 | the **deploy** | `scripts/deploy-firmware.sh` | on the device, in `/data/krux` |
+
+Build outputs under `artifacts/built/` are **gitignored**; do not check
+them in, and do not write ramdisks or images under `rootfs/`.
 
 The boot image is only needed when the **kernel** changes; during
 development the firmware is deployed over adb and does not need one. For a
@@ -95,7 +98,7 @@ and the touch screen to the firmware.
 bash rootfs/make-boot-image.sh \
     artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
-    rootfs/stock/boot-stub.img
+    artifacts/built/boot-stub.img
 ```
 
 The template is a boot image that is known to boot on this device;
@@ -142,11 +145,11 @@ For a finished device, put the firmware in the boot image instead of
 ```sh
 bash scripts/build/build-micropython.sh
 bash rootfs/build-stub-ramdisk.sh --bundle
-RAMDISK=rootfs/stock/ramdisk-bundled \
+RAMDISK=artifacts/built/ramdisk-bundled \
     bash rootfs/make-boot-image.sh \
     artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
-    rootfs/stock/boot-bundled.img
+    artifacts/built/boot-bundled.img
 ```
 
 The init stub prefers `/opt/krux` when it is present and falls back to
@@ -166,7 +169,7 @@ always be brought back with its own boot partition:
 
 ```sh
 adb reboot bootloader
-fastboot boot rootfs/stock/boot-stub.img
+fastboot boot artifacts/built/boot-stub.img
 ```
 
 (If the device is in the ROM's Android, `adb reboot bootloader`
@@ -200,20 +203,20 @@ bash rootfs/build-stub-ramdisk.sh
 bash rootfs/make-boot-image.sh \
     artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
-    rootfs/stock/boot-stub.img
+    artifacts/built/boot-stub.img
 
 # optional: the read-only bundled image
 bash rootfs/build-stub-ramdisk.sh --bundle
-RAMDISK=rootfs/stock/ramdisk-bundled \
+RAMDISK=artifacts/built/ramdisk-bundled \
     bash rootfs/make-boot-image.sh \
     artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
-    rootfs/stock/boot-bundled.img
+    artifacts/built/boot-bundled.img
 
 # deploy and boot (development image)
 bash scripts/deploy-firmware.sh
 adb reboot bootloader
-fastboot boot rootfs/stock/boot-stub.img
+fastboot boot artifacts/built/boot-stub.img
 ```
 
 ## What is NOT in this repository, and why

@@ -21,8 +21,8 @@
 # (boot.img's ramdisk); the two patched files and the stub binary are
 # in this directory.
 #
-# The result is stock/ramdisk-stub.  It is also packed into a boot image
-# by make-boot-image.sh.
+# The result is artifacts/built/ramdisk-stub.  It is also packed into a
+# boot image by make-boot-image.sh.
 #
 # The cpio is not byte-reproducible: it carries the filesystem's inode
 # numbers and mtimes, so two packs of the same tree differ.  What is
@@ -51,10 +51,11 @@ while [ $# -gt 0 ]; do
 done
 TWRP_IMG=${1:-$ROOT/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img}
 if [ "$BUNDLE" = "1" ]; then
-	OUT=${OUT:-$HERE/stock/ramdisk-bundled}
+	OUT=${OUT:-$ROOT/artifacts/built/ramdisk-bundled}
 else
-	OUT=${OUT:-$HERE/stock/ramdisk-stub}
+	OUT=${OUT:-$ROOT/artifacts/built/ramdisk-stub}
 fi
+mkdir -p "$(dirname "$OUT")"
 WORK=${WORK:-/tmp/opencode/stub-ramdisk}
 [ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
 SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}

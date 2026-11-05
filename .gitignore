@@ -17,6 +17,7 @@ rootfs/micropython-arm32
 # rootfs build artifacts
 rootfs/standalone/ramdisk.cpio
 rootfs/standalone/ramdisk.cpio.gz
+rootfs/stock/
 
 # built boot images and ramdisks
 artifacts/built/

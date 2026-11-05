@@ -19,7 +19,7 @@
 #   ./make-boot-image.sh [TEMPLATE.img] [KERNEL] [OUT.img]
 #
 # RAMDISK=path selects a different ramdisk, for example the one built
-# with build-stub-ramdisk.sh --bundle (rootfs/stock/ramdisk-bundled).
+# with build-stub-ramdisk.sh --bundle (artifacts/built/ramdisk-bundled).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -28,9 +28,9 @@ TEMPLATE=${1:-$ROOT/artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img}
 # one the current kernel build produces: this is the kernel that was
 # flashed and verified with the stub, so it is kept next to the image
 # rather than rebuilt.
-KERNEL=${2:-$ROOT/rootfs/stock/kernel-stub}
-OUT=${3:-$ROOT/rootfs/stock/boot-stub.img}
-RAMDISK=${RAMDISK:-$HERE/stock/ramdisk-stub}
+KERNEL=${2:-$ROOT/artifacts/built/kernel-stub}
+OUT=${3:-$ROOT/artifacts/built/boot-stub.img}
+RAMDISK=${RAMDISK:-$ROOT/artifacts/built/ramdisk-stub}
 WORK=${WORK:-/tmp/opencode/boot-stub}
 
 [ -f "$TEMPLATE" ] || { echo "no template boot image at $TEMPLATE" >&2; exit 1; }
