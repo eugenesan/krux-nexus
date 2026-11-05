@@ -2494,11 +2494,17 @@ static void *client_thread(void *arg)
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
 							step = fine_lo;
-							best_score = 0;
 						}
 						actuator_move(step);
 					} else if (phase == 2) {
-						if (score > best_score) {
+						printf("[af] fine %d score %lu\n",
+						       step, score);
+						/* A fine step must beat the coarse
+						 * best by 5% to win; the metric is
+						 * noisy and the coarse peak is
+						 * usually the true focus. */
+						if (score > best_score +
+						    best_score / 20) {
 							best_score = score;
 							best_step = step;
 						}

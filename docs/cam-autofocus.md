@@ -185,3 +185,16 @@ VMAX 0x09d6 and exposure 0x09c0, so the QR was not decodable.  That is a
 lighting/aim question, not a focus or pipeline question.  The camera
 preview needs the 32 MiB heap (the 720x960 RGB565 preview alone is
 1,382,400 bytes); the old 8 MiB heap raised `MemoryError` here.
+
+## Final sweep tuning (2026-11-05)
+
+With the QR in view the coarse sweep scores peaked at **step 21**
+(1,190,711) and 24 (1,124,486), but the first fine sweep parked at 19
+and the image was still blurry.  A QR decoded immediately at a fixed
+**step 21**, confirming 21 is the focus for this 40 cm scene.
+
+The fine sweep now keeps the coarse best unless a fine step beats it by
+**5%**; the gradient metric is noisy, and the coarse peak is the real
+focus.  The sweep starts at 0 and steps by 3, so a cold lens reaches 21
+after seven moves and the QR can decode mid-sweep (the page exits and
+leaves the lens at 21).  If the sweep completes, it parks at 21.
