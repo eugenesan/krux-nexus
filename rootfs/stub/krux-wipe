@@ -29,7 +29,15 @@ fi
 # appending wipe=1 is enough even if the current cmdline has wipe=test.
 CMDLINE="$(cat /proc/cmdline) wipe=1"
 
-/sbin/kexec -l "$IMG" --command-line="$CMDLINE"
+# The separate DTB is required on this kernel: kexec-tools updates its
+# chosen/bootargs and initrd properties.  Without it the appended DTB
+# still points at the old (freed) initrd.
+DTB="${KRUX_WIPE_DTB:-/data/krux/hammerhead.dtb}"
+if [ -f "$DTB" ]; then
+	/sbin/kexec -l "$IMG" --command-line="$CMDLINE" --dtb "$DTB"
+else
+	/sbin/kexec -l "$IMG" --command-line="$CMDLINE"
+fi
 /sbin/kexec -e
 
 echo "krux-wipe: kexec failed" >&2

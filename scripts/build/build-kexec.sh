@@ -24,6 +24,17 @@ fi
 
 cd "$SRC"
 [ -x configure ] || ./bootstrap
+
+# The hammerhead kernel is a 3.4 CAF tree with a zImage-dtb and a
+# STRICT_MEMORY_RWX kernel; kexec-tools needs the appended-DTB and
+# separate-DTB handling in scripts/build/kexec-tools-hammerhead.patch.
+PATCH="$ROOT/scripts/build/kexec-tools-hammerhead.patch"
+if [ -f "$PATCH" ]; then
+	if ! git apply --reverse --check "$PATCH" 2>/dev/null; then
+		git apply "$PATCH"
+	fi
+fi
+
 make distclean >/dev/null 2>&1 || true
 ./configure --host="${CROSS%?}" --target="${CROSS%?}" \
 	--without-xen --without-zlib \
