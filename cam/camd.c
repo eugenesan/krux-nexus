@@ -2468,36 +2468,17 @@ static void *client_thread(void *arg)
 					unsigned long s = 0;
 					int k, ns = 0;
 					int publish;
-					int valid = 1;
 					for (k = 0; k < OUT_W * OUT_H; k += 97) {
 						s += latest_y[k];
 						ns++;
 					}
 					s /= (ns ? ns : 1);
-					{
-						/* The CPP writes the chroma plane; the
-						 * ISP's raw pass leaves it empty.  Use
-						 * that to drop the unprocessed frames. */
-						unsigned long us = 0;
-						int un = 0;
-						for (k = 0; k < (OUT_W / 2) * (OUT_H / 2) * 2;
-						     k += 61) {
-							us += latest_uv[k];
-							un++;
-						}
-						us /= (un ? un : 1);
-						if (us < 8)
-							valid = 0;
-					}
 					/* Adapt quickly when the scene darkens, and never
 					 * suppress more than a few frames in a row: a
 					 * stuck threshold left the client with no new
 					 * frames (and auto-exposure with no input). */
 					max_seen -= max_seen / 32;
-					if (!valid) {
-						publish = 0;
-						dropped++;
-					} else if (s * 2 >= max_seen) {
+					if (s * 2 >= max_seen) {
 						publish = 1;
 						dropped = 0;
 						if (s > max_seen)
