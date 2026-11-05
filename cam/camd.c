@@ -2036,6 +2036,19 @@ static void *client_thread(void *arg)
 	}
 	printf("[client] STREAMON ok -- waiting for a frame\n");
 	fflush(stdout);
+	{
+		/* The camera kernel dumps the first 64 CPP frames to
+		 * /data/local/tmp for protocol analysis.  The sysfs
+		 * parameter is only writable once the CPP stream is up;
+		 * turn it off here so normal scanning never pays for the
+		 * dump (it drops ISP frames and keeps the CPU busy). */
+		FILE *f = fopen(
+			"/sys/module/msm_cpp/parameters/cpp_dump_frames", "w");
+		if (f != NULL) {
+			fputs("0", f);
+			fclose(f);
+		}
+	}
 
 	for (n = 0; ; n++) {
 		struct v4l2_buffer buf;
@@ -2552,6 +2565,7 @@ static void *client_thread(void *arg)
 				static unsigned long coarse_best_score, fine_best_score;
 				static unsigned long best_score;
 				static int fine_lo, fine_hi;
+				static int local_search;
 
 				if (refocus_request) {
 					refocus_request = 0;
@@ -2559,8 +2573,31 @@ static void *client_thread(void *arg)
 					/* Let POWER refocus even when a fixed step was
 					 * configured; the sweep overrides it. */
 					focus_step = -1;
-					phase = 0;
-					printf("[af] full sweep\n");
+					if (!refocus_full && last_focus_step >= 0) {
+						/* Refine the last good step with a
+						 * short local sweep.  This is fast
+						 * enough to repeat while aiming. */
+						phase = 2;
+						fine_lo = last_focus_step - 5;
+						if (fine_lo < 0)
+							fine_lo = 0;
+						fine_hi = last_focus_step + 5;
+						if (fine_hi >= ACT_TOTAL_STEPS)
+							fine_hi = ACT_TOTAL_STEPS - 1;
+						fine_best_step = fine_lo;
+						fine_best_score = 0;
+						coarse_best_step = last_focus_step;
+						coarse_best_score = 0;
+						local_search = 1;
+						step = fine_lo;
+						actuator_move(step);
+						printf("[af] local fine %d..%d (last %d)\n",
+							fine_lo, fine_hi, last_focus_step);
+					} else {
+						phase = 0;
+						local_search = 0;
+						printf("[af] full sweep\n");
+					}
 				}
 				if (focus_step >= 0) {
 					phase = 5;
@@ -2632,30 +2669,43 @@ static void *client_thread(void *arg)
 						}
 						step++;
 						if (step > fine_hi) {
-							/* Prefer the fine peak when it is
-							 * comparable to the coarse one; the
-							 * coarse step is only a fallback if
-							 * the fine window found nothing. */
-							if (fine_best_score > 0 &&
-							    fine_best_score * 2 >=
-							    coarse_best_score) {
-								best_step = fine_best_step;
-								best_score = fine_best_score;
+							if (local_search &&
+							    (fine_best_score < 300000 ||
+							     fine_best_step == fine_lo ||
+							     fine_best_step == fine_hi)) {
+								/* The cached focus is stale; search
+								 * the whole range. */
+								local_search = 0;
+								phase = 0;
+								settle = 0;
+								printf("[af] local weak, full sweep\n");
 							} else {
-								best_step = coarse_best_step;
-								best_score = coarse_best_score;
+								/* Prefer the fine peak when it is
+								 * comparable to the coarse one; the
+								 * coarse step is only a fallback if
+								 * the fine window found nothing. */
+								if (fine_best_score > 0 &&
+								    fine_best_score * 2 >=
+								    coarse_best_score) {
+									best_step = fine_best_step;
+									best_score = fine_best_score;
+								} else {
+									best_step = coarse_best_step;
+									best_score = coarse_best_score;
+								}
+								last_focus_step = best_step;
+								local_search = 0;
+								printf("[af] cached %d\n",
+									last_focus_step);
+								phase = 4;
+								final_settle = 0;
+								step = best_step - 1;
+								if (step < 0)
+									step = 0;
+								printf("[af] final preload %d -> %d\n",
+									step, best_step);
+								actuator_move(step);
 							}
-							last_focus_step = best_step;
-							printf("[af] cached %d\n",
-							       last_focus_step);
-							phase = 4;
-							final_settle = 0;
-							step = best_step - 1;
-							if (step < 0)
-								step = 0;
-							printf("[af] final preload %d -> %d\n",
-							       step, best_step);
-							actuator_move(step);
 						} else {
 							actuator_move(step);
 						}
