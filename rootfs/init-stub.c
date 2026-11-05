@@ -177,6 +177,7 @@ static void start_camd(const char *dir) {
     char camd[PATH_MAX];
     char fw[PATH_MAX];
     pid_t pid;
+    int i;
 
     snprintf(camd, sizeof(camd), "%s/camd", dir);
     if (access(camd, X_OK) != 0) {
@@ -204,17 +205,11 @@ static void start_camd(const char *dir) {
                 close(fd);
             }
         }
-        /* Supervisor: start camd only when the firmware asks for
-         * it.  The camera page writes /data/krux/camd-start; a
-         * camera-page exit sends Q, camd exits, and the next page
-         * starts a fresh process.  This keeps the ISP/CPP and the
-         * capture thread off while the device is idle. */
+        /* Supervisor: sensor.run(0) sends Q, camd exits, and the next
+         * camera session gets a fresh process (and therefore a fresh
+         * CPP queue) instead of a dark, stale preview. */
         for (;;) {
-            pid_t c;
-            while (access("/data/krux/camd-start", F_OK) != 0)
-                sleep(1);
-            unlink("/data/krux/camd-start");
-            c = fork();
+            pid_t c = fork();
             if (c == 0) {
                 execl(camd, "camd",
                       "1640", "1232", "0x40000000", "rear", "0",
@@ -237,10 +232,17 @@ static void start_camd(const char *dir) {
         return;
     }
 
-    /* The supervisor now waits for the firmware's request, so there
-     * is no socket to wait for here.  The firmware's _connect() waits
-     * for it while "Loading Camera..." is on screen. */
-    say("camd supervisor started");
+    /* The firmware's sensor client retries, but waiting here keeps the
+     * first "Loading Camera..." from spending its whole budget on a
+     * daemon that is still opening the ISP. */
+    for (i = 0; i < 80; i++) {
+        if (access(CAMD_SOCKET, F_OK) == 0) {
+            say("camd is ready");
+            return;
+        }
+        usleep(100000);
+    }
+    say("camd did not create its socket");
 }
 
 static void *start_the_firmware(void *arg) {
