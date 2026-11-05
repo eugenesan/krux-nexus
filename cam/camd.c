@@ -2468,7 +2468,7 @@ static void *client_thread(void *arg)
 
 				if (focus_step >= 0) {
 					phase = 3;
-				} else if (phase != 3 && ++settle >= 3) {
+				} else if (phase != 3 && ++settle >= 2) {
 					unsigned long score = af_sharpness(latest_y);
 					settle = 0;
 					if (phase == 0) {
@@ -2484,7 +2484,7 @@ static void *client_thread(void *arg)
 							best_score = score;
 							best_step = step;
 						}
-						step += 3;
+						step += 5;
 						if (step >= ACT_TOTAL_STEPS) {
 							phase = 2;
 							fine_lo = best_step - 3;
