@@ -16,8 +16,8 @@ successfully; that is the only remaining blocker on the image side.
 | Preview | Portrait 720x960, rotated in camd, unsharp mask, correct aspect (no crop) |
 | Exposure | VMAX raised to the vendor 0x09d6; bounded mean-driven AE with clipping backoff; continuous AE disabled |
 | QR decode | Captured frames are clean and sharp-ish, but the QR does not decode yet |
-| Autofocus | DW9714 VCM found (`/dev/v4l-subdev7`), vendor table captured, HAL sequence replayed; SET_INFO / real lens move stalls the stream — open (docs/cam-autofocus.md) |
-| Boot image | Bundled stub image fits after pruning terminfo+python, hard-float MicroPython and a stripped camd (22.65 MB) |
+| Autofocus | Working: the stall was `damping_step=0` in the move; `damping_step=1` makes the sweep run (step 19 at 40 cm). Fixed step is re-read per session (docs/cam-autofocus.md) |
+| Boot image | Bundled camera image is **16.1 MB** (6.9 MB headroom): pruned tree, `-Os`/gc-sections binaries, and XZ initramfs (`CONFIG_RD_XZ=y`) |
 | Entropy | Statistics path unchanged; keep the delivered frame at 640-720 px for frame rate |
 | PIX_VIEWFINDER | Still not delivering completed frames; not needed for QR |
 

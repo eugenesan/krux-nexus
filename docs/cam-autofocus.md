@@ -136,3 +136,45 @@ Two caveats from the last runs:
   `/data/local/tmp/actuator_seq.log` and `actuator_info.bin`.
 - Stub boot for camd tests: `fastboot boot <image>`; kill/restart of
   camd is not reliable, so use a cold boot per camera session.
+
+## 2026-11-05 — the stall was zero damping
+
+The `SET_INFO`/stream stall was not the actuator table.  `camd` sent an
+all-zero `ringing_params` array; `msm_actuator_move_focus()` calls
+`actuator_write_focus()` with `damping_step = 0`, whose loop never
+advances:
+
+```c
+for (next = curr + sign * damping_step;
+     sign * next <= sign * boundary;
+     next += sign * damping_step)
+```
+
+With `damping_step = 0` it writes the same position forever, floods
+`msm_actuator_parse_i2c_params()` with `i2c table index out of bound`
+(5,889 lines in one run) and stalls the CCI/stream after two frames.
+Setting `damping_step = 1` (and `damping_delay = 0`) fixes it.
+
+Verified on a lit 60x60 mm QR at 40 cm:
+
+```
+[af] actuator configured: 45 steps, code 169
+[af] step 7 score 67824
+[af] step 12 score 67542
+[af] step 17 score 69579
+[af] step 22 score 69027
+[af] step 27 score 66540
+[af] step 32 score 43602
+[af] step 37 score 29901
+[af] step 42 score 21113
+[af] focus step 19
+```
+
+84 frames during the sweep, no stall.  `camd` now re-reads
+`/data/krux/focus` at every camera session, so the fixed step can be
+changed without restarting camd.
+
+The remaining QR issue at that moment was the **scene brightness**:
+a direct 720x960 luma frame from camd had mean 30 and max 52 even with
+VMAX 0x09d6 and exposure 0x09c0, so the QR was not decodable.  That is a
+lighting/aim question, not a focus or pipeline question.

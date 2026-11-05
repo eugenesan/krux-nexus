@@ -1539,6 +1539,9 @@ static int actuator_set_default(int dest)
 	if (actuator_fd < 0)
 		return -1;
 	memset(damp, 0, sizeof(damp));
+	/* damping_step must be non-zero: actuator_write_focus() loops
+	 * forever at step 0, flooding the CCI and stalling the stream. */
+	damp[0].damping_step = 1;
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.cfgtype = CFG_SET_DEFAULT_FOCUS;
 	cfg.cfg.move.dir = 0;
@@ -1571,7 +1574,7 @@ static int actuator_set_info(void)
 	};
 	struct act_cfg cfg;
 
-	if (actuator_open() < 0)
+	if (actuator_fd < 0 && actuator_open() < 0)
 		return -1;
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.cfgtype = CFG_SET_ACTUATOR_INFO;
@@ -1626,6 +1629,19 @@ static void af_bringup(void)
 		fclose(f);
 	}
 	af_level = (v >= 0 && v <= 4) ? v : 0;
+
+	/* Re-read the fixed focus per camera session, so a sweep can be
+	 * enabled or a step changed without restarting camd. */
+	focus_step = -1;
+	f = fopen("/data/krux/focus", "r");
+	if (f) {
+		int step = 0;
+		if (fscanf(f, "%d", &step) == 1 && step >= 0 &&
+		    step < ACT_TOTAL_STEPS)
+			focus_step = step;
+		fclose(f);
+	}
+
 	if (af_level < 1)
 		return;
 	if (actuator_get_info() != 0)
@@ -1668,6 +1684,7 @@ static int actuator_move(int step)
 	}
 
 	memset(damp, 0, sizeof(damp));
+	damp[0].damping_step = 1;
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.cfgtype = CFG_MOVE_FOCUS;
 	cfg.cfg.move.dir = (int8_t)dir;

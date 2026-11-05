@@ -40,8 +40,10 @@ Details of the discoveries are in `cam-state.md`; the short version:
   not the limiting factor; focus and the CPP path are.
 - **Boot image size**: the bundled stub image exceeded the 23.07 MB
   boot partition. Pruning `terminfo` (6.6 MB) and `python3.10` (3.2 MB),
-  using the hard-float MicroPython and a stripped camd brings it to
-  22.65 MB.
+  dropping the unused UBSan runtime, keystore helpers and kexec, and
+  building the hard-float MicroPython and camd with `-Os`/gc-sections
+  brings the gzip image to 21.96 MB; with the XZ initramfs the camera
+  image is **16.1 MB** (6.9 MB headroom).
 
 ### Execution order from here
 

@@ -2,7 +2,7 @@
 
 ## Camera
 
-### Autofocus (docs/cam-autofocus.md) — current blocker
+### Autofocus (docs/cam-autofocus.md)
 - [x] Capture the DW9714 table (45 steps, 9 codes/step, initial code 169)
 - [x] Capture the vendor HAL call sequence (`open → GET_INFO → SET_INFO →
       SET_DEFAULT_FOCUS(7) → MOVE`, hunts while streaming)
@@ -13,9 +13,8 @@
       older binary: `cfg 1 → cfg 3`, no `cfg 2`)
 - [ ] Read the `actuator init:` parsed params and reconcile
       `msm_actuator_set_info_t` with the kernel layout
-- [ ] Fix the `SET_INFO` / real-lens-move stream stall (`i2c table index out of
-      bound`; level 2 stalls after ~2 frames)
-- [ ] Calibrate the focus step with a lit scene at the working distance (~40 cm)
+- [x] Fix the `SET_INFO` / real-lens-move stream stall: `damping_step` must be non-zero
+- [x] Calibrate the focus step with a lit scene at ~40 cm (sweep found step 19)
 - [ ] Replace the coarse contrast sweep with the vendor-style hunt; make
       startup AF the default
 

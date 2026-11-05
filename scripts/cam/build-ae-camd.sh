@@ -9,7 +9,9 @@ echo "=== Applying AE patches ==="
 python3 tools/ae-patch.py --apply
 
 echo "=== Building camd (hard-float) ==="
-arm-linux-gnueabihf-gcc -O2 -static -o "$OUT" cam/camd.c \
+arm-linux-gnueabihf-gcc -Os -static -s \
+    -ffunction-sections -fdata-sections -Wl,--gc-sections \
+    -o "$OUT" cam/camd.c \
     -lpthread -lrt -lm 2>&1 | tail -5
 
 echo "=== Reverting AE patches (keep source clean) ==="
