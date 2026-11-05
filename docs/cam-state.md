@@ -1,6 +1,44 @@
 # STATE — the camera, in one page
 
-## Current state (2026-10-30 late)
+## Current state (2026-11-05)
+
+The capture pipeline is now **consistent and geometrically correct**.
+Dense QR still does not decode because autofocus is not yet driven
+successfully; that is the only remaining blocker on the image side.
+
+| Area | State |
+|---|---|
+| Build | Hard-float `arm-linux-gnueabihf` + ccache, out of tree in `/tmp/opencode/mp-build`; the build script verifies the VFP ABI |
+| camd capture | CAMIF_RAW + CPP, **offline** (`frame_type=0`) with native ION buffers (`native_buff=1`, fd per frame) |
+| CPP message | 293-word vendor message (1600x1200 layout) captured from the HAL; ours is 266 words (1280x960) |
+| Frame consistency | Only frames with a populated chroma plane are published (the ISP also completes raw frames into the same queue) |
+| Tearing | Fixed: `latest_y` is rewritten under the frame mutex |
+| Preview | Portrait 720x960, rotated in camd, unsharp mask, correct aspect (no crop) |
+| Exposure | VMAX raised to the vendor 0x09d6; bounded mean-driven AE with clipping backoff; continuous AE disabled |
+| QR decode | Captured frames are clean and sharp-ish, but the QR does not decode yet |
+| Autofocus | DW9714 VCM found (`/dev/v4l-subdev7`), vendor table captured, HAL sequence replayed; SET_INFO / real lens move stalls the stream — open |
+| Boot image | Bundled stub image fits after pruning terminfo+python, hard-float MicroPython and a stripped camd (22.65 MB) |
+| Entropy | Statistics path unchanged; keep the delivered frame at 640-720 px for frame rate |
+| PIX_VIEWFINDER | Still not delivering completed frames; not needed for QR |
+
+### Captured vendor data (kernel hooks, tools in `tools/`)
+
+- `cpp_frm_NNN.bin` — per-frame `msm_cpp_frame_info_t` + command words;
+  `tools/parse_cpp_dump.py --summary|--diff`.
+- `actuator_info.bin` — DW9714 table: 45 steps, 9 codes/step, 10-bit DAC,
+  initial code 169, init regs 0x00ec/0x00a1/0x00f2/0x00dc;
+  `tools/parse_actuator_dump.py`.
+- `actuator_seq.log` — HAL call order and parameters.
+
+### Open items
+
+1. `SET_INFO` and real lens moves stall the capture stream; bisect with
+   `/data/krux/af` (0-4) and the `actuator init:` kernel log.
+2. Focus calibration needs a lit scene (step values at the working
+   distance).
+3. Dense QR/UR/entropy end-to-end validation.
+
+## Earlier state (2026-10-30) — kept for history
 
 The camera path now works end-to-end at the module level, but it is
 **not yet repeatably stable under sustained camera load**.  The

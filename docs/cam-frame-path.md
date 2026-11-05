@@ -262,3 +262,24 @@ the captured vendor message does not expose. The 15 fps floor is enough for
 - The 3x3 center box is a speed/quality trade-off; if QR quality suffers,
   a 4x4 or 5x5 wide-load variant is the next step, not a return to scalar
   reads.
+
+## 2026-11-05 — the path as it actually runs
+
+The vendor HAL's own configuration was captured from a diagnostic kernel
+(`cpp_frm_NNN.bin`, parsed by `tools/parse_cpp_dump.py`) and differs from
+what camd was doing:
+
+- **Offline, not realtime.** `frame_type = 0`; the HAL names the input
+  ION fd per frame (`native_buff = 1`, fds rotating over four buffers).
+- **Message geometry.** The HAL's message is 293 words for a 1600x1200
+  output; `cam/cam_chromatrix.h` is 266 words for 1280x960. The kernel
+  patches the buffer addresses into words 5 and 11-14 of each 27-word
+  strip record; the rest of the message is constant.
+- **Two completions per frame.** The ISP's raw pass and the CPP's
+  processed pass both complete into the same capture queue, so every
+  other dequeued buffer had no image. camd now publishes only frames
+  whose chroma plane is populated.
+- **Delivery** is portrait 720x960, rotated in camd, with an unsharp
+  mask. The Android port proves 640 px is enough when the lens is
+  focused, so this is not the limiting factor.
+

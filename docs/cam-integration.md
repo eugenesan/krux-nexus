@@ -90,3 +90,15 @@ is built.
 5. Build a stable control-capable camd or stable paced build; enable
    `Camera._auto_expose()` and the QR/entropy AE policies.
 6. Only then evaluate PIX_VIEWFINDER for 20 fps or CPP simplification.
+
+## 2026-11-05 update
+
+- The camera is brought up by the bundled stub image; camd runs the
+  offline/native CPP path described in `cam-frame-path.md`.
+- Autofocus is the open item: the IMX179's DW9714 VCM is configured from
+  the captured vendor table, but `SET_INFO` and real lens moves stall the
+  stream. Bisect with `/data/krux/af` (0-4); calibrate the chosen step
+  with `/data/krux/focus` once a lit scene is available.
+- Keep the delivered frame at 640-720 px for entropy and animated-UR
+  frame rate; decode every Nth frame rather than every frame.
+

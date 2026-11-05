@@ -1,5 +1,65 @@
 # Plan — camera on the hammerhead
 
+## Status 2026-11-05 — what changed, and the plan from here
+
+The camera now produces **consistent, geometrically correct frames**;
+the remaining problems are autofocus and the CPP strip/move interaction.
+Details of the discoveries are in `cam-state.md`; the short version:
+
+- **Toolchain**: the port must be built with the hard-float
+  `arm-linux-gnueabihf` toolchain and ccache, out of tree
+  (`/tmp/opencode/mp-build`). The earlier soft-float binary booted but
+  crashed (SIGSEGV) as soon as the display/camera ran.
+- **CPP protocol**: the vendor HAL drives the CPP **offline**
+  (`frame_type=0`) with **native ION buffers** (`native_buff=1`, the
+  input fd supplied per frame). Its message is 293 words for a
+  1600x1200 output; ours is 266 words for 1280x960. The kernel patches
+  the buffer addresses; the message itself is identical every frame.
+  Captured with a kernel hook and parsed by `tools/parse_cpp_dump.py`.
+- **Frame consistency**: the ISP and the CPP both complete into the same
+  capture queue, so every other frame was an unprocessed copy. camd now
+  publishes only frames whose chroma plane is populated.
+- **Tearing**: `latest_y` was rewritten outside the frame mutex, so the
+  socket could copy a half-rotated frame. Fixed.
+- **Preview**: portrait 720x960 (rotated in camd, unsharp mask), correct
+  aspect. A 3:4 output from a 4:3 sensor cannot be cropped without
+  stretching — that was a real bug, now removed.
+- **Exposure**: the binned mode's VMAX is 0x04e4; the vendor geometry
+  uses 0x09d6, which doubles the longest exposure. Exposure is a direct
+  value (larger = brighter). AE is a bounded mean-driven controller with
+  clipping backoff; continuous AE was removed because it blew out.
+- **Autofocus**: the IMX179 has a **DW9714 VCM** (`qcom,actuator@18`)
+  parked near infinity. The vendor sequence was captured
+  (`open → GET_INFO → SET_INFO → SET_DEFAULT_FOCUS(7) → MOVE`), and the
+  driver table is 45 steps, 9 DAC codes/step, initial code 169.
+  camd replays the sequence, but `SET_INFO`/a real lens move currently
+  stalls the stream. This is the open blocker; bisect with
+  `/data/krux/af` (0-4).
+- **Android reference**: KruxMobileApp analyses at **640 px** via
+  CameraX, and that reads the QR on the same hardware — so resolution is
+  not the limiting factor; focus and the CPP path are.
+- **Boot image size**: the bundled stub image exceeded the 23.07 MB
+  boot partition. Pruning `terminfo` (6.6 MB) and `python3.10` (3.2 MB),
+  using the hard-float MicroPython and a stripped camd brings it to
+  22.65 MB.
+
+### Execution order from here
+
+1. **Fix the actuator/pipeline interaction.** Confirm the image carries
+   the newest camd, then test `/data/krux/af=2` (SET_INFO only) and
+   `af=4` (single move at power-up). If SET_INFO still stalls, instrument
+   `msm_actuator_init` (the `actuator init:` log) and compare the parsed
+   `total_steps`/`region_size` with the captured table.
+2. **Calibrate focus with light.** With a fixed step from
+   `/data/krux/focus`, sweep e.g. 7/15/25/35 at the working distance and
+   pick the sharpest; then turn that into a startup AF using the HAL
+   sequence.
+3. **Then QR/UR/entropy**, keeping the delivered frame at 640-720 px so
+   entropy and animated UR keep their frame rate. Decode every Nth frame,
+   not every frame.
+4. **Final image**: if the bundled image is wanted, trim more TWRP
+   components (or LZ4) rather than raising the resolution.
+
 Status 2026-10-31. The camera path is wired through
 `camd`/`sensor.py`/`image`/`shannon`; the remaining work is making the
 camera run repeatable, testing real QR/entropy in Krux, and then deciding
