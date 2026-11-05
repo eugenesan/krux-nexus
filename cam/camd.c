@@ -1951,16 +1951,27 @@ static void *client_thread(void *arg)
 					 *   sx = width-1 - y*width/OUT_H
 					 *   sy = x*height/OUT_W
 					 */
+					/* Centre crop with the output's 3:4 aspect, then
+					 * rotate: the lens is fixed-focus and cannot
+					 * resolve a small QR closer than ~50cm, so the
+					 * phone is held back and the frame is cropped
+					 * instead. */
+					int crop_w = height * OUT_W / OUT_H;
+					int crop_x = (width - crop_w) / 2;
 					int dx, dy;
+					if (crop_w > width) {
+						crop_w = width;
+						crop_x = 0;
+					}
 					for (dy = 0; dy < OUT_H; dy++) {
-						int sx0 = width - 1 -
-							(dy + 1) * width / OUT_H;
-						int sx1 = width - 1 -
-							dy * width / OUT_H;
-						if (sx0 < 0)
-							sx0 = 0;
-						if (sx1 > width - 1)
-							sx1 = width - 1;
+						int sx0 = crop_x + crop_w - 1 -
+							(dy + 1) * crop_w / OUT_H;
+						int sx1 = crop_x + crop_w - 1 -
+							dy * crop_w / OUT_H;
+						if (sx0 < crop_x)
+							sx0 = crop_x;
+						if (sx1 > crop_x + crop_w - 1)
+							sx1 = crop_x + crop_w - 1;
 						for (dx = 0; dx < OUT_W; dx++) {
 							int sy0 = dx * height / OUT_W;
 							int sy1 = (dx + 1) * height / OUT_W;
@@ -1983,11 +1994,17 @@ static void *client_thread(void *arg)
 					int uv_w = width / 2;
 					int uv_h = height / 2;
 					int dx, dy;
+					int crop_uv = uv_h * OUT_W / OUT_H;
+					int crop_uv_x = (uv_w - crop_uv) / 2;
+					if (crop_uv > uv_w) {
+						crop_uv = uv_w;
+						crop_uv_x = 0;
+					}
 					for (dy = 0; dy < OUT_H / 2; dy++) {
-						int sx = uv_w - 1 -
-							dy * uv_w / (OUT_H / 2);
-						if (sx < 0)
-							sx = 0;
+						int sx = crop_uv_x + crop_uv - 1 -
+							dy * crop_uv / (OUT_H / 2);
+						if (sx < crop_uv_x)
+							sx = crop_uv_x;
 						for (dx = 0; dx < OUT_W / 2; dx++) {
 							int sy = dx * uv_h / (OUT_W / 2);
 							const unsigned char *row =
@@ -2008,16 +2025,23 @@ static void *client_thread(void *arg)
 					 * recently; otherwise the preview flashes
 					 * dark and the decoder never settles. */
 					static unsigned pub_max;
+					static int since_pub;
 					unsigned long s = 0;
 					int k, ns = 0;
+					int publish;
 					for (k = 0; k < OUT_W * OUT_H; k += 97) {
 						s += latest_y[k];
 						ns++;
 					}
 					s /= (ns ? ns : 1);
-					if (pub_max > s / 64)
-						pub_max -= s / 64;
-					if (s * 3 >= pub_max) {
+					/* Adapt quickly when the scene darkens, and never
+					 * suppress more than a few frames in a row: a
+					 * stuck threshold left the client with no new
+					 * frames (and auto-exposure with no input). */
+					pub_max -= pub_max / 32;
+					publish = (s * 3 >= pub_max) || (++since_pub >= 12);
+					if (publish) {
+						since_pub = 0;
 						if (s > pub_max)
 							pub_max = s;
 						latest_seq++;
