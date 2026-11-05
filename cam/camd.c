@@ -2559,56 +2559,17 @@ static void *client_thread(void *arg)
 					/* Let POWER refocus even when a fixed step was
 					 * configured; the sweep overrides it. */
 					focus_step = -1;
-					if (!refocus_full && last_focus_step >= 0) {
-						/* Stay near the last good step and
-						 * refine it with a local fine sweep.
-						 * Skipping the coarse walk keeps the
-						 * VCM's physical history stable. */
-						phase = 2;
-						fine_lo = last_focus_step - 5;
-						if (fine_lo < 0)
-							fine_lo = 0;
-						fine_hi = last_focus_step + 5;
-						if (fine_hi >= ACT_TOTAL_STEPS)
-							fine_hi = ACT_TOTAL_STEPS - 1;
-						fine_best_step = fine_lo;
-						fine_best_score = 0;
-						coarse_best_step = last_focus_step;
-						coarse_best_score = 0;
-						step = fine_lo;
-						actuator_move(step);
-						printf("[af] cached fine %d..%d (last %d)\n",
-						       fine_lo, fine_hi, last_focus_step);
-					} else {
-						phase = 0;
-						printf("[af] full sweep\n");
-					}
+					phase = 0;
+					printf("[af] full sweep\n");
 				}
 				if (focus_step >= 0) {
 					phase = 5;
 				} else if (phase == 5) {
 					static int hold_count;
-					if (++hold_count % 30 == 0) {
-						unsigned long hs = af_sharpness(latest_y);
+					if (++hold_count % 30 == 0)
 						printf("[af] hold step %d score %lu\n",
-						       act_curr, hs);
-						if (best_score > 0 &&
-						    hs < best_score / 2) {
-							/* The VCM can drift after
-							 * the sweep.  Re-approach
-							 * the chosen step with the
-							 * same one-step forward
-							 * move. */
-							step = best_step - 1;
-							if (step < 0)
-								step = 0;
-							printf("[af] hold recovery %d -> %d\n",
-							       step, best_step);
-							actuator_move(step);
-							phase = 4;
-							final_settle = 0;
-						}
-					}
+						       act_curr,
+						       af_sharpness(latest_y));
 				} else if (phase == 4) {
 					/* The one-step preload has settled; move
 					 * forward to the chosen step.  This is the
