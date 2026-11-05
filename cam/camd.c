@@ -792,6 +792,10 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define OUT_W 720
 #define OUT_H 960
 static unsigned char *latest_y = NULL;
+/* Sampled mean of the latest downscaled frame.  The AF waits for a
+ * reasonably bright frame, so a refocus request made while the camera
+ * is pointed at a dark wall stays pending until the QR is in view. */
+static int latest_mean;
 static unsigned char *latest_uv = NULL;
 static int latest_seq = 0;
 static int latest_ready = 0;
@@ -2431,6 +2435,7 @@ static void *client_thread(void *arg)
 					 * recently; otherwise the preview flashes
 					 * dark and the decoder never settles. */
 					static unsigned max_seen;
+					static int starve;
 					unsigned long s = 0;
 					int k, ns = 0;
 					int publish;
@@ -2467,6 +2472,16 @@ static void *client_thread(void *arg)
 						if (s > max_seen)
 							max_seen = s;
 					}
+					if (publish) {
+						starve = 0;
+					} else if (valid && ++starve >= 4) {
+						/* Never let a dark scene starve the
+						 * client: the QR page needs frames to
+						 * poll its buttons and run AF. */
+						publish = 1;
+						starve = 0;
+					}
+					latest_mean = (int)s;
 					if (publish) {
 						latest_seq++;
 						latest_ready = 1;
@@ -2530,7 +2545,7 @@ static void *client_thread(void *arg)
 			/* Autofocus sweep, using the vendor HAL's move
 			 * convention.  Runs once after the stream is up; the
 			 * lens then stays put while scanning. */
-			if (published) {
+			if (published && latest_mean >= 20) {
 				static int phase, step, best_step, settle;
 				static int final_settle;
 				static int coarse_best_step, fine_best_step;
