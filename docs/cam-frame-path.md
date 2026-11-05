@@ -301,8 +301,9 @@ contrast.
 The capture queue still receives the ISP's raw pass alongside the CPP's
 processed frame.  camd drops frames whose luma mean is below 50% of the recent maximum
 (the raw/partial CPP pass), with a four-frame starvation guard.
-`qr_capture.py` also skips drawing a frame below the same threshold,
-so the panel keeps the previous image instead of blinking dark.
+`qr_capture.py` no longer filters the preview: the Python-side mean
+gate could lock onto an early bright partial frame and leave the panel
+blank.  The camd luma filter is the only frame gate now.
 
 AE is now **one-shot and locked**: the center-50% ROI is metered at
 camera start, and the exposure/gain stay fixed while scanning.  If no
