@@ -2224,6 +2224,7 @@ static void *client_thread(void *arg)
 					printf("[client] mmap fail y=%p uv=%p errno=%d\n",
 					       p_y, p_uv, errno);
 			}
+			int published = 0;
 			if (p_y != MAP_FAILED && p_uv != MAP_FAILED) {
 				src_y = (const unsigned char *)p_y;
 				{
@@ -2457,30 +2458,38 @@ static void *client_thread(void *arg)
 					if (!valid)
 						publish = 0;
 					else {
-						publish = (s * 3 >= max_seen) || 1;
+						publish = (s * 3 >= max_seen);
 						if (s > max_seen)
 							max_seen = s;
 					}
 					if (publish) {
 						latest_seq++;
 						latest_ready = 1;
-					}
-				}
-				{
-					static int dump_count;
-					if (dump_now || ++dump_count % 30 == 0) {
-						dump_now = 0;
-						FILE *f = fopen("/data/krux/scan.raw", "wb");
-						if (f) {
-							fwrite(latest_y, 1,
-							       OUT_W * OUT_H, f);
-							fclose(f);
-						}
-						f = fopen("/data/krux/scan_full.raw", "wb");
-						if (f) {
-							fwrite(src_y, 1,
-							       width * height, f);
-							fclose(f);
+						published = 1;
+						if (dump_now) {
+							dump_now = 0;
+							FILE *f = fopen(
+								"/data/krux/scan.raw.tmp",
+								"wb");
+							if (f) {
+								fwrite(latest_y, 1,
+								       OUT_W * OUT_H, f);
+								fclose(f);
+								rename(
+									"/data/krux/scan.raw.tmp",
+									"/data/krux/scan.raw");
+							}
+							f = fopen(
+								"/data/krux/scan_full.raw.tmp",
+								"wb");
+							if (f) {
+								fwrite(src_y, 1,
+								       width * height, f);
+								fclose(f);
+								rename(
+									"/data/krux/scan_full.raw.tmp",
+									"/data/krux/scan_full.raw");
+							}
 						}
 					}
 				}
@@ -2490,7 +2499,7 @@ static void *client_thread(void *arg)
 			/* Autofocus sweep, using the vendor HAL's move
 			 * convention.  Runs once after the stream is up; the
 			 * lens then stays put while scanning. */
-			{
+			if (published) {
 				static int phase, step, best_step, settle;
 				static unsigned long best_score;
 				static int fine_lo, fine_hi;
@@ -2521,8 +2530,11 @@ static void *client_thread(void *arg)
 							best_score = score;
 							best_step = step;
 						}
-						step += 5;
-						if (step >= ACT_TOTAL_STEPS) {
+						/* The macro end is step 44, not 45.
+						 * The old loop stopped after step 40 and
+						 * never scored 41-44, so a close QR
+						 * could never reach focus. */
+						if (step >= ACT_TOTAL_STEPS - 1) {
 							phase = 2;
 							fine_lo = best_step - 3;
 							if (fine_lo < 0)
@@ -2531,6 +2543,10 @@ static void *client_thread(void *arg)
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
 							step = fine_lo;
+						} else {
+							step += 5;
+							if (step >= ACT_TOTAL_STEPS)
+								step = ACT_TOTAL_STEPS - 1;
 						}
 						actuator_move(step);
 					} else if (phase == 2) {
