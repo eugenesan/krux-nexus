@@ -57,6 +57,30 @@
 #include "sensor_config.h"
 #include "sensor_live.h"
 
+/* The host UAPI header used for this static build omits the V4L2 event
+ * structure/ioctl, while the hammerhead kernel implements the standard
+ * VIDIOC_DQEVENT ABI. */
+struct v4l2_event {
+	uint32_t type;
+	union {
+		uint8_t data[64];
+	} u;
+	uint32_t pending;
+	uint32_t sequence;
+	/* The 32-bit hammerhead kernel uses two 32-bit longs here.  The
+	 * build host's hard-float libc defaults struct timespec to time64,
+	 * which changes the ioctl number because its encoded size changes. */
+	struct {
+		int32_t tv_sec;
+		int32_t tv_nsec;
+	} timestamp;
+	uint32_t id;
+	uint32_t reserved[8];
+};
+_Static_assert(sizeof(struct v4l2_event) == 120,
+	       "hammerhead VIDIOC_DQEVENT ABI must be 120 bytes");
+#define VIDIOC_DQEVENT _IOR('V', 89, struct v4l2_event)
+
 /* the CPP (colour processing) firmware: a 16 KB blob the kernel loads
  * through the firmware loader, named by VIDIOC_MSM_CPP_LOAD_FIRMWARE */
 struct msm_camera_v4l2_ioctl_t {
@@ -68,7 +92,10 @@ struct msm_camera_v4l2_ioctl_t {
 
 #define VIDIOC_MSM_CPP_LOAD_FIRMWARE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 3, struct msm_camera_v4l2_ioctl_t)
+#define VIDIOC_MSM_CPP_GET_INST_INFO \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 2, struct msm_camera_v4l2_ioctl_t)
 #define CPP_NODE "/dev/v4l-subdev17"
+#define CPP_FRAME_DONE_EVENT (V4L2_EVENT_PRIVATE_START + 0)
 
 #define MSM_CAMERA_V4L2_EVENT_TYPE (0x08000000 + 0x00002000)
 #define MSM_CAMERA_NEW_SESSION     1
@@ -377,6 +404,7 @@ static const uint16_t geom_regs[] = {
 	0x0301, 0x0303, 0x0305, 0x0307, 0x0309, 0x030b, 0x030c, 0x030d,
 	0x0340, 0x0341, 0x0342, 0x0343, 0x0344, 0x0345,
 	0x034c, 0x034d, 0x034e, 0x034f, 0x0350, 0x0351,
+	0x0202, 0x0203, 0x0204, 0x0205,
 };
 
 static void sensor_dump_regs(const char *when)
@@ -922,6 +950,13 @@ static int ispif_config(void)
  * the kernel patches the frame's current buffer addresses into the
  * frame message when it accepts it, and the buffers rotate. */
 static int cpp_fd = -1;
+/* The ISP fills the capture buffers round-robin, and the CPP reads the
+ * frame from the buffer index given in input_buffer_info.  Sending a fixed
+ * index 0 made the CPP read an empty buffer for most frames, which is the
+ * mostly-dark preview with an occasional correct frame.  Track the next
+ * buffer the ISP will fill from the capture loop. */
+static volatile int cpp_input_index = 0;
+
 
 /* Hand the chromatrix to the CPP.  Returns 0 on success. */
 static int cpp_send_chromatrix(void)
@@ -939,6 +974,8 @@ static int cpp_send_chromatrix(void)
 	frame.cpp_cmd_msg = cam_cpp_msg;
 	frame.status = &cpp_status;
 	frame.identity = ((uint32_t)session_id << 16) | (uint32_t)0;
+	frame.input_buffer_info.index = (uint32_t)cpp_input_index;
+	frame.input_buffer_info.native_buff = 0;
 
 	memset(&io, 0, sizeof(io));
 	io.id = session_id;
@@ -1021,7 +1058,9 @@ static int isp_start(void)
 	 * half-height NV12 chroma plane, but it is not in the completion
 	 * group, so a half-height CBCR done cannot desynchronise the Y/C
 	 * ping-pong bits or flood the tasklet queue. */
-	scmd.y_only = (isp_stream_src == CAMIF_RAW) ? 1 : 0;
+	/* QR and entropy need luma only.  Completing on the Y write master
+	 * avoids waiting on a CBCR plane that may not be configured. */
+	scmd.y_only = 1;
 	scmd.init_frame_drop = 0;
 	scmd.frame_skip_pattern = NO_SKIP;
 	scmd.plane_cfg[0].output_width = cbufs.width;
@@ -1095,7 +1134,7 @@ static int isp_start(void)
 		struct msm_camera_v4l2_ioctl_t io;
 		struct msm_cpp_frame_info_t frame;
 		int32_t cpp_status = 0;
-		int fd = open(CPP_NODE, O_RDWR);
+		int fd = open(CPP_NODE, O_RDWR | O_NONBLOCK);
 
 		if (fd < 0) {
 			printf("[cpp] open %s: %s\n", CPP_NODE,
@@ -1511,7 +1550,10 @@ static void *client_thread(void *arg)
 	fflush(stdout);
 
 	memset(&rb, 0, sizeof(rb));
-	rb.count = 4;
+	/* More output buffers absorb userspace jitter: the CPP needs a
+	 * free vb2 buffer for every frame it processes, and the daemon
+	 * re-queues each one only after cropping it. */
+	rb.count = 8;
 	rb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	rb.memory = V4L2_MEMORY_USERPTR;
 	if (ioctl(fd, VIDIOC_REQBUFS, &rb) < 0) {
@@ -1664,6 +1706,7 @@ static void *client_thread(void *arg)
 				continue;
 			}
 			p5 = now_ns();
+			cpp_input_index = buf.index;
 			if (debug_frames) {
 				printf("[client] plane0: bytesused=%u length=%u data_offset=%u\n",
 				       dqplanes[0].bytesused, dqplanes[0].length,
@@ -1780,8 +1823,33 @@ static void *client_thread(void *arg)
 				   (int)bufs[buf.index], 0);
 			p_uv = mmap(NULL, uv_sz, PROT_READ, MAP_SHARED,
 				    (int)cbufs.planes[buf.index][1].m.userptr, 0);
+			if (p_y == MAP_FAILED || p_uv == MAP_FAILED) {
+				static int mfail;
+				if (mfail++ < 5)
+					printf("[client] mmap fail y=%p uv=%p errno=%d\n",
+					       p_y, p_uv, errno);
+			}
 			if (p_y != MAP_FAILED && p_uv != MAP_FAILED) {
 				src_y = (const unsigned char *)p_y;
+				{
+					static int dumped;
+					const char *dump = getenv("CAMD_DUMP_RAW");
+					if (dump && !dumped) {
+						size_t k, n = (size_t)width * height;
+						unsigned long sum = 0;
+						for (k = 0; k < n; k += 97)
+							sum += src_y[k];
+						if (sum / (n / 97 + 1) > 18) {
+							FILE *df = fopen(dump, "wb");
+							if (df) {
+								fwrite(src_y, 1, n, df);
+								fclose(df);
+								printf("[client] dumped raw %s\n", dump);
+								dumped = 1;
+							}
+						}
+					}
+				}
 				src_uv = (const unsigned char *)p_uv;
 				if (bench_mode) {
 					static int bench_done;
@@ -2029,6 +2097,12 @@ static void *socket_thread(void *arg)
 					}
 				}
 				pthread_mutex_unlock(&frame_mutex);
+				{
+					static int fcount;
+					if (++fcount % 200 == 0)
+						printf("[sock] F #%d seq=%d ready=%d copy=%d\n",
+						       fcount, seq, ready, copy != NULL);
+				}
 
 				if (copy) {
 					hdr[31] = 0;
@@ -2064,24 +2138,39 @@ static void *socket_thread(void *arg)
 			} else if (buf[0] == 'E') {
 				unsigned char p[4];
 				if (socket_read_exact(cfd, p, 4) == 0) {
-					struct imx179_reg r[4] = {
-						{ 0x0202, p[0], 0 },
-						{ 0x0203, p[1], 0 },
-						{ 0x0204, p[2], 0 },
-						{ 0x0205, p[3], 0 },
+					/* Exposure (0x0202) and gain (0x0204) are
+					 * 16-bit registers.  Writing them as two
+					 * separate byte writes leaves the gain
+					 * effectively stuck until the maximum
+					 * value, so use 16-bit word writes. */
+					struct imx179_reg r[2] = {
+						{ 0x0202, (p[0] << 8) | p[1], 0 },
+						{ 0x0204, (p[2] << 8) | p[3], 0 },
 					};
-					write(cfd, sensor_write_regs(r, 4) == 0 ?
+					write(cfd, sensor_write_regs_as(
+						      r, 2, MSM_CAMERA_I2C_WORD_DATA) == 0 ?
 					      "OK" : "ER", 2);
 				}
 			} else if (buf[0] == 'V') {
 				unsigned char p[2];
 				if (socket_read_exact(cfd, p, 2) == 0) {
-					struct imx179_reg r[2] = {
-						{ 0x0340, p[0], 0 },
-						{ 0x0341, p[1], 0 },
+					/* VMAX is a 16-bit geometry register.  The sensor's
+					 * vendor sequence writes it as one WORD_DATA value;
+					 * two BYTE_DATA writes can leave exposure clamped to
+					 * the previous frame length. */
+					struct imx179_reg r = {
+						0x0340, (p[0] << 8) | p[1], 0
 					};
-					write(cfd, sensor_write_regs(r, 2) == 0 ?
-					      "OK" : "ER", 2);
+					int rc = sensor_write_regs_as(
+						&r, 1, MSM_CAMERA_I2C_WORD_DATA);
+					if (rc == 0) {
+						uint16_t high = 0, low = 0;
+						if (sensor_read_reg(0x0340, &high) == 0 &&
+						    sensor_read_reg(0x0341, &low) == 0)
+							printf("[sensor] VMAX set to 0x%02x%02x\n",
+							       high & 0xff, low & 0xff);
+					}
+					write(cfd, rc == 0 ? "OK" : "ER", 2);
 				}
 			} else if (buf[0] == 'Q' || buf[0] == 'S') {
 				write(cfd, "OK", 2);

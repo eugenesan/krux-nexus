@@ -18,13 +18,15 @@
 #
 # WHERE THE FILES LIVE
 # --------------------
-# The build runs in the checked-out `micropython` submodule.  Its
-# build-standard directory and object files are gitignored; the checked-in
-# source remains the source of truth.
+# All build output goes outside the checked-out `micropython` submodule.
+# The source checkout remains the source of truth.
 #
 #   SRC=DIR        the MicroPython checkout to build (default:
 #                  krux/firmware/micropython in this project)
-#   SYSROOT=DIR    the armel sysroot (default: /tmp/opencode/armel-sysroot)
+#   MP_BUILD=DIR   where host and target build output goes (default:
+#                  /tmp/opencode/mp-build)
+#   CCACHE=CMD     compiler cache command (default: ccache)
+#   SYSROOT=DIR    target sysroot (defaults to the host hard-float sysroot)
 #   OUT=FILE       where the binary lands (default:
 #                  rootfs/micropython-arm32)
 #
@@ -34,9 +36,20 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC=${SRC:-$HERE/../../krux/firmware/micropython}
 OUT=${OUT:-$HERE/../../rootfs/micropython-arm32}
-[ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
-SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
-CC_CROSS=${CC_CROSS:-arm-linux-gnueabi-}
+MP_BUILD=${MP_BUILD:-/tmp/opencode/mp-build}
+CC_CROSS=${CC_CROSS:-arm-linux-gnueabihf-}
+CCACHE=${CCACHE:-ccache}
+if [ -z "${SYSROOT:-}" ]; then
+	if [ "$CC_CROSS" = arm-linux-gnueabihf- ] && [ -d /usr/arm-linux-gnueabihf ]; then
+		SYSROOT=/usr/arm-linux-gnueabihf
+	elif [ "$CC_CROSS" = arm-linux-gnueabi- ] && [ -d /usr/arm-linux-gnueabi ]; then
+		SYSROOT=/usr/arm-linux-gnueabi
+	else
+		SYSROOT=/tmp/opencode/armel-sysroot
+	fi
+fi
+HOST_BUILD=$MP_BUILD/mpy-cross
+TARGET_BUILD=$MP_BUILD/target
 
 [ -d "$SRC" ] || { echo "no micropython tree at $SRC (set SRC=)" >&2; exit 1; }
 git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 || {
@@ -48,11 +61,11 @@ git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 || {
 
 # cUR is a mainline-MicroPython user C module.  Both its makefile and its
 # source submodule live in our MicroPython fork (ports/unix/modules/cUR and
-# lib/cUR).  Stage a copy of the source next to the port makefile so the
-# compiler's objects stay inside the disposable build tree.
+# lib/cUR).  Stage a copy of the source in the disposable build tree so the
+# compiler's objects stay outside the source checkout.
 CUR_SOURCE_DIR=$SRC/lib/cUR
 CUR_PORT_MAKEFILE=$SRC/ports/unix/modules/cUR/micropython.mk
-CUR_STAGE=$SRC/ports/unix/build-cUR
+CUR_STAGE=$MP_BUILD/cUR
 [ -e "$CUR_SOURCE_DIR/uUR.c" ] || {
 	echo "cUR submodule is not initialized: run 'git submodule update --init --recursive lib/cUR' in the micropython submodule" >&2
 	exit 1
@@ -66,10 +79,8 @@ mkdir -p "$CUR_STAGE"
 cp "$CUR_PORT_MAKEFILE" "$CUR_STAGE/"
 cp -a "$CUR_SOURCE_DIR/uUR.c" "$CUR_SOURCE_DIR/src" "$CUR_STAGE/"
 
-# Build in the checked-out MicroPython source.  A separate worktree was
-# previously used here, but it made the build depend on a second checkout and
-# complicated the cUR source paths.  build-standard is ignored by git.
 TREE="$SRC"
+mkdir -p "$MP_BUILD"
 
 # The unix port needs two of upstream's submodules: mbedtls (the TLS
 # backend) and micropython-lib (the standard library, frozen into the
@@ -77,22 +88,19 @@ TREE="$SRC"
 git -C "$TREE" submodule update --init lib/mbedtls lib/micropython-lib
 
 # 1. the host tools, with the host compiler
-if [ ! -x "$TREE/mpy-cross/build/mpy-cross" ]; then
-	make -C "$TREE/mpy-cross" clean >/dev/null 2>&1 || true
-	make -C "$TREE/mpy-cross" CC=gcc HOSTCC=gcc -j"$(nproc)"
-fi
-mkdir -p "$TREE/ports/unix/build"
-cp "$TREE/mpy-cross/build/mpy-cross" "$TREE/ports/unix/build/mpy-cross"
+make -C "$TREE/mpy-cross" BUILD="$HOST_BUILD" \
+	CC="$CCACHE gcc" HOSTCC="$CCACHE gcc" -j"$(nproc)"
 
 # 2. the port itself, for the target
 cd "$TREE/ports/unix"
-make clean >/dev/null 2>&1 || true
-# Remove objects from an earlier host build as well as the regular build
-# directory before the cross compile.
-rm -rf build-standard vendor
+# Cross-compiler flags are not tracked in object dependencies.  Clean only
+# this out-of-tree target directory so switching ABI cannot reuse old objects.
+make clean BUILD="$TARGET_BUILD"
 make -j"$(nproc)" \
+	BUILD="$TARGET_BUILD" \
+	MICROPY_MPYCROSS="$HOST_BUILD/mpy-cross" \
+	CC="$CCACHE ${CC_CROSS}gcc" HOSTCC="$CCACHE gcc" \
 	CROSS_COMPILE=$CC_CROSS \
-	HOSTCC=gcc \
 	MICROPY_PY_BTREE=0 \
 	MICROPY_PY_USSL=0 \
 	MICROPY_PY_FFI=0 \
@@ -102,8 +110,14 @@ make -j"$(nproc)" \
 	CFLAGS_EXTRA="--sysroot=$SYSROOT" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
 
-file build-standard/micropython
+file "$TARGET_BUILD/micropython"
+if [[ "$CC_CROSS" == *gnueabihf* ]]; then
+	if ! readelf -A "$TARGET_BUILD/micropython" | grep -q 'Tag_ABI_VFP_args: VFP registers'; then
+		echo "target binary is not hard-float; check CC_CROSS and SYSROOT" >&2
+		exit 1
+	fi
+fi
 mkdir -p "$(dirname "$OUT")"
-cp build-standard/micropython "$OUT"
+cp "$TARGET_BUILD/micropython" "$OUT"
 rm -rf "$CUR_STAGE"
 echo "  -> $OUT"
