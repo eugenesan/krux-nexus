@@ -541,11 +541,27 @@ static int sensor_write_live_sequence(void)
 	return 0;
 }
 
+/* Autofocus (defined with the actuator code below). */
+static int focus_step = -1;
+/* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
+ * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
+ * bisected from /data/krux/af without rebuilding. */
+static int af_level = 0;
+static int actuator_get_info(void);
+static int actuator_set_info(void);
+static int actuator_set_default(int dest);
+static int actuator_move(int step);
+static void af_bringup(void);
+
 static int sensor_program_mode(void)
 {
 	if (sensor_cfg(CFG_POWER_UP, NULL, 0) < 0)
 		return -1;
 	printf("[sensor] powered up\n");
+	/* The vendor HAL initialises the actuator at this point: the
+	 * sensor is powered but not streaming, so CCI traffic does not
+	 * disturb a running stream. */
+	af_bringup();
 	if (cam->kernel_programs_sensor) {		/* The MT9M114B driver has the tables and writes them itself,
 		 * but the kernel copies the user's array out first, so a
 		 * (dummy) array has to be supplied. */
@@ -1132,6 +1148,10 @@ static int isp_start(void)
 	printf("[isp] REQUEST_STREAM ok, handle=%u\n", scmd.axi_stream_handle);
 
 
+
+
+
+
 	for (i = 0; i < cbufs.count; i++) {
 		struct msm_isp_qbuf_info q;
 		memset(&q, 0, sizeof(q));
@@ -1431,6 +1451,7 @@ struct act_cfg {
 	union {
 		struct act_move move;
 		struct act_set_info set_info;
+		uint32_t cam_name;
 	} cfg;
 };
 
@@ -1449,7 +1470,6 @@ static int actuator_fd = -1;
 /* -1 = leave the lens alone.  Driving the VCM without the vendor's
  * power-up/default-focus sequence stalls the stream (or worse), so it is
  * opt-in via /data/krux/focus. */
-static int focus_step = -1;
 
 static int actuator_open(void)
 {
@@ -1492,6 +1512,47 @@ static int actuator_open(void)
 	closedir(d);
 	printf("[af] no actuator subdev found\n");
 	return -1;
+}
+
+static int actuator_get_info(void)
+{
+	struct act_cfg cfg;
+
+	if (actuator_open() < 0)
+		return -1;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.cfgtype = CFG_GET_ACTUATOR_INFO;
+	if (ioctl(actuator_fd, VIDIOC_MSM_ACTUATOR_CFG, &cfg) < 0) {
+		printf("[af] GET_ACTUATOR_INFO: %s\n", strerror(errno));
+		return -1;
+	}
+	printf("[af] af_supported=%u cam=%d\n", cfg.is_af_supported,
+	       (int)cfg.cfg.cam_name);
+	return 0;
+}
+
+static int actuator_set_default(int dest)
+{
+	struct act_damping damp[1];
+	struct act_cfg cfg;
+
+	if (actuator_fd < 0)
+		return -1;
+	memset(damp, 0, sizeof(damp));
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.cfgtype = CFG_SET_DEFAULT_FOCUS;
+	cfg.cfg.move.dir = 0;
+	cfg.cfg.move.sign_dir = 1;
+	cfg.cfg.move.dest_step_pos = (int16_t)dest;
+	cfg.cfg.move.num_steps = dest;
+	cfg.cfg.move.num_steps_inf_pos = dest;
+	cfg.cfg.move.ringing_params = damp;
+	if (ioctl(actuator_fd, VIDIOC_MSM_ACTUATOR_CFG, &cfg) < 0) {
+		printf("[af] SET_DEFAULT_FOCUS(%d): %s\n", dest,
+		       strerror(errno));
+		return -1;
+	}
+	return 0;
 }
 
 static int actuator_set_info(void)
@@ -1551,10 +1612,39 @@ static void af_move(int step)
 	nanosleep(&ts, NULL);
 }
 
+/* Current lens step, as the vendor HAL tracks it. */
+static int act_curr = 7;
+
+static void af_bringup(void)
+{
+	FILE *f = fopen("/data/krux/af", "r");
+	int v = 0;
+
+	if (f) {
+		if (fscanf(f, "%d", &v) != 1)
+			v = 0;
+		fclose(f);
+	}
+	af_level = (v >= 0 && v <= 4) ? v : 0;
+	if (af_level < 1)
+		return;
+	if (actuator_get_info() != 0)
+		return;
+	if (af_level < 2)
+		return;
+	if (actuator_set_info() != 0)
+		return;
+	if (af_level >= 3)
+		actuator_set_default(7);
+	if (af_level >= 4)
+		actuator_move(focus_step >= 0 ? focus_step : 7);
+}
+
 static int actuator_move(int step)
 {
 	struct act_damping damp[1];
 	struct act_cfg cfg;
+	int dir, sign, n;
 
 	if (actuator_fd < 0)
 		return -1;
@@ -1563,19 +1653,34 @@ static int actuator_move(int step)
 	if (step >= ACT_TOTAL_STEPS)
 		step = ACT_TOTAL_STEPS - 1;
 
+	/* The HAL's convention, captured from actuator_seq.log:
+	 *   increasing step -> dir=0, sign=+1 (towards macro)
+	 *   decreasing step -> dir=1, sign=-1 (towards infinity)
+	 * and num_steps is the distance moved. */
+	if (step >= act_curr) {
+		dir = 0;
+		sign = 1;
+		n = step - act_curr;
+	} else {
+		dir = 1;
+		sign = -1;
+		n = act_curr - step;
+	}
+
 	memset(damp, 0, sizeof(damp));
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.cfgtype = CFG_MOVE_FOCUS;
-	cfg.cfg.move.dir = 1;
-	cfg.cfg.move.sign_dir = 1;
+	cfg.cfg.move.dir = (int8_t)dir;
+	cfg.cfg.move.sign_dir = (int8_t)sign;
 	cfg.cfg.move.dest_step_pos = (int16_t)step;
-	cfg.cfg.move.num_steps = 0;
-	cfg.cfg.move.num_steps_inf_pos = 0;
+	cfg.cfg.move.num_steps = n;
+	cfg.cfg.move.num_steps_inf_pos = n;
 	cfg.cfg.move.ringing_params = damp;
 	if (ioctl(actuator_fd, VIDIOC_MSM_ACTUATOR_CFG, &cfg) < 0) {
 		printf("[af] MOVE_FOCUS(%d): %s\n", step, strerror(errno));
 		return -1;
 	}
+	act_curr = step;
 	return 0;
 }
 
@@ -1630,10 +1735,6 @@ static void *server_thread(void *arg)
 			mipi_config();
 			sensor_program_mode();
 			sensor_dump_regs("after programming");
-			if (focus_step >= 0 && actuator_set_info() == 0) {
-				actuator_move(focus_step);
-				printf("[af] parked at step %d\n", focus_step);
-			}
 			break;
 		case PRIV_STREAM_ON:
 			if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
@@ -2329,7 +2430,62 @@ static void *client_thread(void *arg)
 				pthread_mutex_unlock(&frame_mutex);
 			}
 
-			/* Autofocus is applied before streaming (see PRIV_S_FMT). */
+			/* Autofocus sweep, using the vendor HAL's move
+			 * convention.  Runs once after the stream is up; the
+			 * lens then stays put while scanning. */
+			{
+				static int phase, step, best_step, settle;
+				static unsigned long best_score;
+				static int fine_lo, fine_hi;
+
+				if (focus_step >= 0) {
+					phase = 3;
+				} else if (phase != 3 && ++settle >= 2) {
+					unsigned long score = af_sharpness(latest_y);
+					settle = 0;
+					if (phase == 0) {
+						phase = 1;
+						step = 7;
+						best_step = 7;
+						best_score = 0;
+						actuator_move(7);
+					} else if (phase == 1) {
+						printf("[af] step %d score %lu\n",
+						       step, score);
+						if (score > best_score) {
+							best_score = score;
+							best_step = step;
+						}
+						step += 5;
+						if (step >= ACT_TOTAL_STEPS) {
+							phase = 2;
+							fine_lo = best_step - 4;
+							if (fine_lo < 0)
+								fine_lo = 0;
+							fine_hi = best_step + 4;
+							if (fine_hi >= ACT_TOTAL_STEPS)
+								fine_hi = ACT_TOTAL_STEPS - 1;
+							step = fine_lo;
+							best_score = 0;
+						}
+						actuator_move(step);
+					} else if (phase == 2) {
+						if (score > best_score) {
+							best_score = score;
+							best_step = step;
+						}
+						step++;
+						if (step > fine_hi) {
+							phase = 3;
+							actuator_move(best_step);
+							printf("[af] focus step %d\n",
+							       best_step);
+						} else {
+							actuator_move(step);
+						}
+					}
+				}
+			}
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
 		}
@@ -2607,6 +2763,13 @@ int main(int argc, char **argv)
 		       full_chroma);
 	}
 	{
+		FILE *af = fopen("/data/krux/af", "r");
+		if (af) {
+			int v = 0;
+			if (fscanf(af, "%d", &v) == 1 && v >= 0 && v <= 4)
+				af_level = v;
+			fclose(af);
+		}
 		/* Focus is set before streaming: moving the lens while the
 		 * sensor streams stalls the pipeline (shared CCI bus). */
 		FILE *ff = fopen("/data/krux/focus", "r");
