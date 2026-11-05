@@ -1050,3 +1050,30 @@ raw/CPP path is the one to carry into Stage 3.
 > **Path note:** this document predates the source consolidation. The port
 > modules are now in `krux/src/` and `micropython/ports/unix/`; `kruxport/`
 > no longer exists.
+
+## 2026-11-05 — stability and idle power
+
+The camera is usable again after finding four separate issues:
+
+- **CPP debug dump.** The camera kernel's `cpp_dump_frames` module
+  parameter defaults to 64 and writes the first 64 CPP frames to
+  `/data/local/tmp` on every stream start.  It drops ISP frames, keeps
+  the CPU busy and can leave the pipeline with empty buffers.  The
+  init-stub/Python write happens before the parameter is writable; the
+  reliable place is camd immediately after `VIDIOC_STREAMON`.
+- **AE re-ran on every camera page.** The one-shot AE converged to a
+  different exposure on each page (the first page's max exposure
+  decoded; the second page's lower exposure clipped the QR).  It now
+  runs only on the first camera page; later pages keep that exposure.
+  Vol+/− still takes manual control.
+- **Per-frame idle skip.** Skipping the whole ISP/CPP cycle when no
+  frame requests arrive desynchronised the buffers and produced
+  corrupted preview frames.  camd now keeps the cycle running but slows
+  it to ~6 fps and skips only the downscale/AF when idle.
+- **Menu commit rate.** The LCD quiet-period commit thread ran every
+  50 ms even for a static menu.  It is now 200 ms (5 fps); the camera
+  preview and QR pages still commit explicitly at their own rate.
+
+The AF now does a full sweep on the first scan after boot and a local
+±5-step fine sweep around the last good focus on later scans, falling
+back to a full sweep when the local best is weak or at the window edge.
