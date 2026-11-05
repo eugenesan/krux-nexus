@@ -2584,19 +2584,19 @@ static void *client_thread(void *arg)
 						 * could never reach focus. */
 						if (step >= ACT_TOTAL_STEPS - 1) {
 							phase = 2;
-							fine_lo = best_step - 3;
+							fine_lo = best_step - 8;
 							if (fine_lo < 0)
 								fine_lo = 0;
-							fine_hi = best_step + 3;
+							fine_hi = best_step + 8;
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
 							/* Start below the peak and move
 							 * forward: this takes up the VCM's
 							 * backlash before the fine scores. */
-							step = best_step - 8;
+							step = fine_lo;
 							if (step < 0)
 								step = 0;
-							printf("[af] fine preload %d\n",
+							printf("[af] fine start %d\n",
 							       step);
 						} else {
 							step += 5;
@@ -2607,13 +2607,10 @@ static void *client_thread(void *arg)
 					} else if (phase == 2) {
 						printf("[af] fine %d score %lu\n",
 						       step, score);
-						/* A fine step must beat the coarse
-						 * best by 5% to win; the metric is
-						 * noisy and the coarse peak is
-						 * usually the true focus. */
-						if (step >= fine_lo &&
-						    score > best_score +
-						    best_score / 20) {
+						/* The fine window now contains the true peak;
+						 * take the best score rather than keeping a
+						 * coarse peak the lens cannot reproduce. */
+						if (score > best_score) {
 							best_score = score;
 							best_step = step;
 						}
