@@ -995,10 +995,10 @@ static int cpp_fd = -1;
  * mostly-dark preview with an occasional correct frame.  Track the next
  * buffer the ISP will fill from the capture loop. */
 static volatile int cpp_input_index = 0;
-/* The frame client (the firmware) holds the socket open while the
- * camera page is active.  When it disconnects, the capture thread
- * pauses the V4L2 stream so an idle camera does not burn CPU. */
-static volatile int client_active;
+/* Incremented by every frame request from the firmware.  When it stops
+ * moving, the capture thread skips the expensive downscale/AF work so an
+ * idle camera page does not keep a core busy. */
+static volatile unsigned frame_requests;
 /* The ISP consumes capture buffers in the order they were queued, so the
  * buffer it is about to fill is the head of this FIFO.  Guessing from the
  * last dequeue instead made every other frame read an unwritten buffer. */
@@ -2054,7 +2054,8 @@ static void *client_thread(void *arg)
 		}
 	}
 
-	static int paused;
+	static unsigned last_requests;
+	static int idle;
 	for (n = 0; ; n++) {
 		struct v4l2_buffer buf;
 		struct pollfd pfd = { .fd = fd, .events = POLLIN };
@@ -2065,50 +2066,15 @@ static void *client_thread(void *arg)
 		static uint64_t a_dbg, a_down, a_q, a_pace, a_tot;
 		static int pn;
 
-		if (!client_active) {
-			if (!paused) {
-				paused = 1;
-				ioctl(fd, VIDIOC_STREAMOFF, &rb.type);
-				printf("[client] paused (no client)\n");
+		{
+			unsigned req = frame_requests;
+			if (req == last_requests) {
+				if (idle < 1000)
+					idle++;
+			} else {
+				last_requests = req;
+				idle = 0;
 			}
-			usleep(100000);
-			continue;
-		}
-		if (paused) {
-			int qi;
-			for (i = 0; i < (int)rb.count; i++) {
-				struct v4l2_buffer qb;
-				memset(&qb, 0, sizeof(qb));
-				qb.index = i;
-				qb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-				qb.memory = V4L2_MEMORY_USERPTR;
-				memset(planes, 0, sizeof(planes));
-				planes[0].m.userptr = (unsigned long)bufs[i];
-				planes[0].length = width * height;
-				planes[1].m.userptr =
-					cbufs.planes[i][1].m.userptr;
-				planes[1].length = full_chroma ?
-					width * height : (width * height) / 2;
-				qb.m.planes = planes;
-				qb.length = 2;
-				if (ioctl(fd, VIDIOC_QBUF, &qb) < 0)
-					printf("[client] resume QBUF %d: %s\n",
-					       i, strerror(errno));
-			}
-			camd_q_count = (int)rb.count;
-			if (camd_q_count > (int)(sizeof(camd_q) /
-						sizeof(camd_q[0])))
-				camd_q_count = (int)(sizeof(camd_q) /
-						     sizeof(camd_q[0]));
-			for (qi = 0; qi < camd_q_count; qi++)
-				camd_q[qi] = qi;
-			camd_q_head = 0;
-			camd_q_tail = 0;
-			if (ioctl(fd, VIDIOC_STREAMON, &rb.type) < 0)
-				printf("[client] resume STREAMON: %s\n",
-				       strerror(errno));
-			paused = 0;
-			printf("[client] resumed\n");
 		}
 
 		/* The vendor's per-frame order: the chromatrix goes to
@@ -2155,10 +2121,9 @@ static void *client_thread(void *arg)
 			isp_replay(cam_cycle, CAM_CYCLE_COUNT,
 				   "per-frame cycle");
 		p3 = now_ns();
-		r = poll(&pfd, 1, 200);
+		r = poll(&pfd, 1, 5000);
 		if (r <= 0) {
-			if (r < 0)
-				printf("[client] poll: %s\n", strerror(errno));
+			printf("[client] no frame after 5s\n");
 			continue;
 		}
 		p4 = now_ns();
@@ -2299,6 +2264,7 @@ static void *client_thread(void *arg)
 					       p_y, p_uv, errno);
 			}
 			int published = 0;
+			if (!idle) {
 			if (p_y != MAP_FAILED && p_uv != MAP_FAILED) {
 				src_y = (const unsigned char *)p_y;
 				{
@@ -2764,6 +2730,7 @@ static void *client_thread(void *arg)
 					}
 				}
 			}
+			}
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
 		}
@@ -2893,12 +2860,12 @@ static void *socket_thread(void *arg)
 	for (;;) {
 		cfd = accept(sfd, NULL, NULL);
 		if (cfd < 0) continue;
-		client_active = 1;
 		for (;;) {
 			int r = read(cfd, buf, 1);
 			if (r <= 0) break;
 			if (buf[0] == 'F') {
 				unsigned char hdr[32];
+				frame_requests++;
 				memset(hdr, 0, 32);
 				memcpy(hdr, "KCF1", 4);
 				int seq;
@@ -3025,7 +2992,6 @@ static void *socket_thread(void *arg)
 					_exit(0);
 			}
 		}
-		client_active = 0;
 		close(cfd);
 	}
 	return NULL;
