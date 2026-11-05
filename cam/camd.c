@@ -2076,6 +2076,14 @@ static void *client_thread(void *arg)
 				idle = 0;
 			}
 		}
+		if (idle > 5) {
+			/* No camera page is asking for frames: stop the
+			 * per-frame ISP/CPP cycle and the downscale.  The
+			 * queued buffers stay with the driver; the first
+			 * request after this drains them. */
+			usleep(100000);
+			continue;
+		}
 
 		/* The vendor's per-frame order: the chromatrix goes to
 		 * the CPP first (it carries the frame's buffer
