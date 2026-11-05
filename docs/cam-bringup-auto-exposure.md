@@ -1,14 +1,23 @@
 # Camera bring-up — Auto-exposure (auto-brightness)
 
-> **Current state (2026-10-30 late).** The `W`/`E`/`V` socket commands are
-> implemented in `cam/camd.c`, and `krux/src/sensor.py` has
-> `__write_reg`/`set_exposure`/`set_gain`/`set_exposure_gain`/`set_vts`.
-> `Camera._auto_expose()` is implemented but **disabled by default**,
-> because the validated fast runtime camd (`camd-fast`) is unpaced and
-> does not include those commands.  The fallback uses the fixed vendor
-> exposure; the QR p90/p10 and entropy mid-gray/no-clip policies below are
-> still future work.  Do not enable auto-exposure until a stable
-> control-capable camd build is available.
+> **Current state (2026-11-05).** AE is implemented and active in
+> `krux/src/krux/camera.py`: a bounded, mean-driven controller with
+> clipping backoff. `cam/camd.c` exposes `W`/`E`/`V` and
+> `krux/src/sensor.py` has `__write_reg`/`set_exposure`/`set_gain`/
+> `set_exposure_gain`/`set_vts`. Continuous AE was removed because it
+> blew out the image.
+>
+> Two register findings from the bring-up:
+>
+> - The binned mode's `VMAX` is `0x04e4`; the vendor geometry uses
+>   `0x09d6`, which doubles the longest exposure. camd now uses the
+>   vendor value.
+> - Exposure is a **direct** value (larger = brighter). Verified on
+>   hardware: `0x0010` → luma 11, `0x04d0` → 129, `0x09c0` → 157.
+>
+> The QR p90/p10 and entropy mid-gray/no-clip policies below are still
+> the target; the current controller is the simpler mean-based version.
+> The `W`/`E`/`V` commands are in the runtime camd.
 
 Paste this into a fresh session.  This is a feature implementation task that
 requires both code changes (no device needed for steps 1-3) and device

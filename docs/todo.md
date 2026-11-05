@@ -2,6 +2,23 @@
 
 ## Camera
 
+### Autofocus (docs/cam-autofocus.md) — current blocker
+- [x] Capture the DW9714 table (45 steps, 9 codes/step, initial code 169)
+- [x] Capture the vendor HAL call sequence (`open → GET_INFO → SET_INFO →
+      SET_DEFAULT_FOCUS(7) → MOVE`, hunts while streaming)
+- [x] Replay the sequence in camd after sensor power-up, before the mode table
+- [x] Add `/data/krux/af` (0-4) bisect and `/data/krux/focus` fixed step
+- [x] Confirm level 1 (`open` + `GET_INFO`) keeps the stream alive
+- [ ] Confirm the boot image actually carries the newest camd (one run used an
+      older binary: `cfg 1 → cfg 3`, no `cfg 2`)
+- [ ] Read the `actuator init:` parsed params and reconcile
+      `msm_actuator_set_info_t` with the kernel layout
+- [ ] Fix the `SET_INFO` / real-lens-move stream stall (`i2c table index out of
+      bound`; level 2 stalls after ~2 frames)
+- [ ] Calibrate the focus step with a lit scene at the working distance (~40 cm)
+- [ ] Replace the coarse contrast sweep with the vendor-style hunt; make
+      startup AF the default
+
 ### Integration/wiring (2026-10-30 late)
 - [x] Fix `_image.from_nv12` argument/lifetime and use GC-managed image buffers
 - [x] `sensor.snapshot()` header/ready/sequence handling and 15 fps client throttle
@@ -10,12 +27,12 @@
 - [x] Add camd `W`/`E`/`V`/`Q`/`S` socket commands in the source
 - [x] Start camd from the firmware init stub and bundle it in the ramdisk
 - [x] Smoke test (320×240), entropy statistics, `shannon`, and QR-decode path
-- [ ] Rebuild the stub ramdisk/boot image and verify camd auto-start on a cold boot
+- [x] Rebuild the stub ramdisk/boot image and verify camd auto-start on a cold boot
 - [ ] Real static QR and animated UR in the full Krux UI
 - [ ] Entropy page in the full Krux UI (well-lit mid-gray scene)
-- [ ] Build a stable control-capable camd (or stable paced build) and enable AE
+- [x] Build a stable control-capable camd and enable AE (bounded mean-driven AE with clipping backoff; converges in lit scenes)
 - [ ] 50 reset/run/close cycles and 30-min stability on the chosen path
-- [ ] Decide whether PIX is needed for 20 fps/10 fps animated UR; otherwise keep CAMIF_RAW+CPP
+- [x] Decide whether PIX is needed for 20 fps/10 fps animated UR; CAMIF_RAW+CPP at ~15 fps is the chosen path for now
 
 ### Stage 4 acceptance (docs/cam-bringup-stage4.md)
 - [ ] QR decode on real QR code (use a lit LCD/printed code; fixed vendor exposure for now)

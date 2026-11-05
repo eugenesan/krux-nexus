@@ -16,7 +16,7 @@ successfully; that is the only remaining blocker on the image side.
 | Preview | Portrait 720x960, rotated in camd, unsharp mask, correct aspect (no crop) |
 | Exposure | VMAX raised to the vendor 0x09d6; bounded mean-driven AE with clipping backoff; continuous AE disabled |
 | QR decode | Captured frames are clean and sharp-ish, but the QR does not decode yet |
-| Autofocus | DW9714 VCM found (`/dev/v4l-subdev7`), vendor table captured, HAL sequence replayed; SET_INFO / real lens move stalls the stream — open |
+| Autofocus | DW9714 VCM found (`/dev/v4l-subdev7`), vendor table captured, HAL sequence replayed; SET_INFO / real lens move stalls the stream — open (docs/cam-autofocus.md) |
 | Boot image | Bundled stub image fits after pruning terminfo+python, hard-float MicroPython and a stripped camd (22.65 MB) |
 | Entropy | Statistics path unchanged; keep the delivered frame at 640-720 px for frame rate |
 | PIX_VIEWFINDER | Still not delivering completed frames; not needed for QR |

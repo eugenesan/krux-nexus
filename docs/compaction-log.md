@@ -2046,3 +2046,269 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - `Menu` adds a Back item unless `back_label=None`; `run_loop()` returns `(index,status)`; `back_index` is the last item.
 - Main tree and `linux`/`krux`/`micropython` submodules are clean; no uncommitted changes.
 - Kernel fix exists on `airgap/master-cleanup`; do not merge the KernelSU commits from `airgap/cam-ksu` into the shipping kernel.
+
+## 2026-10-31 22:39:09 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Maintain the Nexus Krux fork with full upstream functionality parity and a standalone host test suite.
+- Restore UR support and move MicroPython/cUR dependencies into the Krux fork so Krux can be reused independently.
+
+## Requirements
+- No symlinks in the Krux tree.
+- cUR must be a single submodule, owned by the MicroPython fork, with its `micropython.mk` incorporated into the MicroPython port.
+- MicroPython must be a submodule of Krux so Krux does not depend on the Nexus main project.
+- Host tests must not require a full MicroPython firmware build.
+- Document `UV_PROJECT_ENVIRONMENT` usage for the Krux test suite.
+- `Kboot` must be deinitialized if not needed.
+- Restore full upstream UR functionality.
+- Preserve essential `/tmp` camera artifacts before host reboot.
+- Camera test constraints: reversible `fastboot boot`, one atomic boot+run cycle, no modem/Wi-Fi/BT/vendor HAL; target 20 fps capture / 15 fps decode.
+- SeedKeeper and UR real-device testing remain deferred until the user is available.
+
+## Decisions
+- Top-level project submodules are now only `linux` and `krux`.
+- MicroPython is `krux/firmware/micropython`; cUR is `krux/firmware/micropython/lib/cUR`.
+- Host `uUR` is built by `uv` as a CPython extension from `firmware/micropython/lib/cUR`.
+- Firmware cUR is built by `krux/firmware/micropython/ports/unix/modules/cUR/micropython.mk`; build staging copies source into a disposable build dir, avoiding symlinks.
+- `Kboot` was deinitialized; `MaixPy` remains uninitialized; `firmware/font` is normal tracked source used only by simulator/tooling.
+- Essential camera artifacts were preserved under `artifacts/built/cam-yonly/`.
+- The stable camera image is y-only + CAMIF-mask; exact stable daemon source is preserved because it differs from current `cam/camd.c`.
+
+## Work State
+
+### Completed
+- SeedKeeper UI work: View Secrets menu, touch-dismissed info menus, SeedKeeper-generated new mnemonic.
+- Host test suite green: `1433 passed, 1 xfailed`.
+- Port tests repaired for buttons, touch, light, auto-shutdown, QR capture, printers, datum, menu.
+- `hmac.compare_digest` shim and host `time.ticks_add`/`ticks_diff` shims added.
+- UR support restored: `uUR` now compiled into firmware; PSBT/UR mnemonic/descriptor/Datum paths available again.
+- cUR moved into the MicroPython fork; no cUR wrapper/symlinks remain in Krux.
+- MicroPython moved into Krux; top-level main-project `micropython` submodule removed.
+- Standalone Krux `uv sync` and full test suite verified from `krux/`.
+- Firmware cross-build with nested cUR succeeded; `rootfs/micropython-arm32` updated.
+- Docs updated for cUR, standalone test setup, external `UV_PROJECT_ENVIRONMENT`, and camera artifact paths.
+- Kboot deinitialized and stale `.git/modules` caches cleaned.
+- Essential `/tmp` artifacts preserved before reboot.
+
+### Active
+- Verify and push nested MicroPython/cUR commits to their remotes so fresh clones resolve them.
+- Decide whether to restore thermal/GRBL printer parity, which still depends on missing `fpioa_manager`/UART pinmux.
+- Real-device validation of UR mnemonic/PSBT/descriptor/Datum flows.
+- Real-device validation of SeedKeeper menus and card-generated mnemonic.
+- Final firmware init-stub/ramdisk with automatic camd startup.
+
+### Blocked
+- Real-device testing is unavailable until the user is available.
+- Thermal/GRBL printer parity needs a Linux serial/USB backend; not solved by cUR/MicroPython work.
+- Camera QR/UR/entropy pages and AE policy still require device testing; `Camera._auto_expose()` remains disabled because stable camd lacks `W`/`E`/`V`.
+
+## Next Move
+1. Verify/push the nested `micropython`, `lib/cUR`, and `krux` commits; validate a fresh recursive clone.
+2. Run the documented standalone Krux setup from a clean checkout and confirm `uv sync` + tests.
+3. Decide the printer parity scope, then implement a Linux serial backend or explicitly document it as unsupported.
+4. With the device available, test UR mnemonic loading, PSBT signing/export, wallet descriptor UR, and Datum UR.
+5. With the device available, test SeedKeeper View Secrets/info menus and card-generated mnemonic.
+6. Rebuild final init-stub/ramdisk using `artifacts/built/cam-yonly/zImage-dtb`, add automatic camd startup, and test.
+7. Continue camera QR/UR/entropy and AE testing on a fresh camera boot.
+
+## Relevant Files
+- `krux/firmware/micropython`: nested MicroPython submodule in Krux.
+- `krux/firmware/micropython/lib/cUR`: single cUR submodule, commit `ed744562`.
+- `krux/firmware/micropython/ports/unix/modules/cUR/micropython.mk`: firmware cUR usermod makefile.
+- `scripts/build/build-micropython.sh`: builds firmware from `krux/firmware/micropython`, stages cUR source.
+- `krux/pyproject.toml`: host `uUR` path is `firmware/micropython/lib/cUR`.
+- `krux/README.md`: standalone test setup and `UV_PROJECT_ENVIRONMENT` documentation.
+- `krux/CONTRIBUTING.md`: test prerequisites and external uv environment.
+- `rootfs/micropython-arm32`: current built firmware binary, gitignored but persistent.
+- `artifacts/built/cam-yonly/`: stable camera boot image, camd binary/source, zImage, config, logs, checksums.
+- `cam/camd.c`: current camera daemon source; differs from exact stable source in artifacts.
+- `linux/`: kernel source; camera commits `bc0ddf04a08`, `916fb726a2a`, `cdcc09b3682`.
+- `docs/cam-stability-thermal.md`: stable image/test results and preserved artifact paths.
+- `docs/build-guide.md`: firmware build path updated to nested MicroPython.
+- `krux/src/krux/psbt.py`: top-level `uUR` import; PSBT signing restored.
+- `krux/src/krux/pages/seedkeeper.py`: SeedKeeper menus and new-mnemonic flow pending device validation.
+
+## Important Context
+- Current main `HEAD`: `4ccf443`; Krux submodule: `d34044cc`; nested MicroPython: `9787a649`; cUR: `ed744562`.
+- The nested `micropython` commit `9787a649` may still need pushing to its remote; fresh clones require all nested commits available.
+- Main `.gitmodules` has only `linux` and `krux`; MicroPython/cUR are nested under Krux.
+- Host tests: `cd krux && uv sync --frozen && uv run poe test-simple`; no full MicroPython firmware build needed.
+- External environment: `export UV_PROJECT_ENVIRONMENT=/tmp/opencode/krux-venv` before both `uv sync` and `uv run`.
+- Firmware build: `scripts/build/build-micropython.sh`; it stages cUR under the MicroPython build tree and removes the stage afterward.
+- Stable camera artifacts: `artifacts/built/cam-yonly/boot.img`, `camd`, `camd.c`, `zImage-dtb`, `kernel.config`, `logs/`, `SHA256SUMS`.
+- Stable image and daemon are TWRP/test artifacts; final init-stub/ramdisk and automatic camd startup are still pending.
+- `artifacts/built/` is gitignored; survives host reboot but not a future `git clean -fdx`.
+- `Kboot` and `MaixPy` are deinitialized; `firmware/Kboot` cached data was removed.
+- `firmware/font` is a normal tracked directory, used by simulator/font tooling only.
+- Thermal/GRBL printer paths still reference `fpioa_manager`/K210 UART pinmux and are not available on Nexus firmware.
+- `/tmp/opencode` was 6.6 GB; only build trees, experimental binaries, ad-hoc `uv`/pydeps, screenshots, and profiling logs remain disposable.
+
+## 2026-11-04 23:07:49 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Maintain the Nexus Krux fork with upstream parity and a standalone host test suite, and validate the camera/QR flows on the real Nexus 5.
+- Current focus: make Datum, descriptor, and text-mnemonic QR scans work; compact SeedQR already works.
+
+## Requirements
+- No symlinks in the Krux tree; MicroPython and cUR remain nested under Krux/MicroPython.
+- Reversible `fastboot boot`; keep camera testing to one clean boot/run cycle when required.
+- No modem, Wi-Fi, BT, or vendor HAL.
+- Preserve a stable host test suite that does not require a firmware build.
+- User has one screen; tell them before showing a QR and allow a few seconds.
+- User does not want the camera flash/torch used for screen QR scanning.
+- Datum/descriptor/mnemonic camera scans must work, not just compact SeedQR.
+
+## Decisions
+- Use VGA 640×480 capture for dense QRs; capture is a 1:1 center crop from the binned sensor (~2.5× angular resolution).
+- Keep camd alive across pages; do not stop/restart it on normal camera exit.
+- Preview is on-demand/still-only because continuous VGA panel updates freeze/tear.
+- Camera page controls: TOUCH/ENTER refresh still preview; VOL+/VOL− exit; flash stays off.
+- One camera session per cold boot when the CPP stalls; service restart is insufficient.
+- Keep camd supervisor in init-stub and the frame-copy-before-socket-write fix.
+- Set MicroPython heap to 8M for full UI plus VGA camera frames.
+
+## Work State
+
+### Completed
+- Fork/cUR/MicroPython restructuring, standalone `uv` tests, UR support, and 8M heap are in place.
+- Host suite previously green: `1433 passed, 1 xfailed`; not rerun after latest camera edits.
+- CompactSeedQR (16-byte) decoded and imported successfully on the device.
+- Synthetic Datum QR at 640×480 decodes correctly with the native decoder.
+- Camera daemon supervisor, cold-boot recovery, VGA capture, center crop, and socket frame-copy fix implemented.
+- QR payload fixes: positional `find_qrcodes()` call and compact-SeedQR raw-byte fallback for missing `latin-1`.
+- Torch removed from camera scanning; flash forced off.
+- Camera page now supports TOUCH/ENTER still refresh and VOL+/VOL− exit.
+- All camera changes committed locally; not pushed.
+
+### Active
+- Diagnose why real-camera Datum, descriptor, and text/12-word mnemonic QRs fail while compact SeedQR succeeds.
+- Validate the latest touch-refresh/volume-exit controls after a fresh boot.
+- Inspect `/data/krux/last-qr.rgb565` from failed scans to determine whether dense QRs are unreadable or `find_qrcodes()` rejects them.
+- Preview artifacts/freezes remain unresolved; preview is currently on-demand still.
+
+### Blocked
+- Dense QR scans fail despite VGA/center-crop capture.
+- Camera stream can stall with `CFG: Resource temporarily unavailable`, `no frame after 5s`, `Camera snapshot failed: no new frame from camd`, requiring a cold boot.
+- Repeated camera sessions are unreliable; one session per boot is currently required.
+- Device state is uncertain after the last user-forced fastboot; verify whether it is in fastboot, stub/Krux, or Android.
+- Real-device testing depends on user availability; SeedKeeper/UR device validation remains deferred.
+
+## Next Move
+1. Check `adb devices`/`fastboot devices`; boot `artifacts/built/boot-cam-stub.img` if needed and confirm one camd process.
+2. Cold-boot, open camera once, and test TOUCH still refresh plus VOL+/VOL− exit.
+3. Attempt Datum in that clean session; on failure pull `/data/krux/last-qr.rgb565` and inspect/decode it on the host.
+4. Compare the raw failed frame against the synthetic Datum frame to separate aim/focus/contrast from decoder rejection.
+5. If dense QRs remain unreadable, evaluate a tighter crop/zoom, QR preprocessing, or scan-only mode; reboot between descriptor/mnemonic tests.
+6. Re-run host tests and push the local commits when camera testing stabilizes.
+
+## Relevant Files
+- `krux/src/krux/pages/qr_capture.py`: camera loop, still preview, touch/volume controls, failed-frame dump.
+- `cam/camd.c`: VGA center crop, frame-copy socket fix, camd commands.
+- `krux/src/sensor.py`: 640×480 protocol, 8s snapshot deadline, camd lifetime.
+- `krux/src/krux/camera.py`: auto-exposure tuning, keeps stream alive on hammerhead.
+- `krux/src/krux/display.py`: VGA preview rendering.
+- `rootfs/init-stub.c`: 8M heap and camd supervisor.
+- `krux/firmware/micropython/ports/unix/lcd_bcm.c`: preview commit guard/display support.
+- `artifacts/built/boot-cam-stub.img`: current boot image with supervisor/heap.
+- `artifacts/built/cam-yonly/camd-vga`: built VGA camd binary deployed to `/data/krux/camd`.
+- `artifacts/built/cam-yonly/qr-compact-seed.png`: working CompactSeedQR.
+- `artifacts/built/cam-yonly/qr-datum.png`: enlarged Datum test QR.
+- `artifacts/built/cam-yonly/qr-descriptor.png`: enlarged descriptor test QR.
+- `artifacts/built/cam-yonly/qr-12-word.png`: dense text mnemonic QR that still fails.
+- `krux/src/krux/pages/mnemonic_loader.py`: compact-SeedQR payload fallback.
+- `/data/krux/last-qr.rgb565`: raw VGA frame from the last failed scan.
+
+## Important Context
+- Compact SeedQR works; Datum, descriptor, and text/12-word mnemonic do **not**.
+- User corrected an earlier statement: Datum has never worked end-to-end.
+- Preview artifacts (dark vertical bars, flicker, partial frames) are display-side; raw VGA capture was stable in an 80-frame test, and synthetic Datum decodes.
+- Current camera session can stall after several seconds with `Camera snapshot failed: no new frame from camd`; cold boot is the only reliable recovery.
+- Camera controls currently: TOUCH/ENTER = still refresh; VOL+/VOL− = exit; no torch.
+- Current commits: main `ee76d7f`, Krux `90e2d31f`, nested MicroPython `b3d562edc`.
+- All commits are local/unpushed; only `docs/compaction-log.md` is modified and uncommitted.
+- `/data/krux/camd` is the VGA crop build; `artifacts/built/boot-cam-stub.img` is current; `/data/krux/micropython` is current.
+- If the camera stream stalls, do not keep tapping; exit with a volume key and cold-boot before the next camera test.
+
+## 2026-11-05 06:23:31 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera work in the Krux port for QR/Datum/descriptor/mnemonic scanning, animated UR, and entropy collection, while keeping upstream parity and the standalone host test suite.
+- Recently also: implement autofocus on camera start, and document the camera findings.
+
+## Requirements
+- No modem, Wi-Fi, BT, or vendor HAL; no symlinks in the Krux tree.
+- Reversible `fastboot boot` only; one clean camera session per cold boot when required.
+- Never aim or start a camera scan without asking first; give a 10-second cue to switch the screen to the QR, scan ~20 s, then tell the user to return.
+- Do not use the camera flash/LED for screen QR scanning.
+- Keep QR parsing inside Krux (do not move QR decoding into camd) because many QR variants and other camera uses must be supported.
+- Higher scan resolution slows things down and hurts entropy/animated UR; keep the delivered frame modest (Android port uses 640 px).
+- Build with the project's hard-float `arm-linux-gnueabihf` toolchain and ccache; build MicroPython out of tree in `/tmp/opencode/mp-build`.
+- Kernel work stays in this project (`linux`), preserving KernelSU patches.
+- Memory-wipe work is deferred.
+
+## Decisions
+- Use the vendor HAL's CPP model: offline processing (`frame_type=0`) with native ION buffers (`native_buff=1`, input fd per frame) instead of realtime.
+- Publish only CPP-processed frames (identified by a populated chroma plane) because the ISP also completes raw frames into the same queue.
+- Preview is portrait 720×960, rotated in camd with an unsharp mask; no crop (a 3:4 crop of a 4:3 sensor stretches the image).
+- Exposure: VMAX raised to the vendor value `0x09d6`; exposure is direct (larger = brighter); bounded mean-driven AE with clipping backoff; continuous AE removed.
+- Autofocus uses the captured DW9714 table and the HAL's call sequence, bisectable via `/data/krux/af` (0–4) and a fixed step via `/data/krux/focus`.
+- Lens control is currently opt-in (default off) so the camera stays usable.
+
+## Work State
+### Completed
+- Hard-float + ccache out-of-tree MicroPython build; script verifies VFP ABI. Soft-float binary was the cause of an earlier SIGSEGV.
+- Captured the vendor CPP config with a kernel hook (`cpp_frm_NNN.bin`) and wrote `tools/parse_cpp_dump.py` (`--summary`, `--diff`).
+- camd now uses the offline/native CPP model; frames are consistent (10-frame spread 0) and geometrically correct (full raw frame verified).
+- Fixed tearing: `latest_y` written under `frame_mutex`.
+- Fixed tiled preview: `from_nv12` was hard-coded to 640×480 while data was 480×640.
+- Portrait preview, correct aspect, unsharp mask; 8-buffer ring fixed stream starvation.
+- Exposure verified working (`0x0010`→luma 11, `0x04d0`→129, `0x09c0`→157); AE converges in lit scenes.
+- Captured the HAL actuator sequence and DW9714 table (45 steps, 9 codes/step, 10-bit DAC, initial code 169, init regs 0x00ec/0x00a1/0x00f2/0x00dc); `tools/parse_actuator_dump.py` written.
+- camd replays `open → GET_INFO → SET_INFO → SET_DEFAULT_FOCUS(7) → MOVE` with the correct `dir`/`sign` convention.
+- Boot image size solved: pruned `terminfo` (6.6 MB) and `python3.10` (3.2 MB), hard-float MicroPython, stripped camd → bundled image 22.65 MB (limit 23.07 MB).
+- Docs updated: `docs/cam-plan.md`, `docs/cam-state.md`, `docs/cam-frame-path.md`, `docs/cam-integration.md`.
+
+### Active
+- Fix the actuator/pipeline interaction: `SET_INFO` and real lens moves stall the stream (level 1 `open+GET_INFO` survives; level 2 stalls after ~2 frames).
+
+### Blocked
+- Focus calibration needs a properly lit scene (device is in a dark environment for hours).
+- Dense QR/UR/entropy end-to-end validation not done; QR still does not decode.
+
+## Next Move
+1. Ensure the boot image carries the newest camd (last run appeared to use an older binary: driver log showed `cfg 1 → cfg 3`, no `cfg 2`).
+2. Test `/data/krux/af=2` (SET_INFO only) and `af=4` (single move at power-up); if it stalls, check the `actuator init:` kernel log for parsed `total_steps`/`region_size` vs the captured table.
+3. With light: sweep `/data/krux/focus` (e.g. 7/15/25/35) at the working distance, pick the sharpest, then implement startup AF using the HAL sequence.
+4. Validate QR, then animated UR and entropy, decoding every Nth frame and keeping delivery at 640–720 px.
+5. Re-run the host suite and consider pushing the local commits.
+
+## Relevant Files
+- `cam/camd.c`: capture loop, CPP offline/native, publisher filter, portrait downscale, AE hooks, actuator sequence and `af_level` bisect.
+- `cam/cam_actuator.h`: DW9714 step constants.
+- `cam/cam_chromatrix.h` / `cam/cam_chromatrix_offline.h`: 266-word (1280×960) vs 293-word (1600×1200) messages.
+- `krux/src/krux/camera.py`: VMAX/exposure range, AE controller, lens-control flag.
+- `krux/src/krux/pages/qr_capture.py`: camera page, preview redraw, snapshot retry.
+- `krux/src/sensor.py`: 720×960 socket protocol, luma-only delivery, `gc.collect()`.
+- `krux/src/krux/display.py`: hammerhead preview draw (scale 1).
+- `linux/drivers/media/platform/msm/camera_v2/sensor/actuator/msm_actuator.c`: actuator dump/log hooks.
+- `linux/drivers/media/platform/msm/camera_v2/pproc/cpp/msm_cpp.c`: CPP frame-config dump hook.
+- `rootfs/build-stub-ramdisk.sh`: terminfo/python pruning, bundled firmware.
+- `rootfs/make-boot-image.sh`: stub image packing.
+- `tools/parse_cpp_dump.py`, `tools/parse_actuator_dump.py`: capture parsers.
+- `docs/cam-plan.md`, `docs/cam-state.md`: updated status and plan.
+- `scripts/build/build-micropython.sh`: hard-float, ccache, out-of-tree, ABI check.
+
+## Important Context
+- Device is currently in Android; nothing flashed; all work committed locally (outer `8e53781`, linux `17774b5abd9`, krux commits) and unpushed.
+- Camera boot: `fastboot boot artifacts/built/boot-cam-stub.img` (bundled) or `/tmp/opencode/boot-af*.img`; killing camd leaves `/dev/video0` busy until a cold boot; `ctl.stop`/`ctl.start` of the service has crashed/dropped adb repeatedly.
+- The bundled boot image restores its own camd to `/opt/krux` and `/data/krux`, so a new camd must be baked into the image.
+- Actuator is `/dev/v4l-subdev7` (`msm_actuator`); HAL identity `0x10002`; driver errors `i2c table index out of bound` come from a real lens move.
+- The Nexus 5 lens is fixed-focus/VCM parked near infinity; Android (CameraX, 640 px analysis) reads the same QR, so focus — not resolution — is the limiter.
+- Touch injection works only when ABS_MT_POSITION_X/Y precede ABS_MT_TRACKING_ID; camera page taps: main menu y=180, submenu y=280; exit tap anywhere.
+- Memory-wipe research is in `docs/memory-wipe-findings.md` (deferred).

@@ -18,6 +18,9 @@
 - nfc-isodep.md - NFC ISO-DEP notes
 - nfc-transport.md - NFC transport notes
 - cam-plan.md - camera completion plan (kernel V4L2 → MaixPy sensor shim)
+- cam-autofocus.md - DW9714 VCM: vendor sequence, table, bisect, calibration
+- cam-frame-path.md - actual CAMIF_RAW + CPP frame path and delivery
+- cam-integration.md - camd/firmware integration notes
 - phase0-findings.md - phase 0 bring-up findings
 - directories.md - project layout
 - scripts-triage.md - scripts/tools layout and archive decisions

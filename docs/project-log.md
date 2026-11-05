@@ -12901,3 +12901,38 @@ not flashed, so the installed boot partition is unchanged.
 - Renamed `docs/plan-camera.md` → `docs/cam-plan.md`.
 - Dropped `docs/continue-prompt.md`; created `docs/todo.md` with remaining tasks.
 - Updated all cross-references in docs/.
+
+---
+
+## 2026-11-05 — Camera: CPP, exposure, autofocus, image size
+
+- Captured the vendor CPP frame config with a kernel hook
+  (`cpp_frm_NNN.bin`, `tools/parse_cpp_dump.py`). The HAL uses the
+  **offline** path (`frame_type=0`) with native ION buffers
+  (`native_buff=1`, input fd per frame); its message is 293 words for a
+  1600x1200 output, ours 266 words for 1280x960.
+- camd now uses the offline/native model. Frames are consistent (10-frame
+  spread 0) and geometrically correct. Only frames with a populated
+  chroma plane are published, because the ISP also completes raw frames
+  into the same queue.
+- Fixed tearing (`latest_y` under the frame mutex) and the tiled preview
+  (`from_nv12` was hard-coded to 640x480). Preview is portrait 720x960,
+  rotated in camd, with an unsharp mask and no crop.
+- Exposure: raised VMAX to the vendor `0x09d6`; exposure is direct
+  (`0x0010` → luma 11, `0x04d0` → 129, `0x09c0` → 157). AE is a bounded
+  mean-driven controller with clipping backoff; continuous AE removed.
+- Autofocus: DW9714 VCM (`/dev/v4l-subdev7`). Captured the 45-step,
+  9-codes/step table and the HAL call sequence
+  (`open → GET_INFO → SET_INFO → SET_DEFAULT_FOCUS(7) → MOVE`, hunting
+  while streaming). camd replays it after sensor power-up; `SET_INFO`
+  and real moves still stall the stream. Bisect with `/data/krux/af`
+  (0-4); level 1 survives, level 2 stalls after ~2 frames. Details in
+  `docs/cam-autofocus.md`.
+- Build: hard-float `arm-linux-gnueabihf` + ccache, MicroPython built
+  out of tree. The earlier soft-float binary SIGSEGV'd once the display
+  and camera ran.
+- Boot image fits after pruning `terminfo` (6.6 MB) and `python3.10`
+  (3.2 MB), using hard-float MicroPython and a stripped camd:
+  22.65 MB against the 23.07 MB limit.
+- Remaining: fix the SET_INFO/move stall, calibrate focus with light,
+  then validate QR, animated UR and entropy end to end.

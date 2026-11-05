@@ -98,7 +98,8 @@ is built.
 - Autofocus is the open item: the IMX179's DW9714 VCM is configured from
   the captured vendor table, but `SET_INFO` and real lens moves stall the
   stream. Bisect with `/data/krux/af` (0-4); calibrate the chosen step
-  with `/data/krux/focus` once a lit scene is available.
+  with `/data/krux/focus` once a lit scene is available. See
+  `docs/cam-autofocus.md`.
 - Keep the delivered frame at 640-720 px for entropy and animated-UR
   frame rate; decode every Nth frame rather than every frame.
 

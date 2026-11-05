@@ -34,7 +34,7 @@ Details of the discoveries are in `cam-state.md`; the short version:
   driver table is 45 steps, 9 DAC codes/step, initial code 169.
   camd replays the sequence, but `SET_INFO`/a real lens move currently
   stalls the stream. This is the open blocker; bisect with
-  `/data/krux/af` (0-4).
+  `/data/krux/af` (0-4). Details: `docs/cam-autofocus.md`.
 - **Android reference**: KruxMobileApp analyses at **640 px** via
   CameraX, and that reads the QR on the same hardware — so resolution is
   not the limiting factor; focus and the CPP path are.
