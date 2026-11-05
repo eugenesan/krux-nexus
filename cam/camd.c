@@ -54,6 +54,7 @@
 #include "cam_capture.h"
 #include "cam_cycle.h"
 #include "cam_chromatrix.h"
+#include "cam_chromatrix_offline.h"
 #include "sensor_config.h"
 #include "sensor_live.h"
 
@@ -969,13 +970,18 @@ static int cpp_send_chromatrix(void)
 		return -1;
 
 	memset(&frame, 0, sizeof(frame));
-	frame.frame_type = 1;		/* realtime */
-	frame.msg_len = CAM_CPP_MSG_WORDS;
-	frame.cpp_cmd_msg = cam_cpp_msg;
+	/* The vendor camera HAL drives the CPP in offline mode with native
+	 * ION buffers: it names the exact input fd for each frame.  Realtime
+	 * mode (frame_type 1) does not match what the firmware expects for
+	 * this sensor mode. */
+	frame.frame_type = 0;
+	frame.msg_len = CAM_CPP_MSG_OFFLINE_WORDS;
+	frame.cpp_cmd_msg = cam_cpp_msg_offline;
 	frame.status = &cpp_status;
 	frame.identity = ((uint32_t)session_id << 16) | (uint32_t)0;
 	frame.input_buffer_info.index = (uint32_t)cpp_input_index;
-	frame.input_buffer_info.native_buff = 0;
+	frame.input_buffer_info.fd = client_buf_fd[cpp_input_index];
+	frame.input_buffer_info.native_buff = 1;
 
 	memset(&io, 0, sizeof(io));
 	io.id = session_id;
@@ -1143,8 +1149,8 @@ static int isp_start(void)
 			cpp_fd = fd;
 			memset(&frame, 0, sizeof(frame));
 			frame.frame_type = 1;		/* realtime */
-			frame.msg_len = CAM_CPP_MSG_WORDS;
-			frame.cpp_cmd_msg = cam_cpp_msg;
+			frame.msg_len = CAM_CPP_MSG_OFFLINE_WORDS;
+			frame.cpp_cmd_msg = cam_cpp_msg_offline;
 			/* The CPP writes the result of the frame
 			 * through this pointer.  Left NULL the copy
 			 * back fails and the whole ioctl is reported
@@ -1706,7 +1712,7 @@ static void *client_thread(void *arg)
 				continue;
 			}
 			p5 = now_ns();
-			cpp_input_index = buf.index;
+			cpp_input_index = (buf.index + 1) % (int)cbufs.count;
 			if (debug_frames) {
 				printf("[client] plane0: bytesused=%u length=%u data_offset=%u\n",
 				       dqplanes[0].bytesused, dqplanes[0].length,
@@ -1911,35 +1917,47 @@ static void *client_thread(void *arg)
 					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
 				}
 				{
-					/* 1:1 centre crop: 640x480 native pixels from
-					 * the binned sensor.  This is a ~2.5x zoom
-					 * over the old full-FOV downscale and gives
-					 * dense PSBT/Datum/descriptor QRs enough
-					 * pixels to decode. */
-					int ox = (width - OUT_W) / 2;
-					int oy = (height - OUT_H) / 2;
+					/* Full field of view, box-averaged down to the
+					 * frame the daemon delivers.  A centre crop
+					 * gave ~2.5x more pixels per module but only
+					 * a ~30mm field at 2m, which made the
+					 * viewfinder impossible to aim. */
 					int dx, dy;
 					for (dy = 0; dy < OUT_H; dy++) {
-						const unsigned char *src =
-							src_y + (oy + dy) * width + ox;
-						for (dx = 0; dx < OUT_W; dx++)
-							latest_y[dy * OUT_W + dx] = src[dx];
+						int y0 = dy * height / OUT_H;
+						int y1 = (dy + 1) * height / OUT_H;
+						int sy;
+						for (dx = 0; dx < OUT_W; dx++) {
+							int x0 = dx * width / OUT_W;
+							int x1 = (dx + 1) * width / OUT_W;
+							int sx;
+							unsigned long acc = 0;
+							int n = (x1 - x0) * (y1 - y0);
+							for (sy = y0; sy < y1; sy++) {
+								const unsigned char *row =
+									src_y + sy * width;
+								for (sx = x0; sx < x1; sx++)
+									acc += row[sx];
+							}
+							latest_y[dy * OUT_W + dx] =
+								(unsigned char)(acc / (n ? n : 1));
+						}
 					}
 				}
 				{
 					int uv_w = width / 2;
 					int uv_h = height / 2;
-					int ox = (uv_w - (OUT_W / 2)) / 2;
-					int oy = (uv_h - (OUT_H / 2)) / 2;
 					int dx, dy;
 					for (dy = 0; dy < OUT_H / 2; dy++) {
-						const unsigned char *src =
-							src_uv + (oy + dy) * width + ox * 2;
+						int sy = dy * uv_h / (OUT_H / 2);
+						const unsigned char *row =
+							src_uv + sy * width;
 						for (dx = 0; dx < OUT_W / 2; dx++) {
+							int sx = dx * uv_w / (OUT_W / 2);
 							latest_uv[(dy * (OUT_W / 2) + dx) * 2] =
-								src[dx * 2];
+								row[sx * 2];
 							latest_uv[(dy * (OUT_W / 2) + dx) * 2 + 1] =
-								src[dx * 2 + 1];
+								row[sx * 2 + 1];
 						}
 					}
 				}
