@@ -2456,12 +2456,36 @@ static void *client_thread(void *arg)
 					}
 				}
 				{
-					/* Publish every frame.  The preview filter
-					 * lives in qr_capture.py: the QR decoder must
-					 * see every frame, while the panel should skip
-					 * the dark/partial ones. */
-					latest_seq++;
-					latest_ready = 1;
+					/* Drop the raw/partial CPP frames, but never
+					 * starve the client: after four consecutive
+					 * drops publish one anyway.  The preview also
+					 * has a Python-side guard for the panel. */
+					static unsigned max_seen;
+					static int dropped;
+					unsigned long s = 0;
+					int k, ns = 0;
+					int publish;
+					for (k = 0; k < OUT_W * OUT_H; k += 97) {
+						s += latest_y[k];
+						ns++;
+					}
+					s /= (ns ? ns : 1);
+					max_seen -= max_seen / 32;
+					if (s * 2 >= max_seen) {
+						publish = 1;
+						dropped = 0;
+						if (s > max_seen)
+							max_seen = s;
+					} else {
+						dropped++;
+						publish = dropped > 3;
+						if (publish)
+							dropped = 0;
+					}
+					if (publish) {
+						latest_seq++;
+						latest_ready = 1;
+					}
 				}
 				pthread_mutex_unlock(&frame_mutex);
 			}
