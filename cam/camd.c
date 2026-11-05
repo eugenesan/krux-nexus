@@ -2527,6 +2527,7 @@ static void *client_thread(void *arg)
 			 * lens then stays put while scanning. */
 			if (published) {
 				static int phase, step, best_step, settle;
+				static int final_settle;
 				static unsigned long best_score;
 				static int fine_lo, fine_hi;
 
@@ -2539,13 +2540,28 @@ static void *client_thread(void *arg)
 					focus_step = -1;
 				}
 				if (focus_step >= 0) {
-					phase = 3;
-				} else if (phase == 3) {
+					phase = 5;
+				} else if (phase == 5) {
 					static int hold_count;
 					if (++hold_count % 30 == 0)
 						printf("[af] hold step %d score %lu\n",
 						       act_curr,
 						       af_sharpness(latest_y));
+				} else if (phase == 4) {
+					/* The preload move has had a few frames
+					 * to settle; approach the chosen step
+					 * forward so the VCM takes up its
+					 * backlash in the same direction as the
+					 * coarse sweep.  Moving straight from 44
+					 * to 15 left the lens at a different
+					 * physical position and the image went
+					 * soft. */
+					if (++final_settle >= 3) {
+						actuator_move(best_step);
+						printf("[af] focus step %d\n",
+						       best_step);
+						phase = 5;
+					}
 				} else if (++settle >= 2) {
 					unsigned long score = af_sharpness(latest_y);
 					settle = 0;
@@ -2574,7 +2590,14 @@ static void *client_thread(void *arg)
 							fine_hi = best_step + 3;
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
-							step = fine_lo;
+							/* Start below the peak and move
+							 * forward: this takes up the VCM's
+							 * backlash before the fine scores. */
+							step = best_step - 8;
+							if (step < 0)
+								step = 0;
+							printf("[af] fine preload %d\n",
+							       step);
 						} else {
 							step += 5;
 							if (step >= ACT_TOTAL_STEPS)
@@ -2588,17 +2611,22 @@ static void *client_thread(void *arg)
 						 * best by 5% to win; the metric is
 						 * noisy and the coarse peak is
 						 * usually the true focus. */
-						if (score > best_score +
+						if (step >= fine_lo &&
+						    score > best_score +
 						    best_score / 20) {
 							best_score = score;
 							best_step = step;
 						}
 						step++;
 						if (step > fine_hi) {
-							phase = 3;
-							actuator_move(best_step);
-							printf("[af] focus step %d\n",
-							       best_step);
+							phase = 4;
+							final_settle = 0;
+							step = best_step - 8;
+							if (step < 0)
+								step = 0;
+							printf("[af] final preload %d\n",
+							       step);
+							actuator_move(step);
 						} else {
 							actuator_move(step);
 						}
