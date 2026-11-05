@@ -2528,7 +2528,8 @@ static void *client_thread(void *arg)
 			if (published) {
 				static int phase, step, best_step, settle;
 				static int final_settle;
-				static unsigned long best_score;
+				static int coarse_best_step, fine_best_step;
+				static unsigned long coarse_best_score, fine_best_score;
 				static int fine_lo, fine_hi;
 
 				if (refocus_request) {
@@ -2548,14 +2549,11 @@ static void *client_thread(void *arg)
 						       act_curr,
 						       af_sharpness(latest_y));
 				} else if (phase == 4) {
-					/* The preload move has had a few frames
-					 * to settle; approach the chosen step
-					 * forward so the VCM takes up its
-					 * backlash in the same direction as the
-					 * coarse sweep.  Moving straight from 44
-					 * to 15 left the lens at a different
-					 * physical position and the image went
-					 * soft. */
+					/* The one-step preload has settled; move
+					 * forward to the chosen step.  This is the
+					 * same short forward move that produced the
+					 * fine peak, so the VCM backlash lands in the
+					 * same place. */
 					if (++final_settle >= 3) {
 						actuator_move(best_step);
 						printf("[af] focus step %d\n",
@@ -2568,34 +2566,33 @@ static void *client_thread(void *arg)
 					if (phase == 0) {
 						phase = 1;
 						step = 0;
-						best_step = 0;
-						best_score = 0;
+						coarse_best_step = 0;
+						coarse_best_score = 0;
 						actuator_move(0);
 					} else if (phase == 1) {
 						printf("[af] step %d score %lu\n",
 						       step, score);
-						if (score > best_score) {
-							best_score = score;
-							best_step = step;
+						if (score > coarse_best_score) {
+							coarse_best_score = score;
+							coarse_best_step = step;
 						}
-						/* The macro end is step 44, not 45.
-						 * The old loop stopped after step 40 and
-						 * never scored 41-44, so a close QR
-						 * could never reach focus. */
+						/* The macro end is step 44, not 45. */
 						if (step >= ACT_TOTAL_STEPS - 1) {
 							phase = 2;
-							fine_lo = best_step - 8;
+							/* The coarse peak can be
+							 * several steps off.  Search a
+							 * wide +/-8 window and start at
+							 * its low end, so every fine
+							 * step is approached forward. */
+							fine_lo = coarse_best_step - 8;
 							if (fine_lo < 0)
 								fine_lo = 0;
-							fine_hi = best_step + 8;
+							fine_hi = coarse_best_step + 8;
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
-							/* Start below the peak and move
-							 * forward: this takes up the VCM's
-							 * backlash before the fine scores. */
+							fine_best_step = fine_lo;
+							fine_best_score = 0;
 							step = fine_lo;
-							if (step < 0)
-								step = 0;
 							printf("[af] fine start %d\n",
 							       step);
 						} else {
@@ -2607,22 +2604,29 @@ static void *client_thread(void *arg)
 					} else if (phase == 2) {
 						printf("[af] fine %d score %lu\n",
 						       step, score);
-						/* The fine window now contains the true peak;
-						 * take the best score rather than keeping a
-						 * coarse peak the lens cannot reproduce. */
-						if (score > best_score) {
-							best_score = score;
-							best_step = step;
+						if (score > fine_best_score) {
+							fine_best_score = score;
+							fine_best_step = step;
 						}
 						step++;
 						if (step > fine_hi) {
+							/* Prefer the fine peak when it is
+							 * comparable to the coarse one; the
+							 * coarse step is only a fallback if
+							 * the fine window found nothing. */
+							if (fine_best_score > 0 &&
+							    fine_best_score * 2 >=
+							    coarse_best_score)
+								best_step = fine_best_step;
+							else
+								best_step = coarse_best_step;
 							phase = 4;
 							final_settle = 0;
-							step = best_step - 8;
+							step = best_step - 1;
 							if (step < 0)
 								step = 0;
-							printf("[af] final preload %d\n",
-							       step);
+							printf("[af] final preload %d -> %d\n",
+							       step, best_step);
 							actuator_move(step);
 						} else {
 							actuator_move(step);
