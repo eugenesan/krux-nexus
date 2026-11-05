@@ -549,6 +549,11 @@ static int luma_gain = 2;
 /* 0 = no unsharp, 1 = 2*luma-b, 2 = softer (3*luma-b)/2. */
 static int unsharp_amount = 1;
 static int refocus_request;
+static int refocus_full;
+/* The last fine-sweep step.  A normal scan-start refocus starts the
+ * coarse sweep just below it instead of at infinity, so a second scan
+ * reaches the focus in a few steps.  -1 means no cache yet. */
+static int last_focus_step = -1;
 static int dump_now;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
@@ -2534,11 +2539,27 @@ static void *client_thread(void *arg)
 
 				if (refocus_request) {
 					refocus_request = 0;
-					phase = 0;
 					settle = 0;
 					/* Let POWER refocus even when a fixed step was
 					 * configured; the sweep overrides it. */
 					focus_step = -1;
+					if (!refocus_full && last_focus_step >= 0) {
+						/* Start just below the last good
+						 * step; the coarse sweep still
+						 * walks up to the macro end. */
+						phase = 1;
+						step = last_focus_step - 10;
+						if (step < 0)
+							step = 0;
+						coarse_best_step = step;
+						coarse_best_score = 0;
+						actuator_move(step);
+						printf("[af] cached start %d (last %d)\n",
+						       step, last_focus_step);
+					} else {
+						phase = 0;
+						printf("[af] full sweep\n");
+					}
 				}
 				if (focus_step >= 0) {
 					phase = 5;
@@ -2620,6 +2641,9 @@ static void *client_thread(void *arg)
 								best_step = fine_best_step;
 							else
 								best_step = coarse_best_step;
+							last_focus_step = best_step;
+							printf("[af] cached %d\n",
+							       last_focus_step);
 							phase = 4;
 							final_settle = 0;
 							step = best_step - 1;
@@ -2816,7 +2840,13 @@ static void *socket_thread(void *arg)
 					write(cfd, hdr, 32);
 				}
 			} else if (buf[0] == 'R') {
-				printf("[af] refocus request (frame socket)\n");
+				printf("[af] full refocus request (frame socket)\n");
+				refocus_full = 1;
+				refocus_request = 1;
+				write(cfd, "OK", 2);
+			} else if (buf[0] == 'r') {
+				printf("[af] cached refocus request (frame socket)\n");
+				refocus_full = 0;
 				refocus_request = 1;
 				write(cfd, "OK", 2);
 			} else if (buf[0] == 'D') {
@@ -2929,7 +2959,13 @@ static void *ctl_thread(void *arg)
 				dump_now = 1;
 				write(cfd, "OK", 2);
 			} else if (c == 'R') {
-				printf("[af] refocus request (ctl)\n");
+				printf("[af] full refocus request (ctl)\n");
+				refocus_full = 1;
+				refocus_request = 1;
+				write(cfd, "OK", 2);
+			} else if (c == 'r') {
+				printf("[af] cached refocus request (ctl)\n");
+				refocus_full = 0;
 				refocus_request = 1;
 				write(cfd, "OK", 2);
 			} else {
