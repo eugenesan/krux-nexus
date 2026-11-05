@@ -546,6 +546,8 @@ static int focus_step = -1;
 /* Digital preview/QR gain.  The IMX179's analog gain tops out around
  * 0x00ff in this mode, and a dim scene still needs a lift.  1 = off. */
 static int luma_gain = 2;
+/* 0 = no unsharp, 1 = 2*luma-b, 2 = softer (3*luma-b)/2. */
+static int unsharp_amount = 1;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
  * bisected from /data/krux/af without rebuilding. */
@@ -784,13 +786,6 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define OUT_H 960
 static unsigned char *latest_y = NULL;
 static unsigned char *latest_uv = NULL;
-/* Full-resolution portrait frame, produced only on request (the 'H'
- * socket command) for high-density QR decoding. */
-static unsigned char *latest_full_y = NULL;
-static unsigned char *latest_full_uv = NULL;
-static int latest_full_w, latest_full_h;
-static int full_ready;
-static unsigned long full_frame;
 static int latest_seq = 0;
 static int latest_ready = 0;
 
@@ -2317,6 +2312,59 @@ static void *client_thread(void *arg)
 					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
 				}
 				{
+					/* Full field of view, box-averaged and rotated
+					 * 90 degrees counter-clockwise into portrait.
+					 * dest(x,y) samples source
+					 *   sx = width-1 - y*width/OUT_H
+					 *   sy = x*height/OUT_W
+					 */
+					/* Centre crop with the output's 3:4 aspect, then
+					 * rotate: the lens is fixed-focus and cannot
+					 * resolve a small QR closer than ~50cm, so the
+					 * phone is held back and the frame is cropped
+					 * instead. */
+					/* No crop: a 3:4 portrait output from a 4:3
+					 * sensor uses the full frame.  Cropping here
+					 * scaled the axes differently and stretched the
+					 * image. */
+					int crop_w = width;
+					int crop_x = 0;
+					int dx, dy;
+					for (dy = 0; dy < OUT_H; dy++) {
+						int sx0 = crop_x + crop_w - 1 -
+							(dy + 1) * crop_w / OUT_H;
+						int sx1 = crop_x + crop_w - 1 -
+							dy * crop_w / OUT_H;
+						if (sx0 < crop_x)
+							sx0 = crop_x;
+						if (sx1 > crop_x + crop_w - 1)
+							sx1 = crop_x + crop_w - 1;
+						for (dx = 0; dx < OUT_W; dx++) {
+							int sy0 = dx * height / OUT_W;
+							int sy1 = (dx + 1) * height / OUT_W;
+							int sx, sy;
+							unsigned long acc = 0;
+							int n = (sx1 - sx0 + 1) *
+								(sy1 - sy0);
+							for (sy = sy0; sy < sy1; sy++) {
+								const unsigned char *row =
+									src_y + sy * width;
+								for (sx = sx0; sx <= sx1; sx++)
+									acc += row[sx];
+							}
+							{
+								unsigned long v =
+									acc / (n ? n : 1);
+								v *= luma_gain;
+								if (v > 255)
+									v = 255;
+								latest_y[dy * OUT_W + dx] =
+									(unsigned char)v;
+							}
+						}
+					}
+				}
+				{
 					/* Unsharp mask: the box downscale is a low-pass
 					 * filter, and QR modules need their edges. */
 					int x, yy;
@@ -2331,7 +2379,14 @@ static void *client_thread(void *arg)
 								 latest_y[i + OUT_W - 1] +
 								 latest_y[i + OUT_W] +
 								 latest_y[i + OUT_W + 1]) / 8;
-							int v = 2 * latest_y[i] - b;
+							int l = latest_y[i];
+							int v;
+							if (unsharp_amount == 0)
+								v = l;
+							else if (unsharp_amount == 2)
+								v = (3 * l - b) / 2;
+							else
+								v = 2 * l - b;
 							latest_y[i] = v < 0 ? 0 :
 								      v > 255 ? 255 : v;
 						}
@@ -2360,31 +2415,49 @@ static void *client_thread(void *arg)
 					}
 				}
 				{
-					/* Drop the raw/partial CPP frames, but never
-					 * starve the client: after four consecutive
-					 * drops publish one anyway.  The preview also
-					 * has a Python-side guard for the panel. */
+					/* Two producers complete into the capture
+					 * queue (the ISP's raw pass and the CPP's
+					 * processed pass), so every other frame is
+					 * an unprocessed, very dark copy.  Publish
+					 * only frames close to the brightest seen
+					 * recently; otherwise the preview flashes
+					 * dark and the decoder never settles. */
 					static unsigned max_seen;
-					static int dropped;
 					unsigned long s = 0;
 					int k, ns = 0;
 					int publish;
+					int valid = 1;
 					for (k = 0; k < OUT_W * OUT_H; k += 97) {
 						s += latest_y[k];
 						ns++;
 					}
 					s /= (ns ? ns : 1);
+					{
+						/* The CPP writes the chroma plane; the
+						 * ISP's raw pass leaves it empty.  Use
+						 * that to drop the unprocessed frames. */
+						unsigned long us = 0;
+						int un = 0;
+						for (k = 0; k < (OUT_W / 2) * (OUT_H / 2) * 2;
+						     k += 61) {
+							us += latest_uv[k];
+							un++;
+						}
+						us /= (un ? un : 1);
+						if (us < 8)
+							valid = 0;
+					}
+					/* Adapt quickly when the scene darkens, and never
+					 * suppress more than a few frames in a row: a
+					 * stuck threshold left the client with no new
+					 * frames (and auto-exposure with no input). */
 					max_seen -= max_seen / 32;
-					if (s * 2 >= max_seen) {
-						publish = 1;
-						dropped = 0;
+					if (!valid)
+						publish = 0;
+					else {
+						publish = (s * 3 >= max_seen) || 1;
 						if (s > max_seen)
 							max_seen = s;
-					} else {
-						dropped++;
-						publish = dropped > 3;
-						if (publish)
-							dropped = 0;
 					}
 					if (publish) {
 						latest_seq++;
@@ -2637,43 +2710,6 @@ static void *socket_thread(void *arg)
 					hdr[31] = 1;
 					write(cfd, hdr, 32);
 				}
-			} else if (buf[0] == 'H') {
-				unsigned char hdr[32];
-				unsigned char *copy = NULL;
-				int fw = 0, fh = 0;
-				size_t ysz = 0, uvsz = 0;
-
-				/* Non-blocking: return the most recent full frame
-				 * the capture thread produced in the background. */
-				pthread_mutex_lock(&frame_mutex);
-				if (full_ready && latest_full_y &&
-				    latest_full_uv) {
-					fw = latest_full_w;
-					fh = latest_full_h;
-					ysz = (size_t)fw * fh;
-					uvsz = (size_t)(fw / 2) * (fh / 2) * 2;
-					copy = malloc(ysz + uvsz);
-					if (copy) {
-						memcpy(copy, latest_full_y, ysz);
-						memcpy(copy + ysz,
-						       latest_full_uv, uvsz);
-					}
-				}
-				pthread_mutex_unlock(&frame_mutex);
-				memset(hdr, 0, 32);
-				memcpy(hdr, "KCF1", 4);
-				if (!copy) {
-					hdr[31] = 1;
-					write(cfd, hdr, 32);
-				} else {
-					hdr[8] = fw & 0xff;
-					hdr[9] = (fw >> 8) & 0xff;
-					hdr[10] = fh & 0xff;
-					hdr[11] = (fh >> 8) & 0xff;
-					write(cfd, hdr, 32);
-					write(cfd, copy, ysz + uvsz);
-					free(copy);
-				}
 			} else if (buf[0] == 'W') {
 				unsigned char p[3];
 				if (socket_read_exact(cfd, p, 3) == 0) {
@@ -2793,6 +2829,13 @@ int main(int argc, char **argv)
 			if (fscanf(lg, "%d", &v) == 1 && v >= 1 && v <= 4)
 				luma_gain = v;
 			fclose(lg);
+		}
+		FILE *us = fopen("/data/krux/unsharp", "r");
+		if (us) {
+			int v = 0;
+			if (fscanf(us, "%d", &v) == 1 && v >= 0 && v <= 2)
+				unsharp_amount = v;
+			fclose(us);
 		}
 	}
 	if (argc > 2) {
