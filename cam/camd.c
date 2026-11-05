@@ -758,8 +758,8 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* The panel and the Krux UI are portrait.  The sensor delivers a landscape
  * 1640x1232 frame, so the daemon rotates it 90 degrees counter-clockwise
  * while downscaling: the viewfinder then matches how the phone is held. */
-#define OUT_W 600
-#define OUT_H 800
+#define OUT_W 720
+#define OUT_H 960
 static unsigned char *latest_y = NULL;
 static unsigned char *latest_uv = NULL;
 static int latest_seq = 0;
@@ -985,8 +985,8 @@ static int cpp_send_chromatrix(void)
 	 * mode (frame_type 1) does not match what the firmware expects for
 	 * this sensor mode. */
 	frame.frame_type = 0;
-	frame.msg_len = CAM_CPP_MSG_OFFLINE_WORDS;
-	frame.cpp_cmd_msg = cam_cpp_msg_offline;
+	frame.msg_len = CAM_CPP_MSG_WORDS;
+	frame.cpp_cmd_msg = cam_cpp_msg;
 	frame.status = &cpp_status;
 	frame.identity = ((uint32_t)session_id << 16) | (uint32_t)0;
 	frame.input_buffer_info.index = (uint32_t)cpp_input_index;
@@ -1159,8 +1159,8 @@ static int isp_start(void)
 			cpp_fd = fd;
 			memset(&frame, 0, sizeof(frame));
 			frame.frame_type = 1;		/* realtime */
-			frame.msg_len = CAM_CPP_MSG_OFFLINE_WORDS;
-			frame.cpp_cmd_msg = cam_cpp_msg_offline;
+			frame.msg_len = CAM_CPP_MSG_WORDS;
+			frame.cpp_cmd_msg = cam_cpp_msg;
 			/* The CPP writes the result of the frame
 			 * through this pointer.  Left NULL the copy
 			 * back fails and the whole ioctl is reported
@@ -1956,13 +1956,13 @@ static void *client_thread(void *arg)
 					 * resolve a small QR closer than ~50cm, so the
 					 * phone is held back and the frame is cropped
 					 * instead. */
-					int crop_w = height * OUT_W / OUT_H;
-					int crop_x = (width - crop_w) / 2;
+					/* No crop: a 3:4 portrait output from a 4:3
+					 * sensor uses the full frame.  Cropping here
+					 * scaled the axes differently and stretched the
+					 * image. */
+					int crop_w = width;
+					int crop_x = 0;
 					int dx, dy;
-					if (crop_w > width) {
-						crop_w = width;
-						crop_x = 0;
-					}
 					for (dy = 0; dy < OUT_H; dy++) {
 						int sx0 = crop_x + crop_w - 1 -
 							(dy + 1) * crop_w / OUT_H;
@@ -1991,15 +1991,32 @@ static void *client_thread(void *arg)
 					}
 				}
 				{
+					/* Unsharp mask: the box downscale is a low-pass
+					 * filter, and QR modules need their edges. */
+					int x, yy;
+					for (yy = 1; yy < OUT_H - 1; yy++) {
+						for (x = 1; x < OUT_W - 1; x++) {
+							int i = yy * OUT_W + x;
+							int b = (latest_y[i - OUT_W - 1] +
+								 latest_y[i - OUT_W] +
+								 latest_y[i - OUT_W + 1] +
+								 latest_y[i - 1] +
+								 latest_y[i + 1] +
+								 latest_y[i + OUT_W - 1] +
+								 latest_y[i + OUT_W] +
+								 latest_y[i + OUT_W + 1]) / 8;
+							int v = 2 * latest_y[i] - b;
+							latest_y[i] = v < 0 ? 0 :
+								      v > 255 ? 255 : v;
+						}
+					}
+				}
+				{
 					int uv_w = width / 2;
 					int uv_h = height / 2;
 					int dx, dy;
-					int crop_uv = uv_h * OUT_W / OUT_H;
-					int crop_uv_x = (uv_w - crop_uv) / 2;
-					if (crop_uv > uv_w) {
-						crop_uv = uv_w;
-						crop_uv_x = 0;
-					}
+					int crop_uv = uv_w;
+					int crop_uv_x = 0;
 					for (dy = 0; dy < OUT_H / 2; dy++) {
 						int sx = crop_uv_x + crop_uv - 1 -
 							dy * crop_uv / (OUT_H / 2);
@@ -2024,26 +2041,44 @@ static void *client_thread(void *arg)
 					 * only frames close to the brightest seen
 					 * recently; otherwise the preview flashes
 					 * dark and the decoder never settles. */
-					static unsigned pub_max;
-					static int since_pub;
+					static unsigned max_seen;
 					unsigned long s = 0;
 					int k, ns = 0;
 					int publish;
+					int valid = 1;
 					for (k = 0; k < OUT_W * OUT_H; k += 97) {
 						s += latest_y[k];
 						ns++;
 					}
 					s /= (ns ? ns : 1);
+					{
+						/* The CPP writes the chroma plane; the
+						 * ISP's raw pass leaves it empty.  Use
+						 * that to drop the unprocessed frames. */
+						unsigned long us = 0;
+						int un = 0;
+						for (k = 0; k < (OUT_W / 2) * (OUT_H / 2) * 2;
+						     k += 61) {
+							us += latest_uv[k];
+							un++;
+						}
+						us /= (un ? un : 1);
+						if (us < 8)
+							valid = 0;
+					}
 					/* Adapt quickly when the scene darkens, and never
 					 * suppress more than a few frames in a row: a
 					 * stuck threshold left the client with no new
 					 * frames (and auto-exposure with no input). */
-					pub_max -= pub_max / 32;
-					publish = (s * 3 >= pub_max) || (++since_pub >= 12);
+					max_seen -= max_seen / 32;
+					if (!valid)
+						publish = 0;
+					else {
+						publish = (s * 3 >= max_seen) || 1;
+						if (s > max_seen)
+							max_seen = s;
+					}
 					if (publish) {
-						since_pub = 0;
-						if (s > pub_max)
-							pub_max = s;
 						latest_seq++;
 						latest_ready = 1;
 					}
