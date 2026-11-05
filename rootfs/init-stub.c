@@ -145,6 +145,19 @@ static void make_the_settings_directories(void) {
     mkdir("/data/krux", 0755);
     mkdir(SETTINGS_DIR, 0755);
     mkdir(SD_DIR, 0755);
+    /* The camera kernel can dump the first 64 CPP frames to
+     * /data/local/tmp for protocol analysis.  That dump drops ISP
+     * frames, keeps the CPU busy and makes the camera pipeline stall
+     * with empty buffers.  It is a diagnostic hook, not normal
+     * operation; turn it off before the camera starts. */
+    {
+        FILE *f = fopen(
+            "/sys/module/msm_cpp/parameters/cpp_dump_frames", "w");
+        if (f != NULL) {
+            fputs("0", f);
+            fclose(f);
+        }
+    }
     if (symlink(SETTINGS_DIR, "/flash") != 0 && errno != EEXIST) {
         say("could not make /flash");
     }
