@@ -2480,6 +2480,9 @@ static void *client_thread(void *arg)
 					refocus_request = 0;
 					phase = 0;
 					settle = 0;
+					/* Let POWER refocus even when a fixed step was
+					 * configured; the sweep overrides it. */
+					focus_step = -1;
 				}
 				if (focus_step >= 0) {
 					phase = 3;

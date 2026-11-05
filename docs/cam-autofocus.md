@@ -212,3 +212,11 @@ The QR page now has a manual exposure path and an on-demand AF sweep:
   high-density modules from looking “thin”.
 - The default is now `af=2` with no fixed `focus`, so the sweep runs at
   camera start.  A fixed `focus` still skips it for speed.
+
+The AE is **one-shot**: it runs at camera start only.  There is no
+continuous per-frame exposure loop; after that the manual `VOL+/-`
+(and the on-screen `+`/`-`) controls the exposure and locks it.  For
+detail on high-density codes, `luma_gain=1` (no digital gain) and
+`unsharp=0` are the useful starting values.  **Power** runs the AF
+sweep even when a fixed `focus` is set, so a fixed 40 cm step can be
+used for speed and re-focused on demand.
