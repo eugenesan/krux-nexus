@@ -543,6 +543,9 @@ static int sensor_write_live_sequence(void)
 
 /* Autofocus (defined with the actuator code below). */
 static int focus_step = -1;
+/* Digital preview/QR gain.  The IMX179's analog gain tops out around
+ * 0x00ff in this mode, and a dim scene still needs a lift.  1 = off. */
+static int luma_gain = 2;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
  * bisected from /data/krux/af without rebuilding. */
@@ -1037,11 +1040,12 @@ static unsigned long af_sharpness(const unsigned char *p)
 
 	if (!p)
 		return 0;
-	for (y = y0; y < y1; y += 2) {
+	for (y = y0; y < y1 - 1; y += 2) {
 		const unsigned char *r = p + y * OUT_W;
 		for (x = x0; x < x1 - 1; x += 2) {
-			int d = (int)r[x] - (int)r[x + 1];
-			s += d < 0 ? -d : d;
+			int dx = (int)r[x] - (int)r[x + 1];
+			int dy = (int)r[x] - (int)r[x + OUT_W];
+			s += (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
 		}
 	}
 	return s;
@@ -2346,8 +2350,15 @@ static void *client_thread(void *arg)
 								for (sx = sx0; sx <= sx1; sx++)
 									acc += row[sx];
 							}
-							latest_y[dy * OUT_W + dx] =
-								(unsigned char)(acc / (n ? n : 1));
+							{
+								unsigned long v =
+									acc / (n ? n : 1);
+								v *= luma_gain;
+								if (v > 255)
+									v = 255;
+								latest_y[dy * OUT_W + dx] =
+									(unsigned char)v;
+							}
 						}
 					}
 				}
@@ -2457,15 +2468,15 @@ static void *client_thread(void *arg)
 
 				if (focus_step >= 0) {
 					phase = 3;
-				} else if (phase != 3 && ++settle >= 2) {
+				} else if (phase != 3 && ++settle >= 3) {
 					unsigned long score = af_sharpness(latest_y);
 					settle = 0;
 					if (phase == 0) {
 						phase = 1;
-						step = 7;
-						best_step = 7;
+						step = 0;
+						best_step = 0;
 						best_score = 0;
-						actuator_move(7);
+						actuator_move(0);
 					} else if (phase == 1) {
 						printf("[af] step %d score %lu\n",
 						       step, score);
@@ -2473,13 +2484,13 @@ static void *client_thread(void *arg)
 							best_score = score;
 							best_step = step;
 						}
-						step += 5;
+						step += 3;
 						if (step >= ACT_TOTAL_STEPS) {
 							phase = 2;
-							fine_lo = best_step - 4;
+							fine_lo = best_step - 3;
 							if (fine_lo < 0)
 								fine_lo = 0;
-							fine_hi = best_step + 4;
+							fine_hi = best_step + 3;
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
 							step = fine_lo;
@@ -2796,6 +2807,13 @@ int main(int argc, char **argv)
 			    v < ACT_TOTAL_STEPS)
 				focus_step = v;
 			fclose(ff);
+		}
+		FILE *lg = fopen("/data/krux/luma_gain", "r");
+		if (lg) {
+			int v = 0;
+			if (fscanf(lg, "%d", &v) == 1 && v >= 1 && v <= 4)
+				luma_gain = v;
+			fclose(lg);
 		}
 	}
 	if (argc > 2) {
