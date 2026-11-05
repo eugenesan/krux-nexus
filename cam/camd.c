@@ -784,6 +784,12 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define OUT_H 960
 static unsigned char *latest_y = NULL;
 static unsigned char *latest_uv = NULL;
+/* Full-resolution portrait frame, produced only on request (the 'H'
+ * socket command) for high-density QR decoding. */
+static unsigned char *latest_full_y = NULL;
+static unsigned char *latest_full_uv = NULL;
+static int latest_full_w, latest_full_h;
+static int full_request, full_ready;
 static int latest_seq = 0;
 static int latest_ready = 0;
 
@@ -2309,6 +2315,50 @@ static void *client_thread(void *arg)
 					latest_y = malloc(OUT_W * OUT_H);
 					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
 				}
+				if (!latest_full_y) {
+					latest_full_w = height;
+					latest_full_h = width;
+					latest_full_y = malloc(latest_full_w * latest_full_h);
+					latest_full_uv = malloc((latest_full_w / 2) *
+								(latest_full_h / 2) * 2);
+				}
+				if (full_request && latest_full_y && latest_full_uv) {
+					int fw = latest_full_w, fh = latest_full_h;
+					int dx, dy;
+					/* Same 90-degree rotation as the preview, at
+					 * 1:1; no gain and no unsharp mask, so the QR
+					 * decoder sees the raw contrast. */
+					for (dy = 0; dy < fh; dy++) {
+						int sx = width - 1 - dy * width / fh;
+						if (sx < 0)
+							sx = 0;
+						for (dx = 0; dx < fw; dx++) {
+							int sy = dx * height / fw;
+							latest_full_y[dy * fw + dx] =
+								src_y[sy * width + sx];
+						}
+					}
+					{
+						int uw = width / 2, uh = height / 2;
+						int ufw = fw / 2, ufh = fh / 2;
+						for (dy = 0; dy < ufh; dy++) {
+							int sx = uw - 1 - dy * uw / ufh;
+							if (sx < 0)
+								sx = 0;
+							for (dx = 0; dx < ufw; dx++) {
+								int sy = dx * uh / ufw;
+								const unsigned char *row =
+									src_uv + sy * width;
+								latest_full_uv[(dy * ufw + dx) * 2] =
+									row[sx * 2];
+								latest_full_uv[(dy * ufw + dx) * 2 + 1] =
+									row[sx * 2 + 1];
+							}
+						}
+					}
+					full_ready = 1;
+					full_request = 0;
+				}
 				{
 					/* Full field of view, box-averaged and rotated
 					 * 90 degrees counter-clockwise into portrait.
@@ -2700,6 +2750,52 @@ static void *socket_thread(void *arg)
 				} else {
 					hdr[31] = 1;
 					write(cfd, hdr, 32);
+				}
+			} else if (buf[0] == 'H') {
+				unsigned char hdr[32];
+				unsigned char *copy = NULL;
+				int fw = 0, fh = 0, tries;
+				size_t ysz = 0, uvsz = 0;
+
+				pthread_mutex_lock(&frame_mutex);
+				full_request = 1;
+				full_ready = 0;
+				pthread_mutex_unlock(&frame_mutex);
+				for (tries = 0; tries < 3000; tries++) {
+					pthread_mutex_lock(&frame_mutex);
+					if (full_ready && latest_full_y &&
+					    latest_full_uv) {
+						fw = latest_full_w;
+						fh = latest_full_h;
+						ysz = (size_t)fw * fh;
+						uvsz = (size_t)(fw / 2) *
+							(fh / 2) * 2;
+						copy = malloc(ysz + uvsz);
+						if (copy) {
+							memcpy(copy, latest_full_y,
+							       ysz);
+							memcpy(copy + ysz,
+							       latest_full_uv, uvsz);
+						}
+					}
+					pthread_mutex_unlock(&frame_mutex);
+					if (copy)
+						break;
+					usleep(1000);
+				}
+				memset(hdr, 0, 32);
+				memcpy(hdr, "KCF1", 4);
+				if (!copy) {
+					hdr[31] = 1;
+					write(cfd, hdr, 32);
+				} else {
+					hdr[8] = fw & 0xff;
+					hdr[9] = (fw >> 8) & 0xff;
+					hdr[10] = fh & 0xff;
+					hdr[11] = (fh >> 8) & 0xff;
+					write(cfd, hdr, 32);
+					write(cfd, copy, ysz + uvsz);
+					free(copy);
 				}
 			} else if (buf[0] == 'W') {
 				unsigned char p[3];
