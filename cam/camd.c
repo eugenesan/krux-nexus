@@ -549,6 +549,7 @@ static int luma_gain = 2;
 /* 0 = no unsharp, 1 = 2*luma-b, 2 = softer (3*luma-b)/2. */
 static int unsharp_amount = 1;
 static int refocus_request;
+static int dump_now;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
  * bisected from /data/krux/af without rebuilding. */
@@ -2467,7 +2468,8 @@ static void *client_thread(void *arg)
 				}
 				{
 					static int dump_count;
-					if (++dump_count % 30 == 0) {
+					if (dump_now || ++dump_count % 30 == 0) {
+						dump_now = 0;
 						FILE *f = fopen("/data/krux/scan.raw", "wb");
 						if (f) {
 							fwrite(latest_y, 1,
@@ -2738,6 +2740,9 @@ static void *socket_thread(void *arg)
 				}
 			} else if (buf[0] == 'R') {
 				refocus_request = 1;
+				write(cfd, "OK", 2);
+			} else if (buf[0] == 'D') {
+				dump_now = 1;
 				write(cfd, "OK", 2);
 			} else if (buf[0] == 'W') {
 				unsigned char p[3];
