@@ -2464,6 +2464,7 @@ static void *client_thread(void *arg)
 					 * recently; otherwise the preview flashes
 					 * dark and the decoder never settles. */
 					static unsigned max_seen;
+					static int dropped;
 					unsigned long s = 0;
 					int k, ns = 0;
 					int publish;
@@ -2493,12 +2494,23 @@ static void *client_thread(void *arg)
 					 * stuck threshold left the client with no new
 					 * frames (and auto-exposure with no input). */
 					max_seen -= max_seen / 32;
-					if (!valid)
+					if (!valid) {
 						publish = 0;
-					else {
-						publish = (s * 3 >= max_seen) || 1;
+						dropped++;
+					} else if (s * 2 >= max_seen) {
+						publish = 1;
+						dropped = 0;
 						if (s > max_seen)
 							max_seen = s;
+					} else {
+						/* A partial CPP frame is typically
+						 * ~35% of the processed frame's mean.
+						 * Drop it, but never starve the client
+						 * for more than a few frames. */
+						dropped++;
+						publish = dropped > 3;
+						if (publish)
+							dropped = 0;
 					}
 					if (publish) {
 						latest_seq++;
