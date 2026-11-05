@@ -2754,13 +2754,6 @@ static void *client_thread(void *arg)
 				camd_q_tail = (camd_q_tail + 1) % camd_q_count;
 			}
 		}
-		if (idle) {
-			/* No camera page is asking for frames: keep the
-			 * stream alive but slow it down so the per-frame
-			 * ISP/CPP work does not keep a core busy. */
-			struct timespec its = { 0, 150 * 1000 * 1000 };
-			nanosleep(&its, NULL);
-		}
 		p7 = now_ns();
 
 		{
