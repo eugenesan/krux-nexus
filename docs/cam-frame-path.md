@@ -317,3 +317,20 @@ table ending at 27.  High-density UR/BBQR codes were therefore rejected
 before decoding.  It now supports **version 40**, 1024 regions and a
 larger flood-fill stack; the full-resolution 960x1280 snapshot path is
 what makes those grids resolvable.
+
+## 2026-11-05 — the current frame gate
+
+The current camd publishes only frames whose chroma plane is populated
+and whose luma mean is at least one third of the recent maximum.  The
+old `|| 1` debug escape that published every frame is gone; that escape
+let the dark ISP raw-pass frames reach the decoder, the AE and the AF.
+The dump (`D` command / control socket) also waits for a published
+frame, so `scan.raw` and `scan_full.raw` are the frames the decoder
+actually saw.
+
+The AE is one-shot at camera start; there is no per-frame AE loop and
+no periodic re-run.  Manual `VOL+/-` locks it.
+
+The full-resolution `H` snapshot path is not used by the QR page; the
+720x960 frame is the decode path, and the full 1640x1232 source is
+available through the dump for diagnosis.

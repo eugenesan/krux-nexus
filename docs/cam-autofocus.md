@@ -220,3 +220,34 @@ detail on high-density codes, `luma_gain=1` (no digital gain) and
 `unsharp=0` are the useful starting values.  **Power** runs the AF
 sweep even when a fixed `focus` is set, so a fixed 40 cm step can be
 used for speed and re-focused on demand.
+
+## 2026-11-05 — the coarse peak is not the focus
+
+The focus metric is `af_sharpness()`: the sum of `|dx| + |dy|` over a
+sparse grid in the centre 50% of the 720x960 luma frame.  It is not
+normalised, so only compare scores within one sweep.
+
+The coarse sweep can pick a step the lens cannot reproduce.  On a
+near-full-screen HD PTSB QR the coarse step 15 scored about 1.5M, but
+the fine sweep's step 15 scored only about 146K after the lens had
+moved back from 44.  The QR decoded while the fine sweep passed steps
+8-13 and became unreadable once it parked at 15.
+
+The fine sweep now:
+
+- searches a **+/-8 step** window around the coarse peak,
+- starts at the low end and moves forward, so the VCM's backlash is
+  taken up before each score,
+- keeps the **fine peak**, not the coarse one, when it is at least
+  half the coarse score,
+- approaches the chosen step with a one-step forward move
+  (`best-1 -> best`), the same move that produced the fine peak.
+
+Verified with the control socket: fine peak step 11 (1.66M), final
+`10 -> 11`, hold scores 1.55M and 1.50M over the next seconds, and the
+host decoded the 720x960 frame as `UR:CRYPTO-PSBT/...` both right after
+the sweep and 5 s later.  The device logged `QR exit complete=True
+parsed=1 total=1`.
+
+The sweep now takes a few seconds (coarse + 17 fine steps, two frames
+per step).  A per-scan refocus is still run; Power also re-runs it.

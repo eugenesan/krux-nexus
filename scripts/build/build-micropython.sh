@@ -107,6 +107,9 @@ make -j"$(nproc)" \
 	MICROPY_PY_CRYPTOLIB_CONSTS=1 \
 	MICROPY_PY_CRYPTOLIB_CTR=1 \
 	USER_C_MODULES="$CUR_STAGE" \
+	# BBQR uses zlib-wrapped deflate.  The unix port's default ROM
+	# level enables decompression only; without DEFLATE_COMPRESS the
+	# encoder raises "Error compressing BBQR".
 	CFLAGS_EXTRA="--sysroot=$SYSROOT -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_DEFLATE_COMPRESS=1" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
 
