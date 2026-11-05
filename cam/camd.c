@@ -2465,6 +2465,23 @@ static void *client_thread(void *arg)
 						latest_ready = 1;
 					}
 				}
+				{
+					static int dump_count;
+					if (++dump_count % 30 == 0) {
+						FILE *f = fopen("/data/krux/scan.raw", "wb");
+						if (f) {
+							fwrite(latest_y, 1,
+							       OUT_W * OUT_H, f);
+							fclose(f);
+						}
+						f = fopen("/data/krux/scan_full.raw", "wb");
+						if (f) {
+							fwrite(src_y, 1,
+							       width * height, f);
+							fclose(f);
+						}
+					}
+				}
 				pthread_mutex_unlock(&frame_mutex);
 			}
 
