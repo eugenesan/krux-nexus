@@ -92,6 +92,11 @@ make -C "$TREE/mpy-cross" BUILD="$HOST_BUILD" \
 	CC="$CCACHE gcc" HOSTCC="$CCACHE gcc" -j"$(nproc)"
 
 # 2. the port itself, for the target
+#
+# BBQR uses zlib-wrapped deflate.  The unix port's default ROM level
+# enables decompression only; without DEFLATE_COMPRESS the encoder
+# raises "Error compressing BBQR".  The flags below must stay inside the
+# backslash-continued make command.
 cd "$TREE/ports/unix"
 # Cross-compiler flags are not tracked in object dependencies.  Clean only
 # this out-of-tree target directory so switching ABI cannot reuse old objects.
@@ -107,13 +112,14 @@ make -j"$(nproc)" \
 	MICROPY_PY_CRYPTOLIB_CONSTS=1 \
 	MICROPY_PY_CRYPTOLIB_CTR=1 \
 	USER_C_MODULES="$CUR_STAGE" \
-	# BBQR uses zlib-wrapped deflate.  The unix port's default ROM
-	# level enables decompression only; without DEFLATE_COMPRESS the
-	# encoder raises "Error compressing BBQR".
 	CFLAGS_EXTRA="--sysroot=$SYSROOT -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_DEFLATE_COMPRESS=1" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
 
 file "$TARGET_BUILD/micropython"
+if file "$TARGET_BUILD/micropython" | grep -q 'dynamically linked'; then
+	echo "target binary is dynamically linked; check LDFLAGS_EXTRA" >&2
+	exit 1
+fi
 if [[ "$CC_CROSS" == *gnueabihf* ]]; then
 	if ! readelf -A "$TARGET_BUILD/micropython" | grep -q 'Tag_ABI_VFP_args: VFP registers'; then
 		echo "target binary is not hard-float; check CC_CROSS and SYSROOT" >&2
