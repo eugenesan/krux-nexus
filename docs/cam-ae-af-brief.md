@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| SoC | Qualcomm MSM8939 (hammerhead / Nexus 5), kernel 3.4.113 |
+| SoC | Qualcomm **MSM8974** (hammerhead / Nexus 5), kernel 3.4.113 |
 | Sensor | Sony **IMX179**, rear camera, driven directly over I2C (no vendor HAL) |
 | Sensor mode | **rear-binned**, 1640×1232 source, `HMAX=0x0d70`, `VMAX=0x04e4` (1252 lines) |
 | Capture | CAMIF_RAW → offline CPP → V4L2 → userspace `camd` daemon |
