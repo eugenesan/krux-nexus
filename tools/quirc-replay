@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Replay a raw luma frame through k_quirc and report what happened.
+
+This is the offline harness the plan's Step 1 is built on: the decoder
+experiments do not need the device at all.
+
+  quirc-replay <file.raw> <width> <height> [--threshold global|bilinear|adaptive]
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = "/home/user/Develop/src/krux-nexus/krux/firmware/micropython/ports/unix"
+
+MODES = {
+    "global": [],
+    "bilinear": ["-DK_QUIRC_BILINEAR_THRESHOLD"],
+    "adaptive": ["-DK_QUIRC_BILINEAR_THRESHOLD", "-DK_QUIRC_ADAPTIVE_THRESHOLD"],
+}
+
+
+def build(mode, outdir):
+    """Build the decoder for one threshold mode (cached)."""
+    tag = mode
+    exe = os.path.join(outdir, "quirc-%s" % tag)
+    if os.path.exists(exe):
+        return exe
+    os.makedirs(outdir, exist_ok=True)
+    for f in ("k_quirc.c", "k_quirc_identify.c", "k_quirc_decode.c",
+              "k_quirc_version.c", "k_quirc.h", "k_quirc_internal.h"):
+        dst = os.path.join(outdir, f)
+        if not os.path.exists(dst) or \
+                os.path.getmtime(os.path.join(SRC, f)) > os.path.getmtime(dst):
+            with open(os.path.join(SRC, f), "rb") as s, open(dst, "wb") as d:
+                d.write(s.read())
+    main_c = os.path.join(outdir, "main.c")
+    with open(main_c, "w") as f:
+        f.write(MAIN_C)
+    cmd = ["gcc", "-O2", "-std=gnu99", "-o", exe, main_c] + \
+        [os.path.join(outdir, x) for x in
+         ("k_quirc.c", "k_quirc_identify.c", "k_quirc_decode.c", "k_quirc_version.c")] + \
+        MODES[mode] + ["-lm"]
+    subprocess.run(cmd, check=True)
+    return exe
+
+
+MAIN_C = r"""
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include "k_quirc.h"
+
+int main(int argc, char **argv) {
+    if (argc < 4) { fprintf(stderr, "usage: %s file w h\n", argv[0]); return 3; }
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) { perror("open"); return 3; }
+    int w = atoi(argv[2]), h = atoi(argv[3]);
+    size_t n = (size_t)w * h;
+    unsigned char *d = malloc(n);
+    if (!d) { fprintf(stderr, "oom\n"); return 3; }
+    if (fread(d, 1, n, f) != n) { fprintf(stderr, "short read\n"); return 3; }
+    fclose(f);
+
+    k_quirc_result_t res[8];
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    int c = k_quirc_decode_grayscale(d, w, h, res, 8, false);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
+                (t1.tv_nsec - t0.tv_nsec) / 1e6;
+    printf("decoded=%d time_ms=%.1f\n", c, ms);
+    for (int i = 0; i < c; i++)
+        printf("payload=%.*s\n", res[i].data.payload_len, res[i].data.payload);
+    free(d);
+    return c > 0 ? 0 : 1;
+}
+"""
+
+
+def main():
+    args = sys.argv[1:]
+    mode = "global"
+    if "--threshold" in args:
+        i = args.index("--threshold")
+        mode = args[i + 1]
+        del args[i:i + 2]
+    if len(args) < 3:
+        print(__doc__)
+        return 3
+    path, w, h = args[0], int(args[1]), int(args[2])
+
+    outdir = os.path.join(tempfile.gettempdir(), "quirc-modes")
+    exe = build(mode, outdir)
+    r = subprocess.run([exe, path, str(w), str(h)],
+                       capture_output=True, text=True)
+    print("mode=%-9s file=%s %dx%d" % (mode, os.path.basename(path), w, h))
+    for line in r.stdout.splitlines():
+        print("  " + line)
+    if r.stderr.strip():
+        for line in r.stderr.splitlines():
+            print("  ! " + line)
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
