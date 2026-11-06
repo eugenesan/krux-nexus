@@ -2665,11 +2665,14 @@ static void *client_thread(void *arg)
 				if (af_abort) {
 					/* The exposure changed under a running
 					 * sweep: its scores are not comparable
-					 * with each other any more. */
+					 * with each other any more.  A refocus
+					 * that is already waiting is not
+					 * cancelled: it will be measured
+					 * under the new exposure, which is
+					 * exactly what is wanted. */
 					af_abort = 0;
 					phase = 5;
 					local_search = 0;
-					refocus_request = 0;
 					printf("[af] sweep abandoned\n");
 				}
 				if (refocus_request) {
