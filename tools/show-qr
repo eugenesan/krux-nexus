@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Show a QR code full-screen on the tablet.
+"""Show a QR code on the tablet, pixel-exactly.
 
-The tablet is driven through adb: the PNG is pushed and opened in the
-browser, or better, shown by a tiny fullscreen HTML page so that the
-code is displayed at exactly the requested pixel size with no browser
-chrome and no scaling.
+The tablet's gallery scales an image to fit, and not always uniformly,
+which distorts the modules.  So the PNG is written at exactly the
+screen's size (1280x800 landscape), with the code drawn at the exact
+number of pixels per module and centred on a white field.  The gallery
+then has nothing to scale: the code lands on the screen at exactly the
+requested size.
 
-  show-qr --target v20-dense --module-px 6 [--portrait]
-  show-qr --file mycode.png --module-px 6
+  show-qr --target v20-dense --module-px 6
+  show-qr --payload HELLO --version 7 --module-px 8
+  show-qr --file code.png
+
+After showing, the tablet's own screenshot is checked: the module
+pitch on the screen is measured from the finder patterns and compared
+with what was asked for, so a scale that slipped through is caught
+rather than assumed.
 """
 
 import argparse
@@ -17,20 +25,14 @@ import subprocess
 import sys
 import time
 
+import numpy as np
 import qrcode
 from PIL import Image
 
 TABLET = "41036f02470031ff"
 TARGETS = "/tmp/opencode/qr-targets"
-
-
-HTML = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>qr</title><style>
-html,body{{margin:0;padding:0;background:#fff;height:100%;overflow:hidden}}
-body{{display:flex;align-items:center;justify-content:center}}
-img{{width:{w}px;height:{h}px;image-rendering:pixelated}}
-</style></head><body><img src="code.png"></body></html>"""
+SCREEN_W, SCREEN_H = 1280, 800
+EC_MAP = {"L": 1, "M": 0, "Q": 3, "H": 2}
 
 
 def adb(*args, **kw):
@@ -38,7 +40,7 @@ def adb(*args, **kw):
                           capture_output=True, text=True, **kw)
 
 
-def make_png(payload, version, ec, module_px, quiet=4):
+def build_code(payload, version, ec, module_px, quiet=4):
     qr = qrcode.QRCode(version=version, error_correction=ec,
                        box_size=1, border=quiet)
     qr.add_data(payload)
@@ -49,75 +51,128 @@ def make_png(payload, version, ec, module_px, quiet=4):
     return img, n
 
 
+def compose(code_img, module_px, n):
+    """Put the code on a screen-sized white field, centred."""
+    canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), "white")
+    x = (SCREEN_W - code_img.size[0]) // 2
+    y = (SCREEN_H - code_img.size[1]) // 2
+    canvas.paste(code_img, (x, y))
+    return canvas, (x, y)
+
+
+def measure_screen_pitch(png_path):
+    """Measure the module pitch actually on the screen.
+
+    The screenshot is taken in the tablet's native orientation (portrait
+    800x1280) even when the display is landscape, so it is rotated
+    before the measurement.  The pitch comes from the three finder
+    patterns, found by matching the 1:1:3:1:1 run signature.
+    """
+    r = adb("shell", "screencap -p /sdcard/_qrshot.png")
+    adb("pull", "/sdcard/_qrshot.png", png_path)
+    im = Image.open(png_path).convert("L")
+    if im.size[1] > im.size[0]:
+        im = im.rotate(-90, expand=True)
+    a = np.array(im)
+    b = (a > 128).astype(np.uint8)
+
+    def runs(line):
+        out = []
+        cur = line[0]
+        n = 0
+        for v in line:
+            if v == cur:
+                n += 1
+            else:
+                out.append((cur, n))
+                cur = v
+                n = 1
+        out.append((cur, n))
+        return out
+
+    from collections import Counter
+    cnt = Counter()
+    for y in range(a.shape[0]):
+        r = runs(b[y])
+        for i in range(len(r) - 4):
+            if r[i][0] != 0:
+                continue
+            w = [c for _, c in r[i:i + 5]]
+            if w[1] < 3 or w[3] < 3 or w[2] < 6:
+                continue
+            if (abs(w[0] - w[1]) <= max(1, w[1] // 3)
+                    and abs(w[2] - 3 * w[1]) <= max(1, w[1] // 3)
+                    and abs(w[3] - w[1]) <= max(1, w[1] // 3)
+                    and abs(w[4] - w[1]) <= max(1, w[1] // 3)):
+                cnt[w[1]] += 1
+    if not cnt:
+        return None
+    return cnt.most_common(3)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--target", help="a target name from targets.json")
-    ap.add_argument("--file", help="a PNG to show instead")
-    ap.add_argument("--payload", help="an arbitrary payload to encode")
+    ap.add_argument("--target")
+    ap.add_argument("--file")
+    ap.add_argument("--payload")
     ap.add_argument("--version", type=int, default=0)
     ap.add_argument("--ec", default="M")
-    ap.add_argument("--module-px", type=int, default=6,
-                    help="pixels per module on the tablet screen")
-    ap.add_argument("--quiet", type=int, default=4,
-                    help="quiet zone in modules")
-    ap.add_argument("--portrait", action="store_true",
-                    help="rotate the code 90 degrees")
+    ap.add_argument("--module-px", type=int, default=6)
+    ap.add_argument("--quiet", type=int, default=4)
     ap.add_argument("--out", default="/tmp/opencode/tablet-show")
+    ap.add_argument("--no-check", action="store_true")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    ec_map = {"L": 1, "M": 0, "Q": 3, "H": 2}
-    ec = ec_map.get(args.ec.upper(), 0)
 
     if args.file:
-        img = Image.open(args.file).convert("RGB")
+        code = Image.open(args.file).convert("RGB")
         n = None
         payload = None
+        module_px = None
     else:
         if args.target:
             with open(os.path.join(TARGETS, "%s.json" % args.target)) as f:
                 meta = json.load(f)
             payload = meta["payload"]
             version = meta["version"]
-            ec = {"L": 1, "M": 0, "Q": 3, "H": 2}[meta["error_correction"]]
+            ec = EC_MAP[meta["error_correction"]]
         else:
             payload = args.payload or "KRUXCAM-TEST-0001"
             version = args.version or 2
-        img, n = make_png(payload, version, ec, args.module_px, args.quiet)
+            ec = EC_MAP[args.ec.upper()]
+        code, n = build_code(payload, version, ec, args.module_px, args.quiet)
+        module_px = args.module_px
 
-    if args.portrait:
-        img = img.rotate(-90, expand=True)
-
+    canvas, (ox, oy) = compose(code, module_px, n)
     png = os.path.join(args.out, "code.png")
-    img.save(png)
-    w, h = img.size
+    canvas.save(png)
 
-    # The HTML shows the image at its natural pixel size, centred, on a
-    # white page, with no scaling: the code is displayed at exactly the
-    # requested pixels per module.
-    html = os.path.join(args.out, "code.html")
-    with open(html, "w") as f:
-        f.write(HTML.format(w=w, h=h))
-
-    # Push and open it.  The browser is the simplest fullscreen viewer
-    # that is certain to be present.
     adb("push", png, "/sdcard/code.png")
-    adb("push", html, "/sdcard/code.html")
     adb("shell", "am start -a android.intent.action.VIEW "
-                 "-d file:///sdcard/code.html -n com.android.browser/.Browser")
-    time.sleep(3)
+                 "-d file:///sdcard/code.png -t image/png "
+                 "-n com.sec.android.gallery3d/.app.GalleryActivity")
+    time.sleep(3.5)
 
     info = {
         "payload": payload,
         "modules": n,
-        "module_px": args.module_px,
-        "image_size": [w, h],
-        "portrait": args.portrait,
+        "module_px": module_px,
+        "code_size_px": list(code.size),
+        "screen": [SCREEN_W, SCREEN_H],
+        "origin_px": [ox, oy],
         "png": png,
     }
+    if not args.no_check and module_px:
+        shot = os.path.join(args.out, "screen.png")
+        hits = measure_screen_pitch(shot)
+        info["measured_pitch"] = hits
+        if hits:
+            top = hits[0][0]
+            info["pitch_ok"] = (top == module_px)
     with open(os.path.join(args.out, "shown.json"), "w") as f:
         json.dump(info, f, indent=2)
-    print("showing: %s" % json.dumps(info))
+    print(json.dumps(info))
     if payload:
         print("payload: %s" % payload)
 
