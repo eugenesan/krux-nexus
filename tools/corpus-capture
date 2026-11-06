@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Capture the corpus: the tablet shows a code, the phone photographs it.
+
+The two devices are driven together.  For each target the code is
+displayed on the tablet at a known size, the exposure is stepped on the
+phone, and at each exposure both the preview and the full-resolution
+source are pulled off the device.  Every frame is stored with a JSON
+sidecar recording the exposure, the gain and the daemon's own read-out.
+
+The user only has to hold the phone still and point it at the tablet:
+everything else happens here.
+
+  corpus-capture --target v20-dense --module-px 6 --distances 0.25,0.40
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PHONE = "0879524b0068abca"
+REMOTE_SCRIPT = "/tmp/krux-capture-one.py"
+
+# The exposure ladder, in sensor lines.  0x04e0 (1248) is the sensor's
+# real maximum -- VMAX 0x04e4 minus the 4-line margin -- so the ladder
+# ends exactly there.  Anything above it is discarded by the sensor.
+EXPOSURES = [0x0180, 0x0280, 0x0380, 0x0480, 0x0580, 0x0680, 0x0780,
+             0x0880, 0x0980, 0x04e0]
+GAIN = 0x00a5
+
+
+def phone(*args):
+    return subprocess.run(["adb", "-s", PHONE] + list(args),
+                          capture_output=True, text=True)
+
+
+def capture(exposure, gain):
+    """Set the exposure, ask for a dump, and pull the files back."""
+    r = phone("shell", "/data/krux/micropython -X heapsize=32M %s 0x%04x 0x%04x"
+              % (REMOTE_SCRIPT, exposure, gain))
+    out = (r.stdout or "") + (r.stderr or "")
+    if "ok" not in out:
+        return None, out.strip()
+    return True, out.strip()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--targets", default="v2-low,v7-mid,v20-dense,v27-max")
+    ap.add_argument("--out", default="/tmp/opencode/corpus")
+    ap.add_argument("--module-px", type=int, default=6)
+    ap.add_argument("--distances", default="0.25,0.40,0.60")
+    ap.add_argument("--exposures", default="")
+    ap.add_argument("--gains", default="")
+    ap.add_argument("--note", default="")
+    ap.add_argument("--skip-display", action="store_true",
+                    help="use whatever is already on the tablet")
+    ap.add_argument("--no-prompt", action="store_true",
+                    help="do not wait for the user between targets")
+    args = ap.parse_args()
+
+    exposures = ([int(x, 0) for x in args.exposures.split(",")]
+                 if args.exposures else EXPOSURES)
+    gains = ([int(x, 0) for x in args.gains.split(",")]
+             if args.gains else [GAIN])
+    distances = [float(x) for x in args.distances.split(",")]
+
+    os.makedirs(args.out, exist_ok=True)
+    subprocess.run([sys.executable, os.path.join(HERE, "show-qr"),
+                    "--target", args.targets.split(",")[0],
+                    "--module-px", str(args.module_px)], check=False)
+    subprocess.run(["adb", "-s", PHONE, "push",
+                    os.path.join(HERE, "capture-one.py"), REMOTE_SCRIPT],
+                   capture_output=True)
+
+    plan = []
+    for t in args.targets.split(","):
+        for d in distances:
+            for g in gains:
+                for e in exposures:
+                    plan.append({"target": t, "distance_m": d,
+                                 "exposure": e, "gain": g})
+    with open(os.path.join(args.out, "capture-plan.json"), "w") as f:
+        json.dump(plan, f, indent=2)
+    print("plan: %d frames (%d targets x %d distances x %d gains x %d exposures)"
+          % (len(plan), len(args.targets.split(",")), len(distances),
+             len(gains), len(exposures)))
+    print("  %s" % os.path.join(args.out, "capture-plan.json"))
+    print()
+    print("Hold the phone steady and point it at the tablet.")
+
+    def wait(msg):
+        if args.no_prompt:
+            return
+        try:
+            input(msg)
+        except EOFError:
+            pass
+
+    results = []
+    for target in args.targets.split(","):
+        if not args.skip_display:
+            subprocess.run([sys.executable, os.path.join(HERE, "show-qr"),
+                            "--target", target,
+                            "--module-px", str(args.module_px)],
+                           capture_output=True)
+        time.sleep(1.5)
+        for d in distances:
+            print("\n== %s at %.0f cm ==" % (target, d * 100))
+            wait("  press ENTER when the phone is at this distance: ")
+            for g in gains:
+                for e in exposures:
+                    name = "%s_d%03dmm_g%04x_e%04x" % (
+                        target, int(d * 1000), g, e)
+                    ok, msg = capture(e, g)
+                    rec = {"target": target, "distance_m": d,
+                           "exposure": e, "gain": g, "name": name,
+                           "note": args.note}
+                    if not ok:
+                        rec["ok"] = False
+                        rec["error"] = msg
+                        print("  %-34s FAILED" % name)
+                    else:
+                        prev = os.path.join(args.out, name + "_preview.raw")
+                        full = os.path.join(args.out, name + "_source.raw")
+                        okp = phone("pull", "/data/krux/scan.raw", prev).returncode == 0
+                        okf = phone("pull", "/data/krux/scan_full.raw", full).returncode == 0
+                        meta = {}
+                        r = phone("shell", "cat /data/krux/scan.meta 2>/dev/null")
+                        for k, v in re.findall(r"(\w+)=(-?\d+)", r.stdout):
+                            meta[k] = int(v)
+                        rec["ok"] = okp and okf
+                        rec["camd_meta"] = meta
+                        print("  %-34s mean=%-5s max=%-5s" %
+                              (name, meta.get("mean", "?"), meta.get("max", "?")))
+                    with open(os.path.join(args.out, name + ".json"), "w") as f:
+                        json.dump(rec, f, indent=2)
+                    results.append(rec)
+
+    with open(os.path.join(args.out, "index.json"), "w") as f:
+        json.dump(results, f, indent=2)
+    ok = sum(1 for r in results if r.get("ok"))
+    print()
+    print("captured %d/%d frames into %s" % (ok, len(results), args.out))
+
+
+if __name__ == "__main__":
+    main()
