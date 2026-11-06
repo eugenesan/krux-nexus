@@ -3054,6 +3054,14 @@ static void *socket_thread(void *arg)
 
 				if (copy) {
 					hdr[31] = 0;
+					/* Is the autofocus sweeping?  The
+					 * sharpness scores of a sweep are
+					 * only comparable within one
+					 * exposure, so the auto-exposure
+					 * has to hold still while it
+					 * runs. */
+					hdr[18] = af_sweeping ? 1 : 0;
+					hdr[19] = (unsigned char)luma_gain;
 					hdr[4] = seq & 0xff; hdr[5] = (seq>>8)&0xff;
 					hdr[6] = (seq>>16)&0xff; hdr[7] = (seq>>24)&0xff;
 					hdr[8] = OUT_W & 0xff; hdr[9] = (OUT_W>>8)&0xff;
@@ -3228,6 +3236,10 @@ static void *ctl_thread(void *arg)
 		if (read(cfd, &c, 1) == 1) {
 			if (c == 'D') {
 				dump_now = 1;
+				/* Ask for a frame as well: the frame work
+				 * is skipped while no client is asking,
+				 * and the dump needs a frame. */
+				frame_requests++;
 				write(cfd, "OK", 2);
 			} else if (c == 'R') {
 				printf("[af] full refocus request (ctl)\n");
