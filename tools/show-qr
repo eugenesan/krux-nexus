@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
-"""Show a QR code on the tablet, pixel-exactly.
+"""Show a QR code on the tablet, at an exact and verified size.
 
-The tablet's gallery scales an image to fit, and not always uniformly,
-which distorts the modules.  So the PNG is written at exactly the
-screen's size (1280x800 landscape), with the code drawn at the exact
-number of pixels per module and centred on a white field.  The gallery
-then has nothing to scale: the code lands on the screen at exactly the
-requested size.
+The tablet's gallery scales an image to fit, so the code on the screen
+is not the size it was drawn at.  That does not matter as long as the
+size is *known*: the corpus records what the camera actually sees.
+
+So this tool draws the code, shows it, takes the tablet's own
+screenshot, measures the module pitch on the screen, and reports it.
+If the pitch is not what was asked for, it works out the gallery's
+scale and draws the code again, until the screen really shows the
+requested pixels per module.
+
+The tablet's screen goes off after a while; it is woken and kept
+awake here.
 
   show-qr --target v20-dense --module-px 6
   show-qr --payload HELLO --version 7 --module-px 8
-  show-qr --file code.png
-
-After showing, the tablet's own screenshot is checked: the module
-pitch on the screen is measured from the finder patterns and compared
-with what was asked for, so a scale that slipped through is caught
-rather than assumed.
 """
 
 import argparse
 import json
 import os
 import subprocess
-import sys
 import time
 
 import numpy as np
@@ -40,41 +39,71 @@ def adb(*args, **kw):
                           capture_output=True, text=True, **kw)
 
 
+def wake():
+    """Wake the tablet and keep it awake.
+
+    The screen turns itself off after a while, and a dark screen shows
+    no code at all.  The power key wakes it.  The touch has to be
+    somewhere harmless -- in the middle of the screen it would land on
+    the code and close the gallery -- so it goes to a corner.
+    """
+    adb("shell", "svc power stayon true")
+    adb("shell", "settings put system screen_off_timeout 1800000")
+    adb("shell", "input keyevent 26")
+    time.sleep(1.0)
+    # A touch in the corner: enough to keep it awake, harmless to the
+    # gallery.
+    adb("shell", "input tap 20 20")
+    time.sleep(0.4)
+
+
 def build_code(payload, version, ec, module_px, quiet=4):
+    """Draw the code at exactly module_px pixels per module."""
     qr = qrcode.QRCode(version=version, error_correction=ec,
                        box_size=1, border=quiet)
     qr.add_data(payload)
     qr.make(fit=False)
     img = qr.make_image(fill_color="black", back_color="white")
     n = len(qr.get_matrix())
-    img = img.resize((n * module_px, n * module_px), 0)
+    # qrcode hands back a 1-bit image, which PIL cannot paste without a
+    # mask; make it a plain RGB image and scale it to the module size.
+    img = img.convert("RGB").resize((n * module_px, n * module_px), 0)
     return img, n
 
 
-def compose(code_img, module_px, n):
-    """Put the code on a screen-sized white field, centred."""
+def compose(code_img):
+    """Put the code on a screen-sized white field, centred.
+
+    A code larger than the screen is scaled down to fit: the gallery
+    would scale it anyway, and this way the scale is known.
+    """
+    w, h = code_img.size
+    if w > SCREEN_W or h > SCREEN_H:
+        s = min(SCREEN_W / float(w), SCREEN_H / float(h))
+        w, h = int(w * s), int(h * s)
+        code_img = code_img.resize((w, h), 0)
     canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), "white")
-    x = (SCREEN_W - code_img.size[0]) // 2
-    y = (SCREEN_H - code_img.size[1]) // 2
+    x = (SCREEN_W - w) // 2
+    y = (SCREEN_H - h) // 2
     canvas.paste(code_img, (x, y))
     return canvas, (x, y)
 
 
-def measure_screen_pitch(png_path):
-    """Measure the module pitch actually on the screen.
-
-    The screenshot is taken in the tablet's native orientation (portrait
-    800x1280) even when the display is landscape, so it is rotated
-    before the measurement.  The pitch comes from the three finder
-    patterns, found by matching the 1:1:3:1:1 run signature.
-    """
-    r = adb("shell", "screencap -p /sdcard/_qrshot.png")
-    adb("pull", "/sdcard/_qrshot.png", png_path)
-    im = Image.open(png_path).convert("L")
+def screenshot(path):
+    adb("shell", "screencap -p /sdcard/_qrshot.png")
+    adb("pull", "/sdcard/_qrshot.png", path)
+    im = Image.open(path).convert("L")
+    # The screencap is in the tablet's native portrait orientation even
+    # when the display is landscape, so it is rotated to match what is
+    # actually on the panel.
     if im.size[1] > im.size[0]:
         im = im.rotate(-90, expand=True)
-    a = np.array(im)
-    b = (a > 128).astype(np.uint8)
+    return np.array(im)
+
+
+def measure_pitch(a):
+    """The module pitch on the screen, from the finder patterns."""
+    b = (a < 128).astype(np.uint8)
 
     def runs(line):
         out = []
@@ -95,7 +124,7 @@ def measure_screen_pitch(png_path):
     for y in range(a.shape[0]):
         r = runs(b[y])
         for i in range(len(r) - 4):
-            if r[i][0] != 0:
+            if r[i][0] == 0:
                 continue
             w = [c for _, c in r[i:i + 5]]
             if w[1] < 3 or w[3] < 3 or w[2] < 6:
@@ -106,8 +135,31 @@ def measure_screen_pitch(png_path):
                     and abs(w[4] - w[1]) <= max(1, w[1] // 3)):
                 cnt[w[1]] += 1
     if not cnt:
-        return None
-    return cnt.most_common(3)
+        return None, 0
+    return cnt.most_common(1)[0][0], sum(cnt.values())
+
+
+def show(png, name="code.png"):
+    """Show the PNG in the gallery, at a known size.
+
+    Two things have to be right or the tablet shows something else:
+    the gallery resolves file:// names through the media store, so a
+    freshly pushed file has to be scanned in, and it caches by name, so
+    each code needs a name of its own.
+    """
+    remote = "/sdcard/" + name
+    adb("push", png, remote)
+    adb("shell", "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE "
+                 "-d file://" + remote)
+    time.sleep(1.5)
+    # Leave whatever the gallery was showing, so it does not simply
+    # come back to the last photo.
+    adb("shell", "input keyevent KEYCODE_BACK")
+    time.sleep(0.8)
+    adb("shell", "am start -a android.intent.action.VIEW "
+                 "-d file://" + remote + " -t image/png "
+                 "-n com.sec.android.gallery3d/.app.GalleryActivity")
+    time.sleep(3.0)
 
 
 def main():
@@ -129,7 +181,7 @@ def main():
         code = Image.open(args.file).convert("RGB")
         n = None
         payload = None
-        module_px = None
+        want = args.module_px
     else:
         if args.target:
             with open(os.path.join(TARGETS, "%s.json" % args.target)) as f:
@@ -141,35 +193,62 @@ def main():
             payload = args.payload or "KRUXCAM-TEST-0001"
             version = args.version or 2
             ec = EC_MAP[args.ec.upper()]
-        code, n = build_code(payload, version, ec, args.module_px, args.quiet)
-        module_px = args.module_px
+        want = args.module_px
+        code, n = build_code(payload, version, ec, want, args.quiet)
 
-    canvas, (ox, oy) = compose(code, module_px, n)
-    png = os.path.join(args.out, "code.png")
-    canvas.save(png)
-
-    adb("push", png, "/sdcard/code.png")
-    adb("shell", "am start -a android.intent.action.VIEW "
-                 "-d file:///sdcard/code.png -t image/png "
-                 "-n com.sec.android.gallery3d/.app.GalleryActivity")
-    time.sleep(3.5)
-
-    info = {
-        "payload": payload,
-        "modules": n,
-        "module_px": module_px,
-        "code_size_px": list(code.size),
-        "screen": [SCREEN_W, SCREEN_H],
-        "origin_px": [ox, oy],
-        "png": png,
-    }
-    if not args.no_check and module_px:
+    # The gallery scales the image to fit the screen, so the code on the
+    # panel is smaller than it was drawn.  Draw it larger by whatever
+    # factor the screen says it needs, and check again.
+    draw_scale = 1.0
+    info = {}
+    for attempt in range(4):
+        px = max(1, int(round(want * draw_scale)))
+        img, n = build_code(payload, version, ec, px, args.quiet) \
+            if payload else (code, n)
+        canvas, origin = compose(img)
+        png = os.path.join(args.out, "code.png")
+        canvas.save(png)
+        wake()
+        # A name that changes with the code, so the gallery does not
+        # serve a cached copy of the previous one.
+        name = "code-%d-%d.png" % (int(time.time()), attempt)
+        show(png, name)
+        # The gallery can leave the screen off if the tablet had gone
+        # to sleep; one more wake, then the gallery again.
+        adb("shell", "input keyevent 26")
+        time.sleep(0.5)
+        show(png, name)
+        if args.no_check:
+            break
         shot = os.path.join(args.out, "screen.png")
-        hits = measure_screen_pitch(shot)
-        info["measured_pitch"] = hits
-        if hits:
-            top = hits[0][0]
-            info["pitch_ok"] = (top == module_px)
+        a = screenshot(shot)
+        pitch, hits = measure_pitch(a)
+        info = {
+            "payload": payload,
+            "modules": n,
+            "requested_module_px": want,
+            "drawn_module_px": px,
+            "measured_module_px": pitch,
+            "finder_hits": hits,
+            "draw_scale": draw_scale,
+            "screen": [SCREEN_W, SCREEN_H],
+            "png": png,
+        }
+        if pitch == want:
+            info["verified"] = True
+            break
+        if not pitch:
+            # The measurement failed; the screen may be dark.
+            info["verified"] = False
+            info["error"] = "no finder patterns found on the screen"
+            break
+        # Work out the gallery's scale and correct for it.
+        factor = want / float(pitch)
+        draw_scale *= factor
+        info["correction_applied"] = factor
+        print("  the screen shows %s px/module, correcting by %.3f"
+              % (pitch, factor))
+
     with open(os.path.join(args.out, "shown.json"), "w") as f:
         json.dump(info, f, indent=2)
     print(json.dumps(info))
