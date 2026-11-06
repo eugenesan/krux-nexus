@@ -2543,12 +2543,22 @@ static void *client_thread(void *arg)
 					/* Adapt quickly when the scene darkens, and never
 					 * suppress more than a few frames in a row: a
 					 * stuck threshold left the client with no new
-					 * frames (and auto-exposure with no input). */
+					 * frames (and auto-exposure with no input).
+					 *
+					 * The bar is deliberately low.  Its job is to
+					 * drop the ISP's raw copies, which are very
+					 * dark; the chroma plane already tells the
+					 * processed frames apart.  A tight bar also
+					 * withheld frames whenever the autofocus
+					 * moved the lens and the brightness changed,
+					 * and the preview then stalled until the
+					 * reference decayed: the image appeared to
+					 * drift and then came back. */
 					max_seen -= max_seen / 32;
 					if (!valid)
 						publish = 0;
 					else {
-						publish = (s * 3 >= max_seen);
+						publish = (s * 8 >= max_seen);
 						if (s > max_seen)
 							max_seen = s;
 					}
@@ -2686,7 +2696,17 @@ static void *client_thread(void *arg)
 						       best_step);
 						phase = 5;
 					}
-				} else if (++settle >= 2) {
+				} else if (++settle >= 4) {
+					/* Four frames, not two: the lens has to
+					 * have arrived before the frame is
+					 * scored.  The kernel writes every
+					 * intermediate lens code (nine per step)
+					 * and the voice coil needs a moment to
+					 * catch up, so a frame taken too early
+					 * is a picture of the lens still
+					 * travelling -- the peak then lands on
+					 * the wrong step, and the focus drifts
+					 * afterwards as the lens settles. */
 					unsigned long score = af_sharpness(latest_y);
 					settle = 0;
 					if (phase == 0) {
