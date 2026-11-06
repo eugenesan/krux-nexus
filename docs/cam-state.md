@@ -41,6 +41,25 @@ The blockers that were open during the day are closed:
 | Tap the `-` / `+` strip at the bottom | exposure down / up |
 | Volume up / down | exposure up / down |
 
+### The entropy capture is kept away from the QR tuning
+
+The entropy is measured on the **delivered picture**: `img.to_bytes()`
+over the whole frame for Shannon's entropy, and the spread of the three
+colour channels (`l_stdev`, `a_stdev`, `b_stdev`) for the variance
+index.  So anything that reshapes the picture changes the measurement.
+
+| what | effect on the entropy | rule |
+|---|---|---|
+| the sensor's exposure and gain | changes the signal-to-noise ratio of the picture | the auto-exposure converges it, as it always did |
+| the **digital gain** on the luma plane (`luma_gain`) | multiplies the luma, and with it the chroma the pixels are built from | **off for the entropy capture** |
+| the unsharp mask (`unsharp`) | sharpens the luma | off (0) |
+| the chroma plane | not touched by either of the above | the CPP writes it; the ISP's raw copies are dropped because they have no chroma |
+
+The rule is enforced in `Camera._auto_expose()`: in `ENTROPY_MODE` the
+digital gain is forced to 1 and never escalated, and the exposure lock
+that a QR scan's manual adjustment leaves behind is ignored, so the
+entropy does not depend on what a QR scan did before it.
+
 ### Captured vendor data (kernel hooks, tools in `tools/`)
 
 - `cpp_frm_NNN.bin` — per-frame `msm_cpp_frame_info_t` + command words;
