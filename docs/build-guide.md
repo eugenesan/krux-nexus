@@ -244,6 +244,37 @@ adb reboot bootloader
 fastboot boot artifacts/built/boot-stub.img
 ```
 
+## The one rule: the project tree is the source, `/data/krux` is a copy
+
+There are two places the firmware can live on the device:
+
+| | what it is | when it is used |
+|---|---|---|
+| `/data/krux` | the development copy, pushed over adb by `scripts/deploy-firmware.sh` | **always, during development** |
+| `/opt/krux` | a read-only copy baked into the boot image by `build-stub-ramdisk.sh --bundle` | only on a device with no `/data/krux` tree of its own |
+
+`rootfs/init-stub.c` picks `/data/krux` first, so a push always takes
+effect.  The bundled copy is a fallback for a finished, production
+device; until the project is finalised the development image is built
+**without** `--bundle`, so there is exactly one copy of the firmware on
+the device and no way to be unsure which one is running.
+
+The rule that follows from this:
+
+* **Edit the project tree** -- `krux/src/...` for the firmware,
+  `cam/camd.c` for the camera daemon, `krux/firmware/micropython` for
+  the interpreter.  Nothing else.
+* **Deploy, do not edit** -- `scripts/deploy-firmware.sh` pushes the
+  tree to `/data/krux`.  The files on the device are a deployment
+  artifact.  Never hand-edit them, and never treat what is on a device
+  as a newer version of the source: a device that has not been
+  re-deployed holds an *older* tree, not a newer one.
+
+`deploy-firmware.sh` also removes the `.py` files on the device that the
+project tree does not have (a stray file would shadow the tree, because
+the firmware imports by name) and rebuilds `camd` when `cam/camd.c` is
+newer than the binary, so the daemon can never drift from its source.
+
 ## What is NOT in this repository, and why
 
 * **the kernel** (`linux/`) and **Krux firmware** (`krux/`) are top-level
