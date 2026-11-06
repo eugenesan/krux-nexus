@@ -62,6 +62,17 @@ fi
 
 echo "== the interpreter"
 adb push "$MICROPYTHON" /data/krux/micropython
+# Check that the device really got this interpreter.  A deploy that
+# quietly leaves the old one in place is worse than no deploy at all:
+# the code under test is not the code that was built.
+want=$(md5sum "$MICROPYTHON" | cut -d' ' -f1)
+got=$(adb shell md5sum /data/krux/micropython | cut -d' ' -f1 | tr -d '\r')
+if [ "$want" != "$got" ]; then
+	echo "!! the device is running a different interpreter" >&2
+	echo "   built:  $want" >&2
+	echo "   device: $got" >&2
+	exit 1
+fi
 
 echo "== the Krux package"
 for f in "$KRUXSRC"/krux/*.py; do
