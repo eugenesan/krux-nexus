@@ -566,6 +566,10 @@ static unsigned long af_best_contrast;
  * the autofocus drive the sensor at the same time and fight over the
  * same frames. */
 static volatile int af_abort;
+/* Whether a sweep is running at the moment.  Only then does a change
+ * of exposure invalidate anything, and only then is it worth starting
+ * a new sweep in its place. */
+static volatile int af_sweeping;
 /* The exposure and gain the sensor is running at, so that a change of
  * either can be recognised. */
 static int cam_exposure = -1;
@@ -2592,55 +2596,56 @@ static void *client_thread(void *arg)
 						latest_seq++;
 						latest_ready = 1;
 						published = 1;
-						if (dump_now) {
-							dump_now = 0;
-							FILE *f = fopen(
+					}
+
+					if (dump_now) {
+						dump_now = 0;
+						FILE *f = fopen(
+							"/data/krux/scan.raw.tmp",
+							"wb");
+						if (f) {
+							fwrite(latest_y, 1,
+								OUT_W * OUT_H, f);
+							fclose(f);
+							rename(
 								"/data/krux/scan.raw.tmp",
-								"wb");
-							if (f) {
-								fwrite(latest_y, 1,
-								       OUT_W * OUT_H, f);
-								fclose(f);
-								rename(
-									"/data/krux/scan.raw.tmp",
-									"/data/krux/scan.raw");
-							}
-							f = fopen(
+								"/data/krux/scan.raw");
+						}
+						f = fopen(
+							"/data/krux/scan_full.raw.tmp",
+							"wb");
+						if (f) {
+							fwrite(src_y, 1,
+								width * height, f);
+							fclose(f);
+							rename(
 								"/data/krux/scan_full.raw.tmp",
-								"wb");
-							if (f) {
-								fwrite(src_y, 1,
-								       width * height, f);
-								fclose(f);
+								"/data/krux/scan_full.raw");
+						}
+						{
+							unsigned char mx = 0;
+							int mi;
+							FILE *m;
+							for (mi = 0;
+								mi < OUT_W * OUT_H;
+								mi++)
+								if (latest_y[mi] > mx)
+									mx = latest_y[mi];
+							m = fopen(
+								"/data/krux/scan.meta.tmp",
+								"w");
+							if (m) {
+								fprintf(m,
+									"seq=%d mean=%lu max=%u w=%d h=%d focus=%d sharp=%lu\n",
+									latest_seq,
+									s, mx,
+									width, height,
+									act_curr,
+									af_sharpness(latest_y));
+								fclose(m);
 								rename(
-									"/data/krux/scan_full.raw.tmp",
-									"/data/krux/scan_full.raw");
-							}
-							{
-								unsigned char mx = 0;
-								int mi;
-								FILE *m;
-								for (mi = 0;
-								     mi < OUT_W * OUT_H;
-								     mi++)
-									if (latest_y[mi] > mx)
-										mx = latest_y[mi];
-								m = fopen(
 									"/data/krux/scan.meta.tmp",
-									"w");
-								if (m) {
-									fprintf(m,
-										"seq=%d mean=%lu max=%u w=%d h=%d focus=%d sharp=%lu\n",
-										latest_seq,
-										s, mx,
-										width, height,
-										act_curr,
-										af_sharpness(latest_y));
-									fclose(m);
-									rename(
-										"/data/krux/scan.meta.tmp",
-										"/data/krux/scan.meta");
-								}
+									"/data/krux/scan.meta");
 							}
 						}
 					}
@@ -2673,6 +2678,7 @@ static void *client_thread(void *arg)
 					af_abort = 0;
 					phase = 5;
 					local_search = 0;
+					af_sweeping = 0;
 					printf("[af] sweep abandoned\n");
 				}
 				if (refocus_request) {
@@ -2720,6 +2726,7 @@ static void *client_thread(void *arg)
 						 * short local sweep.  This is fast
 						 * enough to repeat while aiming. */
 						phase = 2;
+						af_sweeping = 1;
 						fine_lo = last_focus_step - 5;
 						if (fine_lo < 0)
 							fine_lo = 0;
@@ -2738,6 +2745,7 @@ static void *client_thread(void *arg)
 					} else {
 						phase = 0;
 						local_search = 0;
+						af_sweeping = 1;
 						printf("[af] full sweep\n");
 					}
 				}
@@ -2760,6 +2768,7 @@ static void *client_thread(void *arg)
 						printf("[af] focus step %d\n",
 						       best_step);
 						phase = 5;
+						af_sweeping = 0;
 					}
 				} else if (++settle >= (phase == 2 ? 3 : 4)) {
 					/* Four frames, not two: the lens has to
@@ -2855,6 +2864,7 @@ static void *client_thread(void *arg)
 									best_mean = coarse_best_mean;
 								}
 								last_focus_step = best_step;
+								af_sweeping = 0;
 								/* Keep how sharp this position was, divided
 								 * by how bright the frame was.  A scan that
 								 * finds the picture already this sharp can
@@ -3106,9 +3116,21 @@ static void *socket_thread(void *arg)
 						if (cam_exposure >= 0 &&
 						    (nexp != cam_exposure ||
 						     ngain != cam_gain)) {
-							af_abort = 1;
-							printf("[af] exposure changed, "
-							       "sweep abandoned\n");
+							if (af_sweeping) {
+								/* The scores of the
+								 * running sweep are
+								 * not comparable
+								 * any more.  Drop it
+								 * and start a new
+								 * one, which will be
+								 * measured under the
+								 * new exposure. */
+								af_abort = 1;
+								refocus_request = 1;
+								printf("[af] exposure "
+								       "changed, sweep "
+								       "restarted\n");
+							}
 						}
 						cam_exposure = nexp;
 						cam_gain = ngain;
@@ -3124,6 +3146,18 @@ static void *socket_thread(void *arg)
 						       g1 & 0xff, g2 & 0xff);
 					}
 					write(cfd, erc == 0 ? "OK" : "ER", 2);
+				}
+			} else if (buf[0] == 'G') {
+				unsigned char p[1];
+				if (socket_read_exact(cfd, p, 1) == 0) {
+					int g = p[0];
+					if (g < 1)
+						g = 1;
+					if (g > 4)
+						g = 4;
+					luma_gain = g;
+					printf("[cam] luma gain %d\n", g);
+					write(cfd, "OK", 2);
 				}
 			} else if (buf[0] == 'V') {
 				unsigned char p[2];
