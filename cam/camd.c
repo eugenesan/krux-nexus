@@ -2505,6 +2505,7 @@ static void *client_thread(void *arg)
 					static unsigned max_seen;
 					static int starve;
 					unsigned long s = 0;
+					unsigned long us = 0;
 					int k, ns = 0;
 					int publish;
 					int valid = 1;
@@ -2517,7 +2518,6 @@ static void *client_thread(void *arg)
 						/* The CPP writes the chroma plane; the
 						 * ISP's raw pass leaves it empty.  Use
 						 * that to drop the unprocessed frames. */
-						unsigned long us = 0;
 						int un = 0;
 						for (k = 0; k < (OUT_W / 2) * (OUT_H / 2) * 2;
 						     k += 61) {
@@ -2527,6 +2527,18 @@ static void *client_thread(void *arg)
 						us /= (un ? un : 1);
 						if (us < 8)
 							valid = 0;
+					}
+					/* Why is nothing reaching the client?  This is
+					 * the decision, once every two hundred frames:
+					 * the luma mean, the chroma mean, whether the
+					 * frame counts as processed, and whether it
+					 * is published. */
+					{
+						static int dcount;
+						if (++dcount % 200 == 0)
+							printf("[pub] s=%lu us=%lu valid=%d max=%u seq=%d\n",
+							       s, us, valid, max_seen,
+							       latest_seq);
 					}
 					/* Adapt quickly when the scene darkens, and never
 					 * suppress more than a few frames in a row: a
