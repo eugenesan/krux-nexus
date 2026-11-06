@@ -1,5 +1,13 @@
 # Review — Linux 3.4 kexec RAM wipe plan
 
+**This is a paused experiment, not a main-tree feature.**  The kernel
+side lives on `linux:airgap/memory-wipe`; the firmware and tooling side
+lives on `airgap/memory-wipe` in this repository, in the `krux`
+submodule and in `krux/firmware/micropython`.  None of it is on
+master: the kexec handoff hangs at the bootloader, and while the
+wrapper was reachable from `machine.reset()` an ordinary shutdown
+tried to wipe the machine.
+
 Reviewed 2026-11-05 against `docs/linux34_kexec_wipe_plan.md`, the
 hammerhead tree (`airgap/cam-ksu-dump`, 3.4.113 CAF) and
 `docs/memory-wipe-findings.md`. Branch for the work:

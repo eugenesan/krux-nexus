@@ -545,9 +545,9 @@ static int sensor_write_live_sequence(void)
 static int focus_step = -1;
 /* Digital preview/QR gain.  The IMX179's analog gain tops out around
  * 0x00ff in this mode, and a dim scene still needs a lift.  1 = off. */
-static int luma_gain = 2;
+static int luma_gain = 1;
 /* 0 = no unsharp, 1 = 2*luma-b, 2 = softer (3*luma-b)/2. */
-static int unsharp_amount = 1;
+static int unsharp_amount = 0;
 static int refocus_request;
 static int refocus_full;
 /* The last fine-sweep step.  A normal scan-start refocus starts the
@@ -557,13 +557,63 @@ static int last_focus_step = -1;
 static int dump_now;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
- * bisected from /data/krux/af without rebuilding. */
-static int af_level = 0;
+ * bisected from the state file without rebuilding.
+ *
+ * 2 is the default: the camera sweeps the range when a scan starts.
+ * Level 0 switches the autofocus off entirely, and the lens then never
+ * moves -- so it must never be the fallback for a missing file. */
+static int af_level = 2;
 static int actuator_get_info(void);
 static int actuator_set_info(void);
 static int actuator_set_default(int dest);
 static int actuator_move(int step);
 static void af_bringup(void);
+
+/* The camera's tuning state.
+ *
+ * These are volatile settings, not firmware: they live in a tmpfs, so
+ * they are gone after a reboot and the camera comes back with its
+ * defaults.  A file that is missing is written out with its default,
+ * so the state is always complete and can be read and changed at any
+ * time.  Nothing here is required for the camera to work: with no
+ * state at all it still autofocuses, and it still exposes a usable
+ * preview.
+ */
+#define CAMD_STATE_DIR "/tmp/krux"
+
+/* Read one state file.  A missing (or unreadable, or out of range)
+ * file is replaced by the default and the file is written back, so the
+ * state directory always describes the camera's configuration. */
+static int state_read(const char *name, int def, int lo, int hi)
+{
+	char path[PATH_MAX];
+	FILE *f;
+	int v = def;
+	int had_file = 0;
+
+	snprintf(path, sizeof(path), "%s/%s", CAMD_STATE_DIR, name);
+	f = fopen(path, "r");
+	if (f) {
+		had_file = 1;
+		if (fscanf(f, "%d", &v) != 1)
+			v = def;
+		fclose(f);
+	}
+	if (v < lo || v > hi) {
+		v = def;
+		had_file = 0;
+	}
+	if (!had_file) {
+		mkdir(CAMD_STATE_DIR, 0755);
+		f = fopen(path, "w");
+		if (f) {
+			fprintf(f, "%d\n", v);
+			fclose(f);
+			printf("[state] %s = %d (default)\n", name, v);
+		}
+	}
+	return v;
+}
 
 static int sensor_program_mode(void)
 {
@@ -1641,27 +1691,14 @@ static int act_curr = 7;
 
 static void af_bringup(void)
 {
-	FILE *f = fopen("/data/krux/af", "r");
-	int v = 0;
-
-	if (f) {
-		if (fscanf(f, "%d", &v) != 1)
-			v = 0;
-		fclose(f);
-	}
-	af_level = (v >= 0 && v <= 4) ? v : 0;
+	af_level = state_read("af", 2, 0, 4);
 
 	/* Re-read the fixed focus per camera session, so a sweep can be
-	 * enabled or a step changed without restarting camd. */
-	focus_step = -1;
-	f = fopen("/data/krux/focus", "r");
-	if (f) {
-		int step = 0;
-		if (fscanf(f, "%d", &step) == 1 && step >= 0 &&
-		    step < ACT_TOTAL_STEPS)
-			focus_step = step;
-		fclose(f);
-	}
+	 * enabled or a step changed without restarting camd.  There is no
+	 * fixed step by default: -1 means "sweep". */
+	focus_step = state_read("focus", -1, -1, ACT_TOTAL_STEPS - 1);
+	if (focus_step < 0)
+		focus_step = -1;
 
 	if (af_level < 1)
 		return;
@@ -3076,37 +3113,20 @@ int main(int argc, char **argv)
 		       full_chroma);
 	}
 	{
-		FILE *af = fopen("/data/krux/af", "r");
-		if (af) {
-			int v = 0;
-			if (fscanf(af, "%d", &v) == 1 && v >= 0 && v <= 4)
-				af_level = v;
-			fclose(af);
-		}
+		/* The tuning state.  It is volatile: a missing file is
+		 * written out with its default, so the camera always has a
+		 * complete configuration and nothing here is required for
+		 * it to work. */
+		af_level = state_read("af", 2, 0, 4);
 		/* Focus is set before streaming: moving the lens while the
 		 * sensor streams stalls the pipeline (shared CCI bus). */
-		FILE *ff = fopen("/data/krux/focus", "r");
-		if (ff) {
-			int v = 0;
-			if (fscanf(ff, "%d", &v) == 1 && v >= 0 &&
-			    v < ACT_TOTAL_STEPS)
-				focus_step = v;
-			fclose(ff);
-		}
-		FILE *lg = fopen("/data/krux/luma_gain", "r");
-		if (lg) {
-			int v = 0;
-			if (fscanf(lg, "%d", &v) == 1 && v >= 1 && v <= 4)
-				luma_gain = v;
-			fclose(lg);
-		}
-		FILE *us = fopen("/data/krux/unsharp", "r");
-		if (us) {
-			int v = 0;
-			if (fscanf(us, "%d", &v) == 1 && v >= 0 && v <= 2)
-				unsharp_amount = v;
-			fclose(us);
-		}
+		focus_step = state_read("focus", -1, -1, ACT_TOTAL_STEPS - 1);
+		if (focus_step < 0)
+			focus_step = -1;
+		luma_gain = state_read("luma_gain", 1, 1, 4);
+		unsharp_amount = state_read("unsharp", 0, 0, 2);
+		printf("[state] af=%d focus=%d luma_gain=%d unsharp=%d\n",
+		       af_level, focus_step, luma_gain, unsharp_amount);
 	}
 	if (argc > 2) {
 		wh[0] = atoi(argv[1]);

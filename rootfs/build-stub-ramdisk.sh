@@ -105,16 +105,6 @@ cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
 
-# 3a. kexec and the wipe wrapper, when asked for.  The wrapper is only
-# useful with the binary, so both are optional.
-KEXEC=${KEXEC:-}
-if [ -n "$KEXEC" ] && [ -x "$KEXEC" ]; then
-	cp "$KEXEC" "$WORK/rd/sbin/kexec"
-	chmod 755 "$WORK/rd/sbin/kexec"
-	cp "$HERE/stub/krux-wipe" "$WORK/rd/sbin/krux-wipe"
-	chmod 755 "$WORK/rd/sbin/krux-wipe"
-fi
-
 # 3b. the camera's firmware.
 #
 # The camera's CPP (the colour processing block) is programmed by the

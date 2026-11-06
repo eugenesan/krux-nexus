@@ -42,6 +42,24 @@ find /data/krux/krux -name "*.py" -print | while read f; do
 	[ -f "'"$KRUXSRC"'/krux/$rel" ] || rm -f "$f"
 done' >/dev/null
 
+if [ -d "$ROOT/deploy/device-config" ]; then
+	# The camera daemon's tuning state.  It is volatile: it lives in a
+	# tmpfs, and the daemon writes out the defaults for any file that
+	# is missing, so none of it is required for the camera to work.
+	# These files only seed the state for this session.
+	echo "== the camera state"
+	adb shell 'mkdir -p /tmp/krux' >/dev/null
+	for f in af focus luma_gain unsharp; do
+		if [ -f "$ROOT/deploy/device-config/$f" ]; then
+			adb push "$ROOT/deploy/device-config/$f" /tmp/krux/ >/dev/null
+		else
+			adb shell "rm -f /tmp/krux/$f" >/dev/null
+		fi
+		# the old location is not used any more
+		adb shell "rm -f /data/krux/$f" >/dev/null
+	done
+fi
+
 echo "== the interpreter"
 adb push "$MICROPYTHON" /data/krux/micropython
 
