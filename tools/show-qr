@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Show a QR code full-screen on the tablet.
+
+The tablet is driven through adb: the PNG is pushed and opened in the
+browser, or better, shown by a tiny fullscreen HTML page so that the
+code is displayed at exactly the requested pixel size with no browser
+chrome and no scaling.
+
+  show-qr --target v20-dense --module-px 6 [--portrait]
+  show-qr --file mycode.png --module-px 6
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+import qrcode
+from PIL import Image
+
+TABLET = "41036f02470031ff"
+TARGETS = "/tmp/opencode/qr-targets"
+
+
+HTML = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>qr</title><style>
+html,body{{margin:0;padding:0;background:#fff;height:100%;overflow:hidden}}
+body{{display:flex;align-items:center;justify-content:center}}
+img{{width:{w}px;height:{h}px;image-rendering:pixelated}}
+</style></head><body><img src="code.png"></body></html>"""
+
+
+def adb(*args, **kw):
+    return subprocess.run(["adb", "-s", TABLET] + list(args),
+                          capture_output=True, text=True, **kw)
+
+
+def make_png(payload, version, ec, module_px, quiet=4):
+    qr = qrcode.QRCode(version=version, error_correction=ec,
+                       box_size=1, border=quiet)
+    qr.add_data(payload)
+    qr.make(fit=False)
+    img = qr.make_image(fill_color="black", back_color="white")
+    n = len(qr.get_matrix())
+    img = img.resize((n * module_px, n * module_px), 0)
+    return img, n
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--target", help="a target name from targets.json")
+    ap.add_argument("--file", help="a PNG to show instead")
+    ap.add_argument("--payload", help="an arbitrary payload to encode")
+    ap.add_argument("--version", type=int, default=0)
+    ap.add_argument("--ec", default="M")
+    ap.add_argument("--module-px", type=int, default=6,
+                    help="pixels per module on the tablet screen")
+    ap.add_argument("--quiet", type=int, default=4,
+                    help="quiet zone in modules")
+    ap.add_argument("--portrait", action="store_true",
+                    help="rotate the code 90 degrees")
+    ap.add_argument("--out", default="/tmp/opencode/tablet-show")
+    args = ap.parse_args()
+
+    os.makedirs(args.out, exist_ok=True)
+    ec_map = {"L": 1, "M": 0, "Q": 3, "H": 2}
+    ec = ec_map.get(args.ec.upper(), 0)
+
+    if args.file:
+        img = Image.open(args.file).convert("RGB")
+        n = None
+        payload = None
+    else:
+        if args.target:
+            with open(os.path.join(TARGETS, "%s.json" % args.target)) as f:
+                meta = json.load(f)
+            payload = meta["payload"]
+            version = meta["version"]
+            ec = {"L": 1, "M": 0, "Q": 3, "H": 2}[meta["error_correction"]]
+        else:
+            payload = args.payload or "KRUXCAM-TEST-0001"
+            version = args.version or 2
+        img, n = make_png(payload, version, ec, args.module_px, args.quiet)
+
+    if args.portrait:
+        img = img.rotate(-90, expand=True)
+
+    png = os.path.join(args.out, "code.png")
+    img.save(png)
+    w, h = img.size
+
+    # The HTML shows the image at its natural pixel size, centred, on a
+    # white page, with no scaling: the code is displayed at exactly the
+    # requested pixels per module.
+    html = os.path.join(args.out, "code.html")
+    with open(html, "w") as f:
+        f.write(HTML.format(w=w, h=h))
+
+    # Push and open it.  The browser is the simplest fullscreen viewer
+    # that is certain to be present.
+    adb("push", png, "/sdcard/code.png")
+    adb("push", html, "/sdcard/code.html")
+    adb("shell", "am start -a android.intent.action.VIEW "
+                 "-d file:///sdcard/code.html -n com.android.browser/.Browser")
+    time.sleep(3)
+
+    info = {
+        "payload": payload,
+        "modules": n,
+        "module_px": args.module_px,
+        "image_size": [w, h],
+        "portrait": args.portrait,
+        "png": png,
+    }
+    with open(os.path.join(args.out, "shown.json"), "w") as f:
+        json.dump(info, f, indent=2)
+    print("showing: %s" % json.dumps(info))
+    if payload:
+        print("payload: %s" % payload)
+
+
+if __name__ == "__main__":
+    main()
