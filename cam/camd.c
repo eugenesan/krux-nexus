@@ -1024,13 +1024,8 @@ static int cpp_send_chromatrix(void)
 	 * mode (frame_type 1) does not match what the firmware expects for
 	 * this sensor mode. */
 	frame.frame_type = 0;
-	/* Offline mode needs the HAL's 293-word six-strip message, not
-	 * the 266-word realtime one; the firmware accepts the latter but
-	 * never drains its command queue, leaving every output buffer
-	 * empty. */
-	frame.msg_len = (int)(sizeof(cam_cpp_msg_offline) /
-			      sizeof(cam_cpp_msg_offline[0]));
-	frame.cpp_cmd_msg = cam_cpp_msg_offline;
+	frame.msg_len = CAM_CPP_MSG_WORDS;
+	frame.cpp_cmd_msg = cam_cpp_msg;
 	frame.status = &cpp_status;
 	frame.identity = ((uint32_t)session_id << 16) | (uint32_t)0;
 	frame.input_buffer_info.index = (uint32_t)cpp_input_index;
