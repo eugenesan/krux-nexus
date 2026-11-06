@@ -554,6 +554,22 @@ static int refocus_full;
  * coarse sweep just below it instead of at infinity, so a second scan
  * reaches the focus in a few steps.  -1 means no cache yet. */
 static int last_focus_step = -1;
+/* How sharp the frame is, divided by how bright it is.  The measure is
+ * the same whatever the exposure, so it can be compared with a value
+ * measured under a different exposure.  The best this lens position
+ * ever gave is kept, so a scan that starts with the picture already in
+ * focus does not have to walk the range again. */
+static unsigned long af_best_contrast;
+/* Set when the exposure changes.  The sharpness scores of a sweep are
+ * only comparable within one exposure, so a change of exposure
+ * invalidates a sweep that is running: otherwise the auto-exposure and
+ * the autofocus drive the sensor at the same time and fight over the
+ * same frames. */
+static volatile int af_abort;
+/* The exposure and gain the sensor is running at, so that a change of
+ * either can be recognised. */
+static int cam_exposure = -1;
+static int cam_gain = -1;
 static int dump_now;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
@@ -2643,13 +2659,59 @@ static void *client_thread(void *arg)
 				static unsigned long best_score;
 				static int fine_lo, fine_hi;
 				static int local_search;
+				static int coarse_best_mean, fine_best_mean;
+				static int best_mean;
 
+				if (af_abort) {
+					/* The exposure changed under a running
+					 * sweep: its scores are not comparable
+					 * with each other any more. */
+					af_abort = 0;
+					phase = 5;
+					local_search = 0;
+					refocus_request = 0;
+					printf("[af] sweep abandoned\n");
+				}
 				if (refocus_request) {
 					refocus_request = 0;
 					settle = 0;
 					/* Let POWER refocus even when a fixed step was
 					 * configured; the sweep overrides it. */
 					focus_step = -1;
+					if (!refocus_full && last_focus_step >= 0 &&
+					    af_best_contrast > 0) {
+						/* Is the lens still where it was?
+						 * Compare the sharpness of the frame
+						 * now with the sharpness this
+						 * position gave when it was last
+						 * swept, both divided by the
+						 * brightness, so that the
+						 * comparison does not depend on
+						 * the exposure.  If it still
+						 * matches, the picture is in focus
+						 * and a sweep would only cost the
+						 * user seconds. */
+						unsigned long cur =
+							af_sharpness(latest_y);
+						unsigned long cm =
+							(unsigned long)
+							(latest_mean > 0 ?
+							 latest_mean : 1);
+						unsigned long contrast =
+							cur * 1000 / cm;
+						if (contrast * 100 >=
+						    af_best_contrast * 85) {
+							printf("[af] already sharp "
+							       "(%lu of %lu), keeping "
+							       "step %d\n",
+							       contrast,
+							       af_best_contrast,
+							       act_curr);
+							phase = 5;
+							local_search = 0;
+							goto af_done;
+						}
+					}
 					if (!refocus_full && last_focus_step >= 0) {
 						/* Refine the last good step with a
 						 * short local sweep.  This is fast
@@ -2696,7 +2758,7 @@ static void *client_thread(void *arg)
 						       best_step);
 						phase = 5;
 					}
-				} else if (++settle >= 4) {
+				} else if (++settle >= (phase == 2 ? 3 : 4)) {
 					/* Four frames, not two: the lens has to
 					 * have arrived before the frame is
 					 * scored.  The kernel writes every
@@ -2721,19 +2783,20 @@ static void *client_thread(void *arg)
 						if (score > coarse_best_score) {
 							coarse_best_score = score;
 							coarse_best_step = step;
+							coarse_best_mean = latest_mean;
 						}
 						/* The macro end is step 44, not 45. */
 						if (step >= ACT_TOTAL_STEPS - 1) {
 							phase = 2;
-							/* The coarse peak can be
-							 * several steps off.  Search a
-							 * wide +/-8 window and start at
-							 * its low end, so every fine
-							 * step is approached forward. */
-							fine_lo = coarse_best_step - 8;
+							/* The coarse peak can be a few
+							 * steps off.  Search a +/-5
+							 * window and start at its low
+							 * end, so every fine step is
+							 * approached forward. */
+							fine_lo = coarse_best_step - 5;
 							if (fine_lo < 0)
 								fine_lo = 0;
-							fine_hi = coarse_best_step + 8;
+							fine_hi = coarse_best_step + 5;
 							if (fine_hi >= ACT_TOTAL_STEPS)
 								fine_hi = ACT_TOTAL_STEPS - 1;
 							fine_best_step = fine_lo;
@@ -2742,7 +2805,12 @@ static void *client_thread(void *arg)
 							printf("[af] fine start %d\n",
 							       step);
 						} else {
-							step += 5;
+							/* Eight steps at a time: the
+							 * fine window below is wide
+							 * enough to cover the gap, and
+							 * the sweep costs the user
+							 * less time. */
+							step += 8;
 							if (step >= ACT_TOTAL_STEPS)
 								step = ACT_TOTAL_STEPS - 1;
 						}
@@ -2753,6 +2821,7 @@ static void *client_thread(void *arg)
 						if (score > fine_best_score) {
 							fine_best_score = score;
 							fine_best_step = step;
+							fine_best_mean = latest_mean;
 						}
 						step++;
 						if (step > fine_hi) {
@@ -2776,11 +2845,19 @@ static void *client_thread(void *arg)
 								    coarse_best_score) {
 									best_step = fine_best_step;
 									best_score = fine_best_score;
+									best_mean = fine_best_mean;
 								} else {
 									best_step = coarse_best_step;
 									best_score = coarse_best_score;
+									best_mean = coarse_best_mean;
 								}
 								last_focus_step = best_step;
+								/* Keep how sharp this position was, divided
+								 * by how bright the frame was.  A scan that
+								 * finds the picture already this sharp can
+								 * skip the sweep altogether. */
+								af_best_contrast = best_score * 1000 /
+								    (best_mean > 0 ? best_mean : 1);
 								local_search = 0;
 								printf("[af] cached %d\n",
 									last_focus_step);
@@ -2797,6 +2874,7 @@ static void *client_thread(void *arg)
 							actuator_move(step);
 						}
 					}
+				af_done: ;
 				}
 			}
 			}
@@ -3019,6 +3097,19 @@ static void *socket_thread(void *arg)
 					};
 					int erc = sensor_write_regs_as(
 						r, 2, MSM_CAMERA_I2C_WORD_DATA);
+					if (erc == 0) {
+						int nexp = (p[0] << 8) | p[1];
+						int ngain = (p[2] << 8) | p[3];
+						if (cam_exposure >= 0 &&
+						    (nexp != cam_exposure ||
+						     ngain != cam_gain)) {
+							af_abort = 1;
+							printf("[af] exposure changed, "
+							       "sweep abandoned\n");
+						}
+						cam_exposure = nexp;
+						cam_gain = ngain;
+					}
 					if (erc == 0) {
 						uint16_t e1 = 0, e2 = 0, g1 = 0, g2 = 0;
 						sensor_read_reg(0x0202, &e1);
