@@ -1,25 +1,45 @@
 # STATE — the camera, in one page
 
-## Current state (2026-11-05)
+## Current state (2026-11-05, evening)
 
-The capture pipeline is now **consistent and geometrically correct**.
-Dense QR still does not decode because autofocus is not yet driven
-successfully; that is the only remaining blocker on the image side.
+The camera works. Dense QR codes decode, repeatedly, on both devices.
+The blockers that were open during the day are closed:
+
+| Blocker | Cause | Fix |
+|---|---|---|
+| The autofocus did nothing | `/data/krux/af` was lost with a `/data` wipe, and camd's *code* default for the AF level is 0 = autofocus off. The actuator was never opened, so the lens never moved — while the sweep code still reported scores for a stationary lens | The tuning state lives in `/tmp/krux` now, is reinitialised when a file is missing, and the default is `af=2` |
+| "Camera not found" at boot, camera unusable for the session | The `Camera` object was built with the context and its warm-up waited for a frame the pipeline had not produced yet; the mode was never set, so no later page could bring the camera up | The sensor comes up in `initialize_run()`, when the pipeline is warm and the user is pointing at something |
+| The AE only ran on the first scan | It was kept that way because the loop stepped the exposure *down* whenever the frame clipped — and a QR on a white sheet always clips | Clipping no longer drives the loop (the mean does); the AE runs on every scan, and stops early when exposure and gain have both run out |
+| Every `deploy-firmware.sh` push was ignored | `init-stub.c` preferred the bundled `/opt/krux` over `/data/krux` | `/data/krux` wins; the development image is built without `--bundle` |
+| `camd` did not match `cam/camd.c` | The revert of the 293-word CPP experiment restored the source but not the binary | `deploy-firmware.sh` rebuilds camd whenever the source is newer |
+| The kexec RAM-wipe experiment was reachable from `machine.reset()` | It leaked onto master | Off master; the experiment is on `airgap/memory-wipe` in this repo, in `krux` and in `krux/firmware/micropython`; the kernel side was already on `linux:airgap/memory-wipe` |
+
+### The table
 
 | Area | State |
 |---|---|
 | Build | Hard-float `arm-linux-gnueabihf` + ccache, out of tree in `/tmp/opencode/mp-build`; the build script verifies the VFP ABI |
 | camd capture | CAMIF_RAW + CPP, **offline** (`frame_type=0`) with native ION buffers (`native_buff=1`, fd per frame) |
-| CPP message | 293-word vendor message (1600x1200 layout) captured from the HAL; ours is 266 words (1280x960) |
+| CPP message | 266 words (1280x960). The 293-word vendor message is clamped by the driver and must not be used |
 | Frame consistency | Only frames with a populated chroma plane are published (the ISP also completes raw frames into the same queue) |
 | Tearing | Fixed: `latest_y` is rewritten under the frame mutex |
-| Preview | Portrait 720x960, rotated in camd, unsharp mask, 2x digital gain, correct aspect (no crop) |
-| Exposure | VMAX raised to the vendor 0x09d6; bounded mean-driven AE with clipping backoff; continuous AE disabled |
-| QR decode | Static/animated UR and BBQR decode; quirc supports versions up to 40. The full-res snapshot path is currently disabled because it blocked the single-client socket |
-| Autofocus | Working: `damping_step=1` fixes the stall; the coarse sweep peaks at **step 21** at 40 cm and the QR decodes. Fixed step is re-read per session (docs/cam-autofocus.md) |
-| Boot image | Bundled camera image is **15.95 MB** (7.1 MB headroom): pruned tree, stripped adbd/linker/libc/libdexfile, `-Os`/gc-sections binaries, and XZ initramfs (`CONFIG_RD_XZ=y`) |
+| Preview | Portrait 720x960, rotated in camd, unsharp mask, correct aspect (no crop) |
+| Exposure | VMAX raised to the vendor 0x09d6; a bounded, **mean-driven** AE with a small clipping trim. Re-measured for every scan |
+| QR decode | Static/animated UR and BBQR decode; quirc supports versions up to 40. The full-res snapshot path is disabled because it blocked the single-client socket |
+| Autofocus | Working: `damping_step=1` fixes the stall; a full sweep plus a fine window finds the peak (steps 6-9 at arm's length), and a cached sweep follows it. The tap on the preview runs a full sweep |
+| Camera state | `/tmp/krux/{af,focus,luma_gain,unsharp}` — volatile, reinitialised from the defaults when missing. Nothing in `/data/krux` is required |
+| Boot image | The development image carries no `/opt/krux`: the firmware is only on `/data/krux`. A bundled image is 15.95 MB (7.1 MB headroom) |
 | Entropy | Statistics path unchanged; keep the delivered frame at 640-720 px for frame rate |
 | PIX_VIEWFINDER | Still not delivering completed frames; not needed for QR |
+
+### The keys in the camera
+
+| Key | Action |
+|---|---|
+| Power (which is also Krux's ENTER on this port) | leave the camera |
+| Tap on the preview | refocus where you tap, the way a phone camera does |
+| Tap the `-` / `+` strip at the bottom | exposure down / up |
+| Volume up / down | exposure up / down |
 
 ### Captured vendor data (kernel hooks, tools in `tools/`)
 
