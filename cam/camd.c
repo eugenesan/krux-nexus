@@ -2611,6 +2611,24 @@ static void *client_thread(void *arg)
 								"/data/krux/scan.raw.tmp",
 								"/data/krux/scan.raw");
 						}
+						/* The chroma plane as well: the
+						 * picture is built from the luma
+						 * and the chroma, and a
+						 * disagreement between them
+						 * is not visible in the luma
+						 * alone. */
+						f = fopen(
+							"/data/krux/scan_uv.raw.tmp",
+							"wb");
+						if (f) {
+							fwrite(latest_uv, 1,
+								(OUT_W / 2) * (OUT_H / 2) * 2,
+								f);
+							fclose(f);
+							rename(
+								"/data/krux/scan_uv.raw.tmp",
+								"/data/krux/scan_uv.raw");
+						}
 						f = fopen(
 							"/data/krux/scan_full.raw.tmp",
 							"wb");
