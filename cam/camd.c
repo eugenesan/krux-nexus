@@ -2788,6 +2788,12 @@ static void *client_thread(void *arg)
 						step = 0;
 						coarse_best_step = 0;
 						coarse_best_score = 0;
+						/* The sweep starts by itself, without
+						 * a request, so the state machine
+						 * has to say so: the
+						 * auto-exposure holds still while
+						 * the focus is being measured. */
+						af_sweeping = 1;
 						actuator_move(0);
 					} else if (phase == 1) {
 						printf("[af] step %d score %lu\n",
