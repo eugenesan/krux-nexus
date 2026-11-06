@@ -3234,7 +3234,29 @@ static void *ctl_thread(void *arg)
 		if (cfd < 0)
 			continue;
 		if (read(cfd, &c, 1) == 1) {
-			if (c == 'D') {
+			if (c == 'E') {
+				/* The exposure and the gain, so the setting
+				 * can be found from the host without the
+				 * camera page in the way. */
+				unsigned char p[4];
+				if (read(cfd, p, 4) == 4) {
+					int nexp = (p[0] << 8) | p[1];
+					int ngain = (p[2] << 8) | p[3];
+					struct imx179_reg r[2] = {
+						{ 0x0202, nexp, 0 },
+						{ 0x0204, ngain, 0 },
+					};
+					int erc = sensor_write_regs_as(
+						r, 2, MSM_CAMERA_I2C_WORD_DATA);
+					if (erc == 0) {
+						cam_exposure = nexp;
+						cam_gain = ngain;
+						printf("[sensor] E exp=0x%04x gain=0x%04x (ctl)\n",
+						       nexp, ngain);
+					}
+					write(cfd, erc == 0 ? "OK" : "ER", 2);
+				}
+			} else if (c == 'D') {
 				dump_now = 1;
 				/* Ask for a frame as well: the frame work
 				 * is skipped while no client is asking,
