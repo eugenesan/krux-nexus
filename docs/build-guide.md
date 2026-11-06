@@ -152,10 +152,12 @@ RAMDISK=artifacts/built/ramdisk-bundled \
     artifacts/built/boot-bundled.img
 ```
 
-The init stub prefers `/opt/krux` when it is present and falls back to
-`/data/krux`, so the adb deploy path above keeps working during
-development. Settings and the log still live on `/data/krux`; the
-firmware and its Python libraries are read-only in the boot image.
+The init stub prefers `/data/krux` and falls back to `/opt/krux`, so the
+adb deploy path above is the one that takes effect during development: a
+push to `/data/krux` is always the code that runs, and the bundled copy
+is only used on a device that has no development tree of its own.
+Settings and the log still live on `/data/krux`; the firmware and its
+Python libraries are read-only in the boot image.
 
 The ramdisk build prunes what the stub does not use: TWRP's
 `terminfo` and Python 3.10 trees, the UBSan runtime (no binary has a

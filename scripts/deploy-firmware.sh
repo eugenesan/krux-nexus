@@ -15,9 +15,10 @@
 set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-MICROPYTHON=${MICROPYTHON:-$HERE/../rootfs/micropython-arm32}
-CAMD=${CAMD:-$HERE/../cam/camd}
-KRUXSRC="$HERE/../krux/src"
+ROOT="$(cd "$HERE/.." && pwd)"
+MICROPYTHON=${MICROPYTHON:-$ROOT/rootfs/micropython-arm32}
+CAMD=${CAMD:-$ROOT/cam/camd}
+KRUXSRC="$ROOT/krux/src"
 RESTART=${DEPLOY_RESTART:-1}
 
 [ -f "$MICROPYTHON" ] || {
@@ -27,6 +28,19 @@ RESTART=${DEPLOY_RESTART:-1}
 
 echo "== the target directories"
 adb shell 'mkdir -p /data/krux/krux /data/krux/krux/pages /data/krux/krux/printers /data/krux/krux/translations /data/krux/krux/touchscreens /data/krux/flash /data/krux/embit/descriptor /data/krux/embit/util /data/krux/embit/wordlists' >/dev/null
+
+# The device's copy is a deployment artifact, never a source.  A .py
+# file on the device that the project tree does not have would shadow
+# the tree (the firmware imports by name), so it has to go: the device
+# must run exactly what the project tree says, and nothing else.
+echo "== removing the files the project tree does not have"
+adb shell 'find /data/krux -maxdepth 1 -name "*.py" -print | while read f; do
+	[ -f "'"$KRUXSRC"'/$(basename "$f")" ] || rm -f "$f"
+done
+find /data/krux/krux -name "*.py" -print | while read f; do
+	rel=${f#/data/krux/krux/}
+	[ -f "'"$KRUXSRC"'/krux/$rel" ] || rm -f "$f"
+done' >/dev/null
 
 echo "== the interpreter"
 adb push "$MICROPYTHON" /data/krux/micropython
@@ -45,6 +59,14 @@ for f in "$KRUXSRC"/*.py; do
 done
 
 if [ -f "$CAMD" ]; then
+	# camd.c is the only input.  A stale binary here is a silent
+	# trap: the device would run code that no longer matches the
+	# source, and the next source change would look like it did
+	# nothing.  Rebuild it when the source is newer.
+	if [ "$ROOT/cam/camd.c" -nt "$CAMD" ]; then
+		echo "== camd is older than its source: rebuilding it"
+		bash "$HERE/cam/build-camd.sh" "$CAMD" >/dev/null
+	fi
 	echo "== camd daemon"
 	adb push "$CAMD" /data/krux/camd >/dev/null
 	adb shell 'chmod +x /data/krux/camd' >/dev/null

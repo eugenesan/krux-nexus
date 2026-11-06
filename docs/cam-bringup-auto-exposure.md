@@ -122,22 +122,24 @@ Krux (Python)                    camd (C daemon)              IMX179 sensor
 
 | Tool | Path | Purpose |
 |---|---|---|
-| AE patcher | `tools/ae-patch.py` | Applies/reverts auto-exposure patches to camd.c and sensor.py |
-| camd builder | `scripts/cam/build-ae-camd.sh` | Builds camd with AE support |
+| camd builder | `scripts/cam/build-camd.sh` | Builds camd from `cam/camd.c` |
 | Register tester | `scripts/cam/test-registers.sh` | Tests register writes manually |
 | AE tester | `scripts/cam/test-ae.sh` | Tests auto-exposure algorithm |
 | Exposure sweep | `scripts/cam/sweep-exposure.sh` | Sweeps exposure values, captures brightness |
 
+The auto-exposure code (the `W`, `E` and `V` socket commands) is part of
+the committed source in `cam/camd.c` and `krux/src/sensor.py`.  There is
+no patch step: the old `tools/ae-patch.py` and
+`scripts/cam/build-ae-camd.sh` were removed because they still matched
+the current source and duplicated the AE block instead of adding it.
+
 ### Quick start
 
 ```sh
-# 1. Apply AE patches
-python3 tools/ae-patch.py --apply
+# 1. Build camd
+bash scripts/cam/build-camd.sh
 
-# 2. Build camd
-bash scripts/cam/build-ae-camd.sh
-
-# 3. Deploy
+# 2. Deploy
 DEPLOY_RESTART=1 bash scripts/deploy-firmware.sh
 
 # 4. Test registers

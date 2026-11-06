@@ -2312,3 +2312,227 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - The Nexus 5 lens is fixed-focus/VCM parked near infinity; Android (CameraX, 640 px analysis) reads the same QR, so focus — not resolution — is the limiter.
 - Touch injection works only when ABS_MT_POSITION_X/Y precede ABS_MT_TRACKING_ID; camera page taps: main menu y=180, submenu y=280; exit tap anywhere.
 - Memory-wipe research is in `docs/memory-wipe-findings.md` (deferred).
+
+## 2026-11-05 20:03:10 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable in the Krux port for compact/medium/high-density QR, animated UR/BBQR, PTSB/Datum/descriptor/mnemonic scanning, and entropy.
+- Memory-wipe work is paused until a serial console is available.
+
+## Requirements
+- No modem, Wi-Fi, BT, or vendor HAL; no symlinks in the Krux tree.
+- Reversible `fastboot boot` only; never flash; cold boot when the camera pipeline needs a clean session.
+- Never aim or start a camera scan without asking; give a 10-second cue, scan ~20 s, then tell the user to return.
+- Do not use the camera flash/LED for screen QR scanning.
+- Keep QR parsing inside Krux.
+- Keep the delivered frame modest; 720×960 is current, 1640×1232 is the source.
+- Build with hard-float `arm-linux-gnueabihf` + ccache; MicroPython out of tree in `/tmp/opencode/mp-build`.
+- Kernel work stays in this project (`linux`) and must preserve KernelSU.
+- Memory-wipe must use a separate linux branch; paused until serial console.
+- High-density QR must work without manual exposure where possible; AE must not overblow or drift.
+- Preview should be stable, usable for aiming, and not tear.
+- Consequent scans should not silently reuse a stale focus; refocus at scan start is acceptable.
+
+## Decisions
+- AF stall root cause was `damping_step=0`; `damping_step=1` is required.
+- Default is `af=2` with no fixed `focus`; `af=4` + `/data/krux/focus` remains for a fast fixed step.
+- `refocus` at the start of every scan; `R` socket command re-runs the AF sweep.
+- Power now dumps the current frames (`D` command) instead of refocusing, for HD analysis.
+- AE is one-shot at camera start; manual exposure via Vol+/− and on-screen −/+; `_ae_manual` locks it.
+- Exposure is direct: larger = brighter. Vol+ now adds `0x100`; Vol− subtracts `0x100`.
+- `/data/krux/luma_gain` (1–4) and `/data/krux/unsharp` (0/1/2) are read at camd startup; current test values are `luma_gain=1`, `unsharp=0`.
+- quirc supports version 40; `K_QUIRC_MAX_PROCESS_VERSION 40`, 1024 regions, 32768 flood-fill stack.
+- The 720×960 preview/decoder path is kept; the full-res `H` snapshot path is disabled because it backed up the CPP queue.
+- XZ initramfs (`CONFIG_RD_XZ=y`) is the default; gzip remains available with `COMPRESS=gzip`.
+- Memory-wipe kernel mode (`wipe=test`, `wipe=1`) is verified; kexec handoff is blocked and paused.
+- SeedKeeper is a top-level “SeedKeeper Card” item plus “Load Seed from Card”; the “Via SeedKeeper Card” item is the fifth New Mnemonic entry.
+
+## Work State
+
+### Completed
+- Build outputs now go to `artifacts/built/`; `rootfs/stock/` is ignored; the images were never tracked in git.
+- Hard-float MicroPython + ccache out-of-tree build; 32 MiB firmware heap fixes the 1,382,400-byte preview `MemoryError`.
+- Ramdisk pruning: terminfo/python already removed; `adbd`/linker/libc/libdexfile stripped; keystore/ubsan removed; duplicate CPP firmware removed; kexec opt-in.
+- XZ initramfs: ramdisk ~8.7 MB; camera boot image ~15.95 MB; ~7.1 MB headroom.
+- Offline/native CPP path, consistent frames, tearing fix, portrait 720×960 preview, exposure control.
+- DW9714 table and HAL sequence captured; AF sweep works; QR decoded at fixed step 21 at 40 cm.
+- Base32 fallback added and verified; BBQR deflate now tries AUTO→RAW→ZLIB and encodes ZLIB; 20 KB/33-part synthetic decode passed.
+- Manual exposure, exposure direction, per-scan refocus, Power frame dump, and `luma_gain`/`unsharp` controls implemented.
+- quirc v40 support added; high-density version limit no longer the blocker.
+- SeedKeeper investigation: no regression; deployed `login.py:104` contains “Via SeedKeeper Card” under New Mnemonic.
+- Memory-wipe kernel mode verified: `wipe=test` wipes 1487 MB and boots; `wipe=1` wipes and powers off; kexec tooling/docs committed on `airgap/memory-wipe`.
+
+### Active
+- High-density QR still fails; compact/medium work, HD only sometimes/never depending on path.
+- Frame analysis: `scan2.raw` (720×960) is dark, mean ~15.3, max 55; `scan2_full.raw` is only 786,336 bytes (expected 2,020,480 for 1640×1232), so the dump is partial/truncated.
+- Preview tearing observed; not yet determined whether it is the actual frame or LCD preview.
+- Camera reuse between PTSB loads still reuses the stream; refocus at scan start is in place, but a fresh sensor start is not.
+- `boot-cam-dump3.img` (Power-only atomic dump) is built but not booted or tested.
+
+### Blocked
+- Memory-wipe kexec handoff hangs/resets at the bootloader logo; needs a serial console on `ttyHSL0` or working early logs.
+- HD QR may be limited by 720×960 decode resolution, focus, or contrast; not yet isolated.
+- The `scan_full` dump is truncated; current frame analysis is inconclusive.
+
+## Next Move
+1. Boot `/tmp/opencode/boot-cam-dump3.img`; keep `af=2`, no `focus`, `luma_gain=1`, `unsharp=0`.
+2. Ask the user to hold the HD PTSB QR in the PTSB/Datum Tool camera and press Power once; pull `/data/krux/scan.raw` and `/data/krux/scan_full.raw`.
+3. Decode both frames with `/tmp/opencode/venv/bin/python` and pyzbar at rotations 0/90/180/270; compare 720×960 vs 1640×1232.
+4. Inspect the frames for tearing, partial strips, contrast, and QR module size; determine whether the tear is in the frame or only the LCD preview.
+5. If the 720 frame is the limit, design a full-resolution decode path that does not share the capture/CPP thread; otherwise tune focus/exposure.
+6. Re-test HD with `luma_gain=2` and `unsharp` 0/1/2 if the raw frame is too dark.
+7. Decide whether to stop the sensor on camera-page exit for a truly fresh start, or keep stream reuse plus per-scan refocus.
+8. Re-run the host test suite; commit the uncommitted atomic-dump change in `cam/camd.c`; push local commits when appropriate.
+
+## Relevant Files
+- `cam/camd.c`: capture/CPP, AE/AF, refocus, dump, luma gain/unsharp; atomic dump change is uncommitted.
+- `krux/src/krux/pages/qr_capture.py`: preview loop, manual exposure, refocus/dump keys, frame filtering.
+- `krux/src/krux/camera.py`: `_auto_expose`, `adjust_exposure`, `refocus`, `dump`.
+- `krux/src/sensor.py`: camd socket, `snapshot`, `refocus`, `dump`.
+- `krux/src/krux/bbqr.py`, `krux/src/krux/_base32.py`, `krux/src/krux/base32_compat.py`: BBQR/base32/deflate.
+- `krux/firmware/micropython/ports/unix/k_quirc_internal.h`, `k_quirc_version.c`: quirc v40/regions/stack.
+- `krux/firmware/micropython/ports/unix/image_maixpy.c`: `get_statistics_roi`.
+- `krux/src/image.py`: native image wrapper.
+- `rootfs/build-stub-ramdisk.sh`, `rootfs/make-boot-image.sh`, `rootfs/init-stub.c`: ramdisk, XZ, heap, image packing.
+- `linux/arch/arm/configs/lineageos_hammerhead_defconfig`: `CONFIG_RD_XZ`, camera branch; memory-wipe branch has `CONFIG_KEXEC`/`CONFIG_MEMORY_WIPE`.
+- `docs/cam-autofocus.md`, `docs/cam-frame-path.md`, `docs/cam-state.md`: camera state and findings.
+- `docs/memory-wipe-state.md`, `docs/memory-wipe-continue.md`, `docs/linux34_kexec_wipe_plan.md`: memory-wipe pause, continuation prompt, plan.
+- `scripts/build/build-micropython.sh`, `scripts/build/build-kexec.sh`: build tooling.
+- `tools/parse_cpp_dump.py`, `tools/parse_actuator_dump.py`: captured vendor data parsers.
+- `artifacts/built/`: ignored ramdisks, boot images, `kexec-arm`; `/tmp/opencode/boot-cam-dump3.img` built but not booted.
+
+## Important Context
+- Current device is in the stub with `boot-cam-dump2.img`; `af=2`, no `focus`, `luma_gain=1`, `unsharp=0`; Power dumps frames.
+- `scan2.raw` is 691,200 bytes (720×960); `scan2_full.raw` is 786,336 bytes, but the source is 1640×1232 = 2,020,480 bytes, so the full dump is truncated.
+- The previous `scan2.raw` image is almost black (mean 15.3, max 55); the preview “looks fine” because of LCD backlight/display, not raw luma.
+- `boot-cam-dump3.img` writes only on Power and uses `.tmp` + `rename`; it has not been booted.
+- Exposure buttons: Vol+ = `+0x100`; Vol− = `−0x100`; on-screen right `+`, left `−`; first adjustment locks AE.
+- AF: `af=2`/no `focus` runs the sweep at startup; `refocus` runs at each scan start; Power is now dump, not refocus; `R` is the socket refocus command.
+- quirc v40 is present; compact/medium work; HD still fails at 720.
+- Full-res `H` path is disabled; the 1640×1232 `src_y` is available only in the dump.
+- Camera image size ~15.95 MB; XZ ramdisk ~8.7 MB; boot limit 23,068,672 bytes.
+- Memory-wipe branches: `linux:airgap/memory-wipe` head `44e3385803d`; camera linux branch `airgap/cam-ksu-dump` at `17774b5abd9`; outer repo points back to the camera branch.
+- `cam/camd.c` atomic dump change is uncommitted; `boot-cam-dump3.img` is built from it.
+- SeedKeeper: top-level item and New Mnemonic fifth item are present; the earlier “missing from Load Mnemonic” was a misunderstanding.
+
+## 2026-11-06 01:05:53 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable in the Krux port for compact/medium/high-density QR, animated UR/BBQR, PTSB/Datum/descriptor/mnemonic scanning, and entropy.
+- Recover the known-good firmware from the original device and make the project tree the source of truth.
+
+## Requirements
+- No modem, Wi-Fi, BT, or vendor HAL; no symlinks in the Krux tree.
+- Reversible `fastboot boot` only; never flash; cold boot when the camera pipeline needs a clean session.
+- Never aim or start a camera scan without asking; give a 10-second cue, scan ~20 s, then tell the user to return.
+- Do not use the camera flash/LED for screen QR scanning.
+- Keep QR parsing inside Krux.
+- Keep the delivered frame modest; 720×960 is current, 1640×1232 is the source.
+- Build with hard-float `arm-linux-gnueabihf` + ccache; MicroPython out of tree in `/tmp/opencode/mp-build`.
+- Kernel work stays in this project (`linux`) and must preserve KernelSU.
+- Memory-wipe must use a separate linux branch; paused until serial console.
+- High-density QR must work without manual exposure where possible; AE must not overblow or drift.
+- Preview should be stable, usable for aiming, and not tear.
+- Consequent scans should not silently reuse a stale focus; refocus at scan start is acceptable.
+- Compare only the `.py` files pulled from the device with the project tree; apply only newer/fixed files.
+- Deploy Krux + MicroPython to the new device using `deploy-firmware.sh`.
+- Code on the device should never be newer than the project tree.
+
+## Decisions
+- AF stall root cause was `damping_step=0`; `damping_step=1` is required.
+- Default is `af=2` with no fixed `focus`; `af=4` + `/data/krux/focus` remains for a fast fixed step.
+- `refocus` at the start of every scan; `R` socket command re-runs the AF sweep.
+- Power is a plain full AF sweep; the blocking Power re-expose was removed.
+- AE is one-shot at camera start; manual exposure via Vol+/− and on-screen −/+; `_ae_manual` locks it.
+- Exposure is direct: larger = brighter; Vol+ adds `0x100`; Vol− subtracts `0x100`.
+- `/data/krux/luma_gain` (1–4) and `/data/krux/unsharp` (0/1/2) are read at camd startup; current test values are `luma_gain=1`, `unsharp=0`.
+- quirc supports version 40; `K_QUIRC_MAX_PROCESS_VERSION 40`, 1024 regions, 32768 flood-fill stack.
+- The 720×960 preview/decoder path is kept; the full-res `H` snapshot path is disabled because it backed up the CPP queue.
+- XZ initramfs (`CONFIG_RD_XZ=y`) is the default; gzip remains available with `COMPRESS=gzip`.
+- Memory-wipe kernel mode (`wipe=test`, `wipe=1`) is verified; kexec handoff is blocked and paused.
+- SeedKeeper is a top-level “SeedKeeper Card” item plus “Load Seed from Card”; the “Via SeedKeeper Card” item is the fifth New Mnemonic entry.
+- The CPP debug dump (`cpp_dump_frames=64`) drops ISP frames, burns CPU, and stalls the pipeline; it must be disabled after `STREAMON` and at runtime.
+- The AE re-running on every camera page changed exposure and made QR work only once; it should run only on the first camera page.
+- The on-demand camd start/stop and per-frame idle skip left the ISP/CPP with empty buffers; boot-time camd start + downscale-only idle skip is the safe path.
+- The 293-word offline CPP message is rejected/clamped by this driver (still logs 266); the experiment was reverted.
+- The working firmware is the original device’s `/data/krux`, not the bundled `/opt/krux` experimental code.
+- `deploy-working-krux.sh` was created to restore the wiped `/data/krux`; the user says deployment should come from the project tree via `deploy-firmware.sh`.
+
+## Work State
+
+### Completed
+- Build outputs now go to `artifacts/built/`; `rootfs/stock/` is ignored; images were never tracked in git.
+- Hard-float MicroPython + ccache out-of-tree build; 32 MiB firmware heap fixes the 1,382,400-byte preview `MemoryError`.
+- Ramdisk pruning; XZ initramfs ~8.7 MB; camera boot image ~15.95 MB; ~7.1 MB headroom.
+- Offline/native CPP path, consistent frames, tearing fix, portrait 720×960 preview, exposure control.
+- DW9714 table and HAL sequence captured; AF sweep works; QR decoded at fixed step 21 at 40 cm.
+- Base32 fallback added and verified; BBQR deflate tries AUTO→RAW→ZLIB and encodes ZLIB; 20 KB/33-part synthetic decode passed.
+- Manual exposure, exposure direction, per-scan refocus, Power frame dump, and `luma_gain`/`unsharp` controls implemented.
+- quirc v40 support added; high-density version limit is no longer the blocker.
+- SeedKeeper investigation: no regression; deployed `login.py:104` contains “Via SeedKeeper Card”.
+- Memory-wipe kernel mode verified: `wipe=test` wipes 1487 MB and boots; `wipe=1` wipes and powers off; kexec tooling/docs committed on `airgap/memory-wipe`.
+- QR display cut-off fixed by marking `draw_qr_code_binary` in progress and committing the finished code.
+- BBQR compression fixed by enabling `MICROPY_PY_DEFLATE_COMPRESS=1`.
+- HD QR now decodes near full screen; the AF macro end (step 44) is scored.
+- Raw-pass frame filter now publishes only CPP-processed frames; this fixed preview tearing, AE overexposure, and AF scoring.
+- AF fine sweep widened to ±8, prefers the fine peak, and approaches the final step with a one-step forward move.
+- CPP debug dump disabled at runtime; preview is stable.
+- Local ±5 fine AF around the last good step with a full-sweep fallback was implemented.
+- Static-link build bug fixed: a comment inside the backslash-continued `make` command produced a dynamic PIE binary; the script now checks for a static binary.
+- Working set pulled from original device `/data/krux` to `/tmp/opencode/original-data-krux` and `deploy/working-krux`.
+- `krux/src` camera/QR files mirrored from the working set; commits `d1e15529` (krux) and `c7cdcaa` (outer).
+- `deploy/working-krux/README.md` and `scripts/deploy-working-krux.sh` created.
+- 293-word CPP experiment reverted (`f2ec8eb`).
+
+### Active
+- Compare only the pulled `.py` files against `krux/src`; identify which device files are newer or contain fixes; apply only those.
+- Explain why `deploy-working-krux.sh` was created and why it was used.
+- Deploy Krux + MicroPython to the new device with `deploy-firmware.sh`.
+- Re-test camera, AF, AE, repeated QR scans, and idle CPU on the new device.
+- Working tree is not clean: `docs/compaction-log.md` modified; `krux` submodule has local changes.
+
+### Blocked
+- The test device `0879524b0068abca` currently has `/data/krux` wiped and shows `bytesused=0` / CPP `CFG` failures.
+- Memory-wipe kexec handoff hangs/resets at the bootloader logo; needs a serial console on `ttyHSL0` or working early logs.
+- HD QR reliability across repeated scans is not yet re-verified with the restored working set.
+- Idle CPU remains high (camd ~25%, micropython 25–95% at the menu); the LCD 200 ms commit change is in the experimental build, not the restored working set.
+
+## Next Move
+1. Diff only the pulled `.py` files (`/tmp/opencode/original-data-krux` vs `krux/src`) and identify newer/fixed device files.
+2. Apply only those newer/fixed files to the working tree; keep the project tree as source of truth.
+3. Explain `deploy-working-krux.sh` was a recovery script for the wiped `/data`; deployment should use `deploy-firmware.sh`.
+4. Deploy Krux + MicroPython to `0879524b0068abca` using `deploy-firmware.sh`.
+5. Test camera/QR/AF/AE and repeated scans on the new device.
+6. Address remaining idle CPU and AE/QR-once behavior if reproduced.
+7. Re-run host tests and commit/push.
+
+## Relevant Files
+- `deploy/working-krux/`: known-good firmware pulled from original device; reference set.
+- `/tmp/opencode/original-data-krux/`: raw 68 MB pull of original `/data/krux`.
+- `krux/src/sensor.py`, `krux/src/krux/camera.py`, `krux/src/krux/pages/qr_capture.py`, `krux/src/krux/bbqr.py`, `krux/src/krux/baseconv.py`, `krux/src/krux/power.py`: working files mirrored from device.
+- `scripts/deploy-working-krux.sh`: recovery deploy script the user questioned.
+- `deploy-firmware.sh`: deployment path the user wants used.
+- `cam/camd.c`: camera daemon; current source reverted to 266-word message and downscale-only idle.
+- `rootfs/init-stub.c`: camd startup, `/data` handling, CPP dump write.
+- `scripts/build/build-micropython.sh`: static-link fix and deflate flags.
+- `krux/firmware/micropython/ports/unix/lcd_bcm.c`: QR partial-commit guard and 200 ms commit cadence.
+- `docs/cam-autofocus.md`, `docs/cam-frame-path.md`, `docs/cam-state.md`, `docs/display-qr.md`: camera/display findings.
+- `/tmp/opencode/boot-cam-idle.img`: last known-good boot image on the test device.
+- `linux` branch `airgap/cam-ksu-dump`: KernelSU camera kernel; `zImage-dtb` at `/tmp/opencode/ko-cam-xz/arch/arm/boot/zImage-dtb`.
+- `artifacts/built/`: ignored ramdisks, boot images, `kexec-arm`.
+
+## Important Context
+- Original device: `0643efdcf0eca63a` (Android/stub, working `/data/krux`); test device: `0879524b0068abca` (stub, `/data/krux` wiped).
+- Original `/data/krux` is readable via adb in the stub; Nexus 5 has no encryption on this ROM.
+- Working set sizes: `sensor.py` 5968, `krux/camera.py` 17597, `krux/display.py` 22128, `krux/bbqr.py` 7978; `sensor.py`/`display.py`/`bbqr.py` match commit `69a3fbda`; `camera.py` differs from `69a3fbda` (17458).
+- Current `krux/src` was overwritten with the working camera/QR files; the experimental changes remain in git history.
+- The original device’s working code shadows `/opt/krux`; wiping `/data` forced the experimental bundle onto the test device and broke it.
+- CPP dump must be disabled at runtime: `echo 0 > /sys/module/msm_cpp/parameters/cpp_dump_frames`.
+- On-demand camd stop/start and idle pace sleep both broke the CPP queue; boot-time camd start is the working path.
+- The 293-word CPP message is clamped/logged as 266; do not use it.
+- `krux` submodule is dirty (`m krux`) and `docs/compaction-log.md` is modified.
+- Camera scans: ask the user, give a 10-second cue, scan ~20 s, then tell them to return.

@@ -35,8 +35,9 @@
 #
 # --bundle copies MicroPython, Krux and embit into /opt/krux in the
 # ramdisk, so the boot image carries a read-only firmware instead of
-# loading it from /data/krux.  The development deploy path still works:
-# the init stub prefers /opt/krux when it is present.
+# loading it from /data/krux.  It is for a finished, production device:
+# during development the firmware is deployed to /data/krux, which the
+# init stub prefers, so a push always takes effect.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -138,8 +139,9 @@ fi
 #
 # The production boot image can carry the interpreter and the Python
 # tree itself, so /data/krux is not needed for the firmware at all.
-# The init stub checks /opt/krux first and falls back to /data/krux,
-# which keeps the adb deploy path working during development.
+# The init stub prefers /data/krux and falls back to /opt/krux, so the
+# adb deploy path keeps working during development: a bundled image
+# without a development tree on the data partition still boots.
 if [ "$BUNDLE" = "1" ]; then
 	BUNDLE_DIR="$WORK/rd/opt/krux"
 	MICROPYTHON="$ROOT/rootfs/micropython-arm32"

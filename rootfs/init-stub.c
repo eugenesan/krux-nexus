@@ -55,11 +55,18 @@
 
 /* Where the firmware lives.
  *
- * During development it is on the data partition, so that the ramdisk
+ * The development copy is on the data partition, so that the ramdisk
  * stays small and the firmware can be updated over adb without
- * repacking the boot image.  A production image can instead carry a
- * read-only copy in the ramdisk at /opt/krux; that copy wins when it is
- * present, and the data copy remains the development fallback. */
+ * repacking the boot image.  scripts/deploy-firmware.sh pushes the
+ * project tree there, and it is the ONLY place a code change is ever
+ * made: the files on the device are a deployment artifact, never the
+ * source.
+ *
+ * A production image can instead carry a read-only copy in the ramdisk
+ * at /opt/krux.  That copy is the FALLBACK: it is used only when the
+ * data partition has no firmware tree of its own.  It must not take
+ * precedence, or a push to /data/krux would silently have no effect
+ * and the device would keep running the code baked into the image. */
 #define FIRMWARE_DIR "/data/krux"
 #define BUNDLED_FIRMWARE_DIR "/opt/krux"
 
@@ -290,20 +297,27 @@ static void *start_the_firmware(void *arg) {
     make_the_settings_directories();
     redirect_the_output();
 
-    /* Prefer the read-only copy bundled in the boot image, if there is
-     * one.  The development copy on /data stays as the fallback so the
-     * same stub works with either image. */
+    /* The development copy on the data partition wins: it is what
+     * deploy-firmware.sh pushes, so it is the only tree whose code
+     * changes ever take effect.  The read-only copy bundled in the
+     * boot image is the fallback for a production image with no
+     * development tree on the data partition. */
     {
         const char *dir = FIRMWARE_DIR;
         char binary[64];
         char main_py[64];
 
-        if (access(BUNDLED_FIRMWARE_DIR "/micropython", X_OK) == 0 &&
-            access(BUNDLED_FIRMWARE_DIR "/boot.py", R_OK) == 0) {
+        if (access(FIRMWARE_DIR "/micropython", X_OK) == 0 &&
+            access(FIRMWARE_DIR "/boot.py", R_OK) == 0) {
+            dir = FIRMWARE_DIR;
+            say("using the firmware on the data partition");
+        } else if (access(BUNDLED_FIRMWARE_DIR "/micropython", X_OK) == 0 &&
+                   access(BUNDLED_FIRMWARE_DIR "/boot.py", R_OK) == 0) {
             dir = BUNDLED_FIRMWARE_DIR;
             say("using the firmware bundled in the boot image");
         } else {
-            say("using the firmware on the data partition");
+            say("no firmware: neither the data partition nor the boot "
+                "image carries one");
         }
         snprintf(binary, sizeof(binary), "%s/micropython", dir);
         snprintf(main_py, sizeof(main_py), "%s/boot.py", dir);

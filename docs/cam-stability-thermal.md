@@ -242,6 +242,11 @@ handler to already exist, so `build-ae-camd.sh` could not apply/revert the
 AE commands.  It now patches the clean source and leaves `sensor.py` alone
 (that file already carries the implementation).
 
+That patcher has since been removed as well.  The AE commands landed in
+`cam/camd.c` directly, so its pattern still matched the current source and
+`--apply` duplicated the AE block.  `scripts/cam/build-camd.sh` builds the
+daemon from `cam/camd.c` with no patch step.
+
 ### 7. Second storm: CPP frame-command dump
 
 With the chroma workaround, a 90 s run that reused the boot after two earlier
