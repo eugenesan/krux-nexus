@@ -3391,6 +3391,39 @@ int main(int argc, char **argv)
 	if (argc > 8 && !strcmp(argv[8], "binned")) {
 		cam = &cam_binned;
 	}
+	/*
+	 * The sensor mode is a /tmp state knob, like af/focus/luma_gain:
+	 * 0 = the binned 1640x1232 mode (the default), 1 = the full
+	 * 3280x2464 mode.  It is read here, after the command line, so
+	 * the mode can be changed by writing the file and restarting
+	 * the daemon -- no ramdisk rebuild needed.
+	 */
+	if (state_read("mode", 0, 0, 1) == 1) {
+		cam = &cam_rear;
+		wh[0] = cam->width;
+		wh[1] = cam->height;
+		printf("[mode] full resolution: %dx%d\n", wh[0], wh[1]);
+	}
+	/*
+	 * The ISP stream source, also a /tmp knob: 0 = CAMIF_RAW (the raw
+	 * Bayer, then the CPP), 1 = PIX_VIEWFINDER (the ISP's own
+	 * processed output, bypassing the CPP).  The processed path is
+	 * the one the stock camera uses, and it may carry the demosaic
+	 * and noise reduction that suppress the screen's moire.
+	 */
+	if (state_read("stream", 0, 0, 1) == 1) {
+		isp_stream_src = PIX_VIEWFINDER;
+		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
+	}
+	/*
+	 * The vendor's per-capture ISP configuration, another /tmp knob.
+	 * It is captured from the ROM's camera stack and may carry the
+	 * noise reduction that suppresses the screen's moire.
+	 */
+	if (state_read("capture_cfg", 0, 0, 1) == 1) {
+		send_capture_config = 1;
+		printf("[mode] ISP capture configuration: sent\n");
+	}
 	if (argc > 9 && !strcmp(argv[9], "nocfg"))
 		replay_config = 0;
 	if (argc > 10 && !strcmp(argv[10], "nocycle"))

@@ -230,8 +230,9 @@ def main():
         name = "code-%d-%d.png" % (int(time.time()), attempt)
         show(png, name)
         # The gallery can leave the screen off if the tablet had gone
-        # to sleep; one more wake, then the gallery again.
-        adb("shell", "input keyevent 26")
+        # to sleep; one more wake (WAKEUP, not the power toggle), then
+        # the gallery again.
+        adb("shell", "input keyevent 224")
         time.sleep(0.5)
         show(png, name)
         if args.no_check:
