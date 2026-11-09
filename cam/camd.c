@@ -3551,6 +3551,19 @@ int main(int argc, char **argv)
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
 	}
 	/*
+	 * Hardware scale experiment: ask the ISP's PIX scaler for a
+	 * 960x720 frame -- the preview's un-rotated size -- so the CPU
+	 * only has to rotate it instead of downscaling 8 MP.  The CAMIF
+	 * input stays at the sensor size; only the output stream shrinks.
+	 * The downscale below then averages 1x1 and just rotates.
+	 */
+	if (state_read("hwscale", 0, 0, 1) == 1) {
+		isp_stream_src = PIX_VIEWFINDER;
+		wh[0] = OUT_H;		/* 960 */
+		wh[1] = OUT_W;		/* 720 */
+		printf("[mode] hardware scale: ISP PIX %dx%d\n", wh[0], wh[1]);
+	}
+	/*
 	 * The vendor's per-capture ISP configuration, another /tmp knob.
 	 * It is captured from the ROM's camera stack and may carry the
 	 * noise reduction that suppresses the screen's moire.
