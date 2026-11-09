@@ -493,11 +493,25 @@ the first decode.
   it only publishes ~20, because the per-frame work is gated on a new
   request.
 
-### The live caveat
+### The live result
 
-At ~21 cm the fixed-focus lens is soft: the 1:1 crop of the real
-sample *locates* the code (grid estimate within a version) but does
-not decode, while the same sample decodes perfectly when fed directly.
-That is a focus-distance limit, not a resolution or version limit;
-the code needs to be at a distance the lens can resolve, or the
-autofocus work has to land on a closer step.
+Run through the app's own path (`Camera.initialize_run()` — which
+resets the sensor, sets the luma gain and runs the one-shot AE — then
+`snapshot()` + `auto_expose_follow()` + the locate/crop retry), the
+real sample decodes on the second candidate frame:
+
+```
+frame 0  cand grid 89  rect (346,421,380,363)  crop 869x911  decoded 0
+frame 1  cand grid 89  rect (391,425,337,359)  crop 857x805  decoded 1
+         CROP DECODE UR:CRYPTO-PSBT/HKADRSJOJKIDJYZMADAEPEAOAEAEAEADT
+```
+
+At this distance the 1080 preview only *locates* the code (~3
+px/module, grid estimate 89–93); `find_qrcodes()` alone returns
+nothing.  The 1:1 crop (~6 px/module) is what decodes.  That is the
+dynamic crop doing its job, not a focus limit.
+
+A standalone test that skipped `initialize_run()`/`auto_expose()` and
+ran while the target screen was asleep found nothing; that was a test
+error, not a camera limit.  The lesson: measure the app's actual path,
+with its AE and its display awake.
