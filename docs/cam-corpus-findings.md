@@ -290,18 +290,25 @@ g0x00a5  e0x0980  mean=35     g0x00ed  e0x0980  mean=76
 g0x00a5  e0x04e0  mean=26     g0x00ed  e0x04e0  mean=57
 ```
 
-**The code's finder patterns are now detected** in the frames at
+**The code's finder patterns were detected** in the frames at
 `g0x00ed` and exposures `0x0480`–`0x0780`, at a module pitch of
-**8.14 px** — the same 8 px per module that the Android camera
-resolves it at. So the camera is resolving the code as well as the
-Android camera does.
+**8.14 px**. That looked like the Android camera's 7.7 px/module, but
+it was not a sign of equal resolution: it was the *full-resolution
+scale of a cropped frame*. Because binning was off, the sensor was
+reading its full 3280×2464 window one pixel per output pixel and
+keeping only the top-left 1640×1232 — so the code appeared at twice
+the pitch it should have, and only a sliver of it was in frame.
 
-**But the code is cut off at the frame's edge**, so nothing decodes
-yet: only 160 px of a 904-px-wide code is in frame.
+**After the binning fix** the code is fully in frame at about
+**3.9 px/module** (half the Android photo's 7.7, which is exactly what
+halving the sensor's resolution does). The decoder can read the code
+down to 3.85 px/module when the image is clean — verified by scaling
+the Android photo's crop down to 404×404 — so the remaining problem is
+the moiré and the low contrast, not the framing.
 
 ### What the corpus needs next
 
-The phone has to be aimed so the whole code is in frame. The Android
-photo is the reference: the code should sit well inside the frame,
-as it does there.
+The phone now sees the whole code. To decode it reliably at this
+distance the image needs either more resolution (the full-resolution
+source, Step 6), a larger code on the tablet, or a closer phone.
 
