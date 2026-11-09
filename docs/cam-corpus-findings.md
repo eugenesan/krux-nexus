@@ -350,3 +350,64 @@ The phone now sees the whole code. To decode it reliably at this
 distance the image needs either more resolution (the full-resolution
 source, Step 6), a larger code on the tablet, or a closer phone.
 
+
+---
+
+## 7. Preview performance: the transfer and the downscale
+
+The preview rate was ~4 fps and looked like a socket problem. It was
+two bottlenecks of almost equal size:
+
+| | cost |
+|---|---|
+| the socket copy of the 720×960 preview (1 MB at 4.3 MB/s) | ~240 ms |
+| the daemon's downscale | ~230 ms |
+
+### The shared-memory frame (removes the transfer)
+
+`camd` publishes the preview luma into `/tmp/krux/frame` (a seqlock
+header plus the luma); `image.from_shared()` maps it and reads it.
+The socket stays for the control commands and as a fallback. An `A`
+keepalive tells the daemon a client is reading, or it goes idle and
+stops publishing.
+
+This removed the 240 ms copy but **did not raise the rate**, because
+the downscale was equally slow — it exposed the second bottleneck.
+
+### The downscale (the real one)
+
+The old loop sampled the source **column-major** for the 90° rotation,
+so it re-read the whole 2 MP frame once per output row — 960 passes,
+~2 GB of traffic. The ION frame is **uncached**, and a byte-by-byte
+read of it runs at **20 MB/s** (98 ms for 2 MP), while a wide memcpy
+reads it at **250 MB/s** (8 ms). So:
+
+- **Two-pass downscale**: read each source row once, contiguously,
+  into a 960×720 intermediate, then rotate that small image.
+- **Cached bounce buffer**: `memcpy` the uncached ION frame into a
+  cached buffer (8 ms), then downscale from there.
+
+Measured on the device: the downscale went **230 ms → 133 ms → 45 ms**,
+and the preview **4.3 fps → 14.8 fps** (the sensor's own binned rate).
+
+### The CPP `EAGAIN` was a symptom
+
+The `VIDIOC_MSM_CPP_CFG` `EAGAIN` was the CPP's output-buffer queue
+emptying because the slow downscale held the buffers. With the
+downscale fast, the buffers are recycled quickly and the error drops;
+the rate reaches the sensor's limit.
+
+### The ISP hardware scaler
+
+The ISP's PIX path can scale in hardware. A `hwscale` knob asks it for
+a 960×720 output with `PIX_VIEWFINDER`. **It delivers no frames**: the
+captured ISP sequence does not configure the PIX scaler, so this needs
+the scaler registers from the vendor's preview configuration before it
+can be used. The knob is off by default; the CPU path is the working
+one.
+
+### What this means for the entropy preview
+
+At 14.8 fps the binned preview is comfortable. The full-resolution
+mode is still ~2 fps (the 8 MP CPU downscale), so full-res stays for
+the QR crop only, not for the live preview.
