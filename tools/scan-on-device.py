@@ -7,14 +7,16 @@ from krux.camera import Camera, QR_SCAN_MODE
 cam = Camera()
 cam.initialize_run(QR_SCAN_MODE)
 print("camera up")
-sensor.refocus(True)
-print("full sweep requested")
+# The app does not refocus at page open; it decodes with the focus it
+# already has and asks for a sweep only after frames go unread.
+print("decoding with the current focus")
 for i in range(120):
     try:
         img = cam.snapshot(2000)
     except Exception as e:
         print("snapshot failed", e)
         continue
+    cam.auto_expose_follow(img)
     res = img.find_qrcodes()
     if res:
         print("FOUND after", i, "frames:", res[0].payload())
