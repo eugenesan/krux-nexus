@@ -899,6 +899,86 @@ static int latest_seq = 0;
 static int latest_ready = 0;
 
 /* ------------------------------------------------------------------ *
+ * the shared-memory frame
+ *
+ * The socket copy of a 691 KB preview is the preview's bottleneck
+ * (~240 ms at ~4.3 MB/s).  The daemon also publishes the luma into a
+ * POSIX shared-memory region; the firmware maps it and reads the
+ * frame directly, so the copy is gone.  Only the luma is shared: the
+ * firmware reads and discards the chroma today, and the picture is
+ * built grey from the luma.
+ *
+ * A seqlock protects the reader from a torn frame: the writer makes
+ * the sequence odd while it writes and even when done.
+ * ------------------------------------------------------------------ */
+#define SHM_PATH "/tmp/krux/frame"
+#define SHM_MAGIC 0x4b435246u	/* "KCRF" */
+struct shm_frame_hdr {
+	volatile uint32_t seq;	/* odd = writing, even = stable */
+	uint32_t magic;
+	uint32_t w, h;
+	uint32_t y_size;
+	uint32_t frame_seq;	/* the publish counter */
+	uint32_t sweeping;	/* the AF sweep is running */
+};
+static int shm_fd = -1;
+static unsigned char *shm_base;
+static size_t shm_size;
+
+static void shm_init(void)
+{
+	struct shm_frame_hdr *h;
+
+	shm_size = sizeof(*h) + (size_t)OUT_W * OUT_H;
+	shm_fd = open(SHM_PATH, O_RDWR | O_CREAT, 0666);
+	if (shm_fd < 0) {
+		printf("[shm] open %s: %s\n", SHM_PATH, strerror(errno));
+		return;
+	}
+	if (ftruncate(shm_fd, shm_size) < 0) {
+		printf("[shm] ftruncate: %s\n", strerror(errno));
+		close(shm_fd);
+		shm_fd = -1;
+		return;
+	}
+	shm_base = mmap(NULL, shm_size, PROT_READ | PROT_WRITE,
+			MAP_SHARED, shm_fd, 0);
+	if (shm_base == MAP_FAILED) {
+		printf("[shm] mmap: %s\n", strerror(errno));
+		shm_base = NULL;
+		close(shm_fd);
+		shm_fd = -1;
+		return;
+	}
+	h = (struct shm_frame_hdr *)shm_base;
+	h->seq = 0;
+	h->w = OUT_W;
+	h->h = OUT_H;
+	h->y_size = OUT_W * OUT_H;
+	h->magic = SHM_MAGIC;
+	printf("[shm] %s: %zu bytes\n", SHM_PATH, shm_size);
+}
+
+/* Called from the capture thread with the frame lock held. */
+static void shm_publish(void)
+{
+	struct shm_frame_hdr *h;
+	unsigned char *dst;
+
+	if (!shm_base)
+		return;
+	h = (struct shm_frame_hdr *)shm_base;
+	dst = shm_base + sizeof(*h);
+	h->seq++;		/* odd: a write is in progress */
+	__sync_synchronize();
+	memcpy(dst, latest_y, (size_t)OUT_W * OUT_H);
+	h->frame_seq = (uint32_t)latest_seq;
+	h->sweeping = af_sweeping ? 1 : 0;
+	__sync_synchronize();
+	h->seq++;		/* even: the frame is stable */
+}
+
+/* ------------------------------------------------------------------ *
  * the ISP's configuration: the chromatrix and the rest of the camera2
  * "cam_config", captured from the vendor HAL (cam_config.h)
  * ------------------------------------------------------------------ */
@@ -2624,6 +2704,7 @@ static void *client_thread(void *arg)
 						latest_seq++;
 						latest_ready = 1;
 						published = 1;
+						shm_publish();
 					}
 
 					if (dump_now) {
@@ -3075,7 +3156,12 @@ static void *socket_thread(void *arg)
 		for (;;) {
 			int r = read(cfd, buf, 1);
 			if (r <= 0) break;
-			if (buf[0] == 'F') {
+			if (buf[0] == 'A') {
+				/* "I am reading the shared frame": keep the
+				 * per-frame work on, without sending one. */
+				frame_requests++;
+				write(cfd, "OK", 2);
+			} else if (buf[0] == 'F') {
 				unsigned char hdr[32];
 				frame_requests++;
 				memset(hdr, 0, 32);
@@ -3494,6 +3580,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	printf("[sensor] %s open\n", cam->sensor_subdev);
+
+	shm_init();
 
 	pthread_create(&server, NULL, server_thread, NULL);
 	pthread_create(&client, NULL, client_thread, wh);
