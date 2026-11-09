@@ -54,21 +54,33 @@ Two independent confirmations:
 
 ### So why is the tablet cut off in ours?
 
-**Because the phone is aimed too far to the right.** The tablet's centre
-sits at col 483 of our 720-wide preview against col 1180 of Android's
-2448-wide frame — and our frame is *rotated* relative to the source
-(camd rotates the source 90° counter-clockwise into the portrait
-preview), so "left" and "right" in the two are not the same axes.
+**Because the phone is aimed too far to the right, and too far away.**
+Both pictures show the same scene, and the field of view is the same —
+the phone's own body covers **87 %** of the Android frame and **84 %**
+of ours. What changed between the two captures is where the phone was
+pointed and how far it was from the tablet.
 
-The measurement that settles it: **the code's finder pattern is at
-source col 1480**, and the frame's edge is at 1640, so only **160 px
-of the code is in frame**. At the 8 px per module that Android
-resolves it at, the code needs **904 px** — we are missing **744 px**
-of it. The code is not unreadable; it is *mostly outside the frame*.
+The measurements, on the same physical tablet (its screen is 172.2 mm
+wide) and the same code (105 modules of 0.808 mm):
 
-**The fix is aiming, not optics:** point the phone a little to the
-left of the tablet, or move the tablet further away. The Android
-camera gives the reference for what "aimed correctly" looks like.
+| | the Android photo | our source frame |
+|---|---|---|
+| the tablet's screen | 1765 px → 10.25 px/mm | 334 px → 1.94 px/mm |
+| the code | 809 px → **7.70 px/module** | 149 px → **1.42 px/module** |
+
+The resolutions differ by 1.49× (2448 against 1640), but the scales
+differ by **5.3×**. The extra 3.5× is distance: **the phone was about
+3.5× further from the tablet when our frame was taken.**
+
+That is why nothing decoded: at 1.42 px per module the code is far
+below what the decoder can resolve, and it is also cut off at the
+frame's right edge. The camera is fine — the framing is not.
+
+**The fix is aiming and distance, not optics:** bring the phone to
+roughly the distance of the Android photo (the tablet filling about
+70 % of the frame's width) and aim at the middle of the code.
+`tools/aim-check` reports where the code is and how much of it falls
+off each edge, so this can be done by feedback.
 
 ### The control that makes the comparison meaningful
 
