@@ -515,3 +515,44 @@ A standalone test that skipped `initialize_run()`/`auto_expose()` and
 ran while the target screen was asleep found nothing; that was a test
 error, not a camera limit.  The lesson: measure the app's actual path,
 with its AE and its display awake.
+
+---
+
+## 9. Entropy on the full-resolution preview
+
+The entropy page measures the delivered preview: `l_stdev` from the
+luma, and Shannon entropy over the 16-bit pixels built from it.  The
+page passes when Shannon >= 3 bits/px and the stdev index >= 5.
+
+With the full-resolution pipeline the preview is 1080×1080 (a 2×2
+average of the 2160 square).  Measured through the app's own path
+(`Camera.initialize_run(mode=ENTROPY_MODE)`, then `snapshot()`):
+
+| scene | Shannon | stdev index | total bits/frame |
+|---|---|---|---|
+| dark room | 4.4–4.8 bits/px | 53 | ~5.4 Mbit |
+| bright screen | 4.8–5.0 bits/px | 52–54 | ~5.7 Mbit |
+| binned (old) | 3.1–3.9 bits/px | 12–18 | ~2.5 Mbit |
+
+So the full-resolution change improves the entropy rather than
+breaking it: more pixels, more noise, and a wider margin over the
+3.0-bit threshold.
+
+### The full-res VTS problem
+
+The entropy AE raised the VTS to 2518 lines.  That works in the binned
+mode (1252-line frames), but the full-resolution frame is already
+~2504 lines and the sensor rejects 2518, so `set_vts` returned `ER`.
+The AE now detects the mode from the shared geometry and only raises
+the VTS in binned mode; in full resolution the frame it already has is
+the longest exposure.
+
+### The entropy AE seed
+
+Starting the entropy AE from the current exposure left a dark room too
+dim (2.4–3.3 bits/px, some frames below 3.0).  The entropy capture now
+starts at the longest exposure and highest gain and lets the controller
+lower them; a bright screen lowers the exposure from 2504 to ~297 lines
+and still measures 4.8–5.0 bits/px.  The entropy AE also ignores the
+autofocus sweep, which it does not need and which was holding the
+exposure still.
