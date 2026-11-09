@@ -889,6 +889,29 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
  * while downscaling: the viewfinder then matches how the phone is held. */
 #define OUT_W 720
 #define OUT_H 960
+/*
+ * The full-resolution path uses a square centre crop.  The sensor's
+ * 3280x2464 is cropped to 2160x2160 and averaged 2x2 to a 1080x1080
+ * preview, so the preview, the entropy and the QR retry all share one
+ * integer scaling.  The binned path keeps the whole 3:4 frame at
+ * 720x960, as before.
+ */
+#define FULL_CROP 2160
+static int out_w = OUT_W, out_h = OUT_H;	/* published preview */
+static int crop_w, crop_h;			/* the sensor window */
+static int crop_x, crop_y;
+
+/*
+ * The cached copy of the sensor window.  The ION frame is uncached, and
+ * a wide memcpy reads it at ~250 MB/s against ~20 MB/s for byte reads,
+ * so the window is copied once per frame and everything else reads the
+ * copy.  Two buffers let the control thread crop the last published
+ * copy for a QR retry without racing the capture thread, which only
+ * ever writes the other one.
+ */
+static unsigned char *bounce_buf[2];
+static int bounce_pub = -1;
+static pthread_mutex_t bounce_mutex = PTHREAD_MUTEX_INITIALIZER;
 static unsigned char *latest_y = NULL;
 /* Sampled mean of the latest downscaled frame.  The AF waits for a
  * reasonably bright frame, so a refocus request made while the camera
@@ -916,10 +939,11 @@ static int latest_ready = 0;
 struct shm_frame_hdr {
 	volatile uint32_t seq;	/* odd = writing, even = stable */
 	uint32_t magic;
-	uint32_t w, h;
+	uint32_t w, h;		/* the published image */
 	uint32_t y_size;
 	uint32_t frame_seq;	/* the publish counter */
 	uint32_t sweeping;	/* the AF sweep is running */
+	uint32_t src_w, src_h;	/* the sensor window the preview came from */
 };
 static int shm_fd = -1;
 static unsigned char *shm_base;
@@ -929,7 +953,7 @@ static void shm_init(void)
 {
 	struct shm_frame_hdr *h;
 
-	shm_size = sizeof(*h) + (size_t)OUT_W * OUT_H;
+	shm_size = sizeof(*h) + (size_t)out_w * out_h;
 	shm_fd = open(SHM_PATH, O_RDWR | O_CREAT, 0666);
 	if (shm_fd < 0) {
 		printf("[shm] open %s: %s\n", SHM_PATH, strerror(errno));
@@ -952,9 +976,11 @@ static void shm_init(void)
 	}
 	h = (struct shm_frame_hdr *)shm_base;
 	h->seq = 0;
-	h->w = OUT_W;
-	h->h = OUT_H;
-	h->y_size = OUT_W * OUT_H;
+	h->w = out_w;
+	h->h = out_h;
+	h->y_size = out_w * out_h;
+	h->src_w = crop_w;
+	h->src_h = crop_h;
 	h->magic = SHM_MAGIC;
 	printf("[shm] %s: %zu bytes\n", SHM_PATH, shm_size);
 }
@@ -971,11 +997,141 @@ static void shm_publish(void)
 	dst = shm_base + sizeof(*h);
 	h->seq++;		/* odd: a write is in progress */
 	__sync_synchronize();
-	memcpy(dst, latest_y, (size_t)OUT_W * OUT_H);
+	memcpy(dst, latest_y, (size_t)out_w * out_h);
 	h->frame_seq = (uint32_t)latest_seq;
 	h->sweeping = af_sweeping ? 1 : 0;
 	__sync_synchronize();
 	h->seq++;		/* even: the frame is stable */
+}
+
+/* ------------------------------------------------------------------ *
+ * the QR crop
+ *
+ * The preview is a rotated, downscaled view of the sensor window, so a
+ * code that the finder pass locates in the preview may be too small to
+ * decode there.  The firmware sends the box back in preview pixels; we
+ * map it to the sensor window and publish that rectangle 1:1 into a
+ * second shared region.  The crop is taken from the cached bounce
+ * buffer, so it costs a small memcpy, not a second sensor read.
+ * ------------------------------------------------------------------ */
+#define CROP_PATH "/tmp/krux/crop"
+#define CROP_MAX 1280		/* the decoder's image limit */
+
+static int crop_shm_fd = -1;
+static unsigned char *crop_shm_base;
+static size_t crop_shm_size;
+
+static void crop_shm_init(void)
+{
+	struct shm_frame_hdr *h;
+
+	crop_shm_size = sizeof(*h) + (size_t)CROP_MAX * CROP_MAX;
+	crop_shm_fd = open(CROP_PATH, O_RDWR | O_CREAT, 0666);
+	if (crop_shm_fd < 0) {
+		printf("[crop] open %s: %s\n", CROP_PATH, strerror(errno));
+		return;
+	}
+	if (ftruncate(crop_shm_fd, crop_shm_size) < 0) {
+		printf("[crop] ftruncate: %s\n", strerror(errno));
+		close(crop_shm_fd);
+		crop_shm_fd = -1;
+		return;
+	}
+	crop_shm_base = mmap(NULL, crop_shm_size, PROT_READ | PROT_WRITE,
+			     MAP_SHARED, crop_shm_fd, 0);
+	if (crop_shm_base == MAP_FAILED) {
+		printf("[crop] mmap: %s\n", strerror(errno));
+		crop_shm_base = NULL;
+		close(crop_shm_fd);
+		crop_shm_fd = -1;
+		return;
+	}
+	h = (struct shm_frame_hdr *)crop_shm_base;
+	h->seq = 0;
+	h->magic = SHM_MAGIC;
+	h->w = 0;
+	h->h = 0;
+	h->y_size = 0;
+	h->src_w = crop_w;
+	h->src_h = crop_h;
+	printf("[crop] %s: %zu bytes\n", CROP_PATH, crop_shm_size);
+}
+
+/* The inverse of the preview downscale: preview (px,py) to the sensor
+ * window.  The preview is rotated 90 degrees counter-clockwise, so the
+ * preview's x runs along the source's y and vice versa. */
+static void preview_to_src(int px, int py, int *sx, int *sy)
+{
+	*sx = (out_h - 1 - py) * crop_w / out_h;
+	*sy = px * crop_h / out_w;
+}
+
+/* Publish the preview rectangle (px,py,pw,ph) at 1:1 from the last
+ * bounce.  Returns 0 on success. */
+static int crop_publish(int px, int py, int pw, int ph)
+{
+	struct shm_frame_hdr *h;
+	int ax, ay, bx, by, cx, cy, dx, dy;
+	int x0, y0, x1, y1, w, hh, y;
+	unsigned char *dst;
+	int b;
+
+	if (!crop_shm_base || pw <= 0 || ph <= 0)
+		return -1;
+
+	preview_to_src(px, py, &ax, &ay);
+	preview_to_src(px + pw - 1, py, &bx, &by);
+	preview_to_src(px, py + ph - 1, &cx, &cy);
+	preview_to_src(px + pw - 1, py + ph - 1, &dx, &dy);
+
+	x0 = ax < bx ? ax : bx;
+	if (cx < x0) x0 = cx;
+	if (dx < x0) x0 = dx;
+	x1 = ax > bx ? ax : bx;
+	if (cx > x1) x1 = cx;
+	if (dx > x1) x1 = dx;
+	y0 = ay < by ? ay : by;
+	if (cy < y0) y0 = cy;
+	if (dy < y0) y0 = dy;
+	y1 = ay > by ? ay : by;
+	if (cy > y1) y1 = cy;
+	if (dy > y1) y1 = dy;
+
+	if (x0 < 0) x0 = 0;
+	if (y0 < 0) y0 = 0;
+	if (x1 > crop_w - 1) x1 = crop_w - 1;
+	if (y1 > crop_h - 1) y1 = crop_h - 1;
+	w = x1 - x0 + 1;
+	hh = y1 - y0 + 1;
+	if (w <= 0 || hh <= 0)
+		return -1;
+	if (w > CROP_MAX) w = CROP_MAX;
+	if (hh > CROP_MAX) hh = CROP_MAX;
+
+	pthread_mutex_lock(&bounce_mutex);
+	b = bounce_pub;
+	if (b < 0 || !bounce_buf[b]) {
+		pthread_mutex_unlock(&bounce_mutex);
+		return -1;
+	}
+	h = (struct shm_frame_hdr *)crop_shm_base;
+	dst = crop_shm_base + sizeof(*h);
+	h->seq++;
+	__sync_synchronize();
+	for (y = 0; y < hh; y++)
+		memcpy(dst + (size_t)y * w,
+		       bounce_buf[b] + (size_t)(y0 + y) * crop_w + x0,
+		       (size_t)w);
+	h->w = w;
+	h->h = hh;
+	h->y_size = w * hh;
+	h->frame_seq = (uint32_t)latest_seq;
+	h->src_w = crop_w;
+	h->src_h = crop_h;
+	__sync_synchronize();
+	h->seq++;
+	pthread_mutex_unlock(&bounce_mutex);
+	return 0;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1230,16 +1386,16 @@ static unsigned long af_sharpness(const unsigned char *p)
 {
 	int x, y;
 	unsigned long s = 0;
-	int x0 = OUT_W / 4, x1 = OUT_W * 3 / 4;
-	int y0 = OUT_H / 4, y1 = OUT_H * 3 / 4;
+	int x0 = out_w / 4, x1 = out_w * 3 / 4;
+	int y0 = out_h / 4, y1 = out_h * 3 / 4;
 
 	if (!p)
 		return 0;
 	for (y = y0; y < y1 - 1; y += 2) {
-		const unsigned char *r = p + y * OUT_W;
+		const unsigned char *r = p + y * out_w;
 		for (x = x0; x < x1 - 1; x += 2) {
 			int dx = (int)r[x] - (int)r[x + 1];
-			int dy = (int)r[x] - (int)r[x + OUT_W];
+			int dy = (int)r[x] - (int)r[x + out_w];
 			s += (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
 		}
 	}
@@ -2435,24 +2591,39 @@ static void *client_thread(void *arg)
 				{
 					/* The ION frame is uncached: a
 					 * byte-by-byte read of it runs at
-					 * ~20 MB/s (98 ms for 2 MP).  A wide
-					 * memcpy reads it at ~250 MB/s, so
-					 * copy it once into this cached
-					 * buffer and downscale from there. */
-					static unsigned char *bounce;
-					if (!bounce)
-						bounce = malloc((size_t)width * height);
-					if (bounce) {
-						memcpy(bounce, src_y,
-						       (size_t)width * height);
-						src_y = bounce;
+					 * ~20 MB/s, a wide memcpy at
+					 * ~250 MB/s.  Copy only the sensor
+					 * window (the full frame in binned
+					 * mode, the 2160 square in full
+					 * mode), row by row, into the
+					 * cached buffer.  The control
+					 * thread crops the last published
+					 * copy for a QR retry; the capture
+					 * thread only writes the other. */
+					int bi = (bounce_pub == 0) ? 1 : 0;
+					int r;
+					if (!bounce_buf[bi])
+						bounce_buf[bi] = malloc(
+							(size_t)crop_w * crop_h);
+					if (bounce_buf[bi]) {
+						for (r = 0; r < crop_h; r++)
+							memcpy(bounce_buf[bi] +
+							       (size_t)r * crop_w,
+							       src_y +
+							       (size_t)(crop_y + r) * width +
+							       crop_x,
+							       crop_w);
+						pthread_mutex_lock(&bounce_mutex);
+						bounce_pub = bi;
+						pthread_mutex_unlock(&bounce_mutex);
+						src_y = bounce_buf[bi];
 					}
 				}
 				{
 					static int dumped;
 					const char *dump = getenv("CAMD_DUMP_RAW");
 					if (dump && !dumped) {
-						size_t k, n = (size_t)width * height;
+						size_t k, n = (size_t)crop_w * crop_h;
 						unsigned long sum = 0;
 						for (k = 0; k < n; k += 97)
 							sum += src_y[k];
@@ -2532,83 +2703,87 @@ static void *client_thread(void *arg)
 				 * frame showed up as tiled/torn tiles. */
 				pthread_mutex_lock(&frame_mutex);
 				if (!latest_y) {
-					latest_y = malloc(OUT_W * OUT_H);
-					latest_uv = malloc((OUT_W / 2) * (OUT_H / 2) * 2);
+					latest_y = malloc(out_w * out_h);
+					latest_uv = malloc((out_w / 2) * (out_h / 2) * 2);
+					if (latest_uv)
+						memset(latest_uv, 0,
+						       (size_t)(out_w / 2) *
+						       (out_h / 2) * 2);
 				}
 				{
-					/* Full field of view, box-averaged and rotated
-					 * 90 degrees counter-clockwise into portrait.
-					 * dest(x,y) samples source
-					 *   sx = width-1 - y*width/OUT_H
-					 *   sy = x*height/OUT_W
-					 */
-					/* Centre crop with the output's 3:4 aspect, then
-					 * rotate: the lens is fixed-focus and cannot
-					 * resolve a small QR closer than ~50cm, so the
-					 * phone is held back and the frame is cropped
-					 * instead. */
-					/* No crop: a 3:4 portrait output from a 4:3
-					 * sensor uses the full frame.  Cropping here
-					 * scaled the axes differently and stretched the
-					 * image. */
-					/*
-					 * The source is read uncached from ION, so
-					 * the old single pass -- which sampled the
-					 * source column-major for the rotation --
-					 * re-read the whole 2 MP frame once per
-					 * output row: 960 times, about 2 GB of
-					 * uncached traffic, ~230 ms.
-					 *
-					 * Downscale first, with each source row
-					 * read once and contiguously, into a
-					 * 960x720 intermediate; then rotate that
-					 * small image into the output.
-					 */
+					/* Box-average the sensor window and rotate
+					 * it 90 degrees counter-clockwise into the
+					 * portrait preview.  In full mode the window
+					 * is 2160x2160 and the output 1080x1080, so
+					 * every output pixel is exactly the average
+					 * of 2x2 source pixels: an integer scale
+					 * with no fractional sampling.  Binned mode
+					 * keeps the generic box average. */
 					uint64_t td0 = now_ns();
 					{
 						static unsigned short *mid;
 						int mx, my, sy, sx;
+						int two = (crop_h == 2 * out_w &&
+							   crop_w == 2 * out_h);
 						if (!mid)
-							mid = malloc((size_t)OUT_H *
-								     OUT_W * 2);
+							mid = malloc((size_t)out_h *
+								     out_w * 2);
 						if (mid) {
-							memset(mid, 0,
-							       (size_t)OUT_H * OUT_W * 2);
-							for (my = 0; my < OUT_W; my++) {
-								int sy0 = my * height / OUT_W;
-								int sy1 = (my + 1) * height / OUT_W;
-								unsigned short *orow =
-									mid + my * OUT_H;
-								for (sy = sy0; sy < sy1; sy++) {
-									const unsigned char *row =
-										src_y + sy * width;
-									for (mx = 0; mx < OUT_H; mx++) {
-										int sx0 = mx * width / OUT_H;
-										int sx1 = (mx + 1) * width / OUT_H;
-										unsigned int a = 0;
-										int n = sx1 - sx0;
-										for (sx = sx0; sx < sx1; sx++)
-											a += row[sx];
-										orow[mx] += (unsigned short)
-											(a / (n ? n : 1));
+							if (!two)
+								memset(mid, 0,
+								       (size_t)out_h * out_w * 2);
+							if (two) {
+								for (my = 0; my < out_w; my++) {
+									const unsigned char *r0 =
+										src_y + (size_t)(2 * my) * crop_w;
+									const unsigned char *r1 =
+										r0 + crop_w;
+									unsigned short *orow =
+										mid + my * out_h;
+									for (mx = 0; mx < out_h; mx++) {
+										int sx2 = 2 * mx;
+										orow[mx] = (unsigned short)
+											((r0[sx2] + r0[sx2 + 1] +
+											  r1[sx2] + r1[sx2 + 1]) >> 2);
+									}
+								}
+							} else {
+								for (my = 0; my < out_w; my++) {
+									int sy0 = my * crop_h / out_w;
+									int sy1 = (my + 1) * crop_h / out_w;
+									unsigned short *orow =
+										mid + my * out_h;
+									for (sy = sy0; sy < sy1; sy++) {
+										const unsigned char *row =
+											src_y + (size_t)sy * crop_w;
+										for (mx = 0; mx < out_h; mx++) {
+											int sx0 = mx * crop_w / out_h;
+											int sx1 = (mx + 1) * crop_w / out_h;
+											unsigned int a = 0;
+											int n = sx1 - sx0;
+											for (sx = sx0; sx < sx1; sx++)
+												a += row[sx];
+											orow[mx] += (unsigned short)
+												(a / (n ? n : 1));
+										}
 									}
 								}
 							}
-							for (my = 0; my < OUT_W; my++) {
-								int sy0 = my * height / OUT_W;
-								int sy1 = (my + 1) * height / OUT_W;
-								int nr = sy1 - sy0;
+							for (my = 0; my < out_w; my++) {
+								int sy0 = my * crop_h / out_w;
+								int sy1 = (my + 1) * crop_h / out_w;
+								int nr = two ? 1 : (sy1 - sy0);
 								unsigned short *orow =
-									mid + my * OUT_H;
-								for (mx = 0; mx < OUT_H; mx++) {
+									mid + my * out_h;
+								for (mx = 0; mx < out_h; mx++) {
 									unsigned long v =
 										orow[mx] / (nr ? nr : 1);
 									v *= luma_gain;
 									if (v > 255) v = 255;
 									/* 90 deg CCW:
-									 * out(dy,dx) = mid(dx, OUT_H-1-dy) */
-									latest_y[(OUT_H - 1 - mx) *
-										 OUT_W + my] =
+									 * out(dy,dx) = mid(dx, out_h-1-dy) */
+									latest_y[(out_h - 1 - mx) *
+										 out_w + my] =
 										(unsigned char)v;
 								}
 							}
@@ -2618,21 +2793,25 @@ static void *client_thread(void *arg)
 						printf("[bench] downscale %.1f ms\n",
 						       (now_ns() - td0) / 1e6);
 				}
-				{
+				if (unsharp_amount != 0) {
 					/* Unsharp mask: the box downscale is a low-pass
-					 * filter, and QR modules need their edges. */
+					 * filter, and QR modules need their edges.
+					 * Skip the whole pass when it is off: it was
+					 * computing eight neighbours per pixel and
+					 * writing the same value back, which on the
+					 * 1080x1080 preview is a real per-frame cost. */
 					int x, yy;
-					for (yy = 1; yy < OUT_H - 1; yy++) {
-						for (x = 1; x < OUT_W - 1; x++) {
-							int i = yy * OUT_W + x;
-							int b = (latest_y[i - OUT_W - 1] +
-								 latest_y[i - OUT_W] +
-								 latest_y[i - OUT_W + 1] +
+					for (yy = 1; yy < out_h - 1; yy++) {
+						for (x = 1; x < out_w - 1; x++) {
+							int i = yy * out_w + x;
+							int b = (latest_y[i - out_w - 1] +
+								 latest_y[i - out_w] +
+								 latest_y[i - out_w + 1] +
 								 latest_y[i - 1] +
 								 latest_y[i + 1] +
-								 latest_y[i + OUT_W - 1] +
-								 latest_y[i + OUT_W] +
-								 latest_y[i + OUT_W + 1]) / 8;
+								 latest_y[i + out_w - 1] +
+								 latest_y[i + out_w] +
+								 latest_y[i + out_w + 1]) / 8;
 							int l = latest_y[i];
 							int v;
 							if (unsharp_amount == 0)
@@ -2646,28 +2825,13 @@ static void *client_thread(void *arg)
 						}
 					}
 				}
-				{
-					int uv_w = width / 2;
-					int uv_h = height / 2;
-					int dx, dy;
-					int crop_uv = uv_w;
-					int crop_uv_x = 0;
-					for (dy = 0; dy < OUT_H / 2; dy++) {
-						int sx = crop_uv_x + crop_uv - 1 -
-							dy * crop_uv / (OUT_H / 2);
-						if (sx < crop_uv_x)
-							sx = crop_uv_x;
-						for (dx = 0; dx < OUT_W / 2; dx++) {
-							int sy = dx * uv_h / (OUT_W / 2);
-							const unsigned char *row =
-								src_uv + sy * width;
-							latest_uv[(dy * (OUT_W / 2) + dx) * 2] =
-								row[sx * 2];
-							latest_uv[(dy * (OUT_W / 2) + dx) * 2 + 1] =
-								row[sx * 2 + 1];
-						}
-					}
-				}
+				/* The chroma plane is not downscaled or used:
+				 * the display, the decoder and the entropy all
+				 * run on the luma, so the gate below keys off
+				 * the luma alone.  (The chroma could not be
+				 * used for colour anyway: its values are
+				 * centred on sixteen, not the neutral 128 a
+				 * YUV conversion assumes.) */
 				{
 					/* Two producers complete into the capture
 					 * queue (the ISP's raw pass and the CPP's
@@ -2679,40 +2843,21 @@ static void *client_thread(void *arg)
 					static unsigned max_seen;
 					static int starve;
 					unsigned long s = 0;
-					unsigned long us = 0;
 					int k, ns = 0;
 					int publish;
-					int valid = 1;
-					for (k = 0; k < OUT_W * OUT_H; k += 97) {
+					for (k = 0; k < out_w * out_h; k += 97) {
 						s += latest_y[k];
 						ns++;
 					}
 					s /= (ns ? ns : 1);
-					{
-						/* The CPP writes the chroma plane; the
-						 * ISP's raw pass leaves it empty.  Use
-						 * that to drop the unprocessed frames. */
-						int un = 0;
-						for (k = 0; k < (OUT_W / 2) * (OUT_H / 2) * 2;
-						     k += 61) {
-							us += latest_uv[k];
-							un++;
-						}
-						us /= (un ? un : 1);
-						if (us < 8)
-							valid = 0;
-					}
-					/* Why is nothing reaching the client?  This is
-					 * the decision, once every two hundred frames:
-					 * the luma mean, the chroma mean, whether the
-					 * frame counts as processed, and whether it
-					 * is published. */
+					/* The decision, once every two hundred
+					 * frames: the luma mean, the reference
+					 * and whether the frame is published. */
 					{
 						static int dcount;
 						if (++dcount % 200 == 0)
-							printf("[pub] s=%lu us=%lu valid=%d max=%u seq=%d\n",
-							       s, us, valid, max_seen,
-							       latest_seq);
+							printf("[pub] s=%lu max=%u seq=%d\n",
+							       s, max_seen, latest_seq);
 					}
 					/* Adapt quickly when the scene darkens, and never
 					 * suppress more than a few frames in a row: a
@@ -2721,24 +2866,18 @@ static void *client_thread(void *arg)
 					 *
 					 * The bar is deliberately low.  Its job is to
 					 * drop the ISP's raw copies, which are very
-					 * dark; the chroma plane already tells the
-					 * processed frames apart.  A tight bar also
-					 * withheld frames whenever the autofocus
-					 * moved the lens and the brightness changed,
-					 * and the preview then stalled until the
-					 * reference decayed: the image appeared to
-					 * drift and then came back. */
+					 * dark.  A tight bar also withheld frames
+					 * whenever the autofocus moved the lens and
+					 * the brightness changed, and the preview then
+					 * stalled until the reference decayed: the
+					 * image appeared to drift and then came back. */
 					max_seen -= max_seen / 32;
-					if (!valid)
-						publish = 0;
-					else {
-						publish = (s * 8 >= max_seen);
-						if (s > max_seen)
-							max_seen = s;
-					}
+					publish = (s * 8 >= max_seen);
+					if (s > max_seen)
+						max_seen = s;
 					if (publish) {
 						starve = 0;
-					} else if (valid && ++starve >= 4) {
+					} else if (++starve >= 4) {
 						/* Never let a dark scene starve the
 						 * client: the QR page needs frames to
 						 * poll its buttons and run AF. */
@@ -2760,36 +2899,19 @@ static void *client_thread(void *arg)
 							"wb");
 						if (f) {
 							fwrite(latest_y, 1,
-								OUT_W * OUT_H, f);
+								(size_t)out_w * out_h, f);
 							fclose(f);
 							rename(
 								"/data/krux/scan.raw.tmp",
 								"/data/krux/scan.raw");
-						}
-						/* The chroma plane as well: the
-						 * picture is built from the luma
-						 * and the chroma, and a
-						 * disagreement between them
-						 * is not visible in the luma
-						 * alone. */
-						f = fopen(
-							"/data/krux/scan_uv.raw.tmp",
-							"wb");
-						if (f) {
-							fwrite(latest_uv, 1,
-								(OUT_W / 2) * (OUT_H / 2) * 2,
-								f);
-							fclose(f);
-							rename(
-								"/data/krux/scan_uv.raw.tmp",
-								"/data/krux/scan_uv.raw");
 						}
 						f = fopen(
 							"/data/krux/scan_full.raw.tmp",
 							"wb");
 						if (f) {
 							fwrite(src_y, 1,
-								width * height, f);
+								(size_t)crop_w * crop_h,
+								f);
 							fclose(f);
 							rename(
 								"/data/krux/scan_full.raw.tmp",
@@ -2800,7 +2922,7 @@ static void *client_thread(void *arg)
 							int mi;
 							FILE *m;
 							for (mi = 0;
-								mi < OUT_W * OUT_H;
+								mi < out_w * out_h;
 								mi++)
 								if (latest_y[mi] > mx)
 									mx = latest_y[mi];
@@ -2809,10 +2931,12 @@ static void *client_thread(void *arg)
 								"w");
 							if (m) {
 								fprintf(m,
-									"seq=%d mean=%lu max=%u w=%d h=%d focus=%d sharp=%lu\n",
+									"seq=%d mean=%lu max=%u w=%d h=%d pw=%d ph=%d cw=%d ch=%d focus=%d sharp=%lu\n",
 									latest_seq,
 									s, mx,
 									width, height,
+									out_w, out_h,
+									crop_w, crop_h,
 									act_curr,
 									af_sharpness(latest_y));
 								fclose(m);
@@ -3215,8 +3339,8 @@ static void *socket_thread(void *arg)
 				int seq;
 				int ready;
 				unsigned char *copy = NULL;
-				size_t ysz = OUT_W * OUT_H;
-				size_t uvsz = (OUT_W / 2) * (OUT_H / 2) * 2;
+				size_t ysz = (size_t)out_w * out_h;
+				size_t uvsz = (size_t)(out_w / 2) * (out_h / 2) * 2;
 
 				pthread_mutex_lock(&frame_mutex);
 				seq = latest_seq;
@@ -3248,12 +3372,12 @@ static void *socket_thread(void *arg)
 					hdr[19] = (unsigned char)luma_gain;
 					hdr[4] = seq & 0xff; hdr[5] = (seq>>8)&0xff;
 					hdr[6] = (seq>>16)&0xff; hdr[7] = (seq>>24)&0xff;
-					hdr[8] = OUT_W & 0xff; hdr[9] = (OUT_W>>8)&0xff;
-					hdr[10] = OUT_H & 0xff; hdr[11] = (OUT_H>>8)&0xff;
-					hdr[12] = OUT_W & 0xff; hdr[13] = (OUT_W>>8)&0xff;
-					hdr[14] = OUT_H & 0xff; hdr[15] = (OUT_H>>8)&0xff;
-					hdr[16] = OUT_W & 0xff; hdr[17] = (OUT_W>>8)&0xff;
-					hdr[20] = (OUT_W/2) & 0xff; hdr[21] = ((OUT_W/2)>>8)&0xff;
+					hdr[8] = out_w & 0xff; hdr[9] = (out_w>>8)&0xff;
+					hdr[10] = out_h & 0xff; hdr[11] = (out_h>>8)&0xff;
+					hdr[12] = out_w & 0xff; hdr[13] = (out_w>>8)&0xff;
+					hdr[14] = out_h & 0xff; hdr[15] = (out_h>>8)&0xff;
+					hdr[16] = out_w & 0xff; hdr[17] = (out_w>>8)&0xff;
+					hdr[20] = (out_w/2) & 0xff; hdr[21] = ((out_w/2)>>8)&0xff;
 					hdr[24] = (ysz) & 0xff; hdr[25] = ((ysz)>>8)&0xff;
 					hdr[26] = ((ysz)>>16)&0xff; hdr[27] = ((ysz)>>24)&0xff;
 					hdr[28] = (uvsz) & 0xff; hdr[29] = ((uvsz)>>8)&0xff;
@@ -3278,6 +3402,22 @@ static void *socket_thread(void *arg)
 			} else if (buf[0] == 'D') {
 				dump_now = 1;
 				write(cfd, "OK", 2);
+			} else if (buf[0] == 'C') {
+				/* A QR retry: the rectangle is in preview
+				 * pixels; publish it 1:1 from the last
+				 * bounce into /tmp/krux/crop. */
+				unsigned char p[8];
+				if (socket_read_exact(cfd, p, 8) == 0) {
+					int px = (p[0] << 8) | p[1];
+					int py = (p[2] << 8) | p[3];
+					int pw = (p[4] << 8) | p[5];
+					int ph = (p[6] << 8) | p[7];
+					int rc = crop_publish(px, py, pw, ph);
+					printf("[crop] (%d,%d,%d,%d) -> %s\n",
+					       px, py, pw, ph,
+					       rc == 0 ? "ok" : "fail");
+					write(cfd, rc == 0 ? "OK" : "ER", 2);
+				}
 			} else if (buf[0] == 'W') {
 				unsigned char p[3];
 				if (socket_read_exact(cfd, p, 3) == 0) {
@@ -3457,6 +3597,22 @@ static void *ctl_thread(void *arg)
 				refocus_full = 0;
 				refocus_request = 1;
 				write(cfd, "OK", 2);
+			} else if (c == 'C') {
+				/* A QR retry: the rectangle is in preview
+				 * pixels; publish it 1:1 from the last
+				 * bounce into /tmp/krux/crop. */
+				unsigned char p[8];
+				if (socket_read_exact(cfd, p, 8) == 0) {
+					int px = (p[0] << 8) | p[1];
+					int py = (p[2] << 8) | p[3];
+					int pw = (p[4] << 8) | p[5];
+					int ph = (p[6] << 8) | p[7];
+					int rc = crop_publish(px, py, pw, ph);
+					printf("[crop] (%d,%d,%d,%d) -> %s\n",
+					       px, py, pw, ph,
+					       rc == 0 ? "ok" : "fail");
+					write(cfd, rc == 0 ? "OK" : "ER", 2);
+				}
 			} else {
 				write(cfd, "ER", 2);
 			}
@@ -3533,12 +3689,33 @@ int main(int argc, char **argv)
 	 * the mode can be changed by writing the file and restarting
 	 * the daemon -- no ramdisk rebuild needed.
 	 */
-	if (state_read("mode", 0, 0, 1) == 1) {
+	if (state_read("mode", 1, 0, 1) == 1) {
 		cam = &cam_rear;
 		wh[0] = cam->width;
 		wh[1] = cam->height;
 		printf("[mode] full resolution: %dx%d\n", wh[0], wh[1]);
 	}
+	/*
+	 * The window the preview and the QR retry are taken from.  Full
+	 * resolution: a square centre crop (2160x2160), halved to
+	 * 1080x1080, so the preview, the entropy and the QR retry share
+	 * one integer scaling.  Binned: the whole 3:4 frame at 720x960,
+	 * as before.
+	 */
+	if (!cam->binned) {
+		crop_w = crop_h = FULL_CROP;
+		crop_x = (cam->width - crop_w) / 2;
+		crop_y = (cam->height - crop_h) / 2;
+		out_w = out_h = FULL_CROP / 2;
+	} else {
+		crop_w = cam->width;
+		crop_h = cam->height;
+		crop_x = crop_y = 0;
+		out_w = OUT_W;
+		out_h = OUT_H;
+	}
+	printf("[mode] window %dx%d at (%d,%d) -> preview %dx%d\n",
+	       crop_w, crop_h, crop_x, crop_y, out_w, out_h);
 	/*
 	 * The ISP stream source, also a /tmp knob: 0 = CAMIF_RAW (the raw
 	 * Bayer, then the CPP), 1 = PIX_VIEWFINDER (the ISP's own
@@ -3549,19 +3726,6 @@ int main(int argc, char **argv)
 	if (state_read("stream", 0, 0, 1) == 1) {
 		isp_stream_src = PIX_VIEWFINDER;
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
-	}
-	/*
-	 * Hardware scale experiment: ask the ISP's PIX scaler for a
-	 * 960x720 frame -- the preview's un-rotated size -- so the CPU
-	 * only has to rotate it instead of downscaling 8 MP.  The CAMIF
-	 * input stays at the sensor size; only the output stream shrinks.
-	 * The downscale below then averages 1x1 and just rotates.
-	 */
-	if (state_read("hwscale", 0, 0, 1) == 1) {
-		isp_stream_src = PIX_VIEWFINDER;
-		wh[0] = OUT_H;		/* 960 */
-		wh[1] = OUT_W;		/* 720 */
-		printf("[mode] hardware scale: ISP PIX %dx%d\n", wh[0], wh[1]);
 	}
 	/*
 	 * The vendor's per-capture ISP configuration, another /tmp knob.
@@ -3644,6 +3808,7 @@ int main(int argc, char **argv)
 	printf("[sensor] %s open\n", cam->sensor_subdev);
 
 	shm_init();
+	crop_shm_init();
 
 	pthread_create(&server, NULL, server_thread, NULL);
 	pthread_create(&client, NULL, client_thread, wh);

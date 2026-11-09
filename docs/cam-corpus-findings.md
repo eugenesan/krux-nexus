@@ -411,3 +411,93 @@ one.
 At 14.8 fps the binned preview is comfortable. The full-resolution
 mode is still ~2 fps (the 8 MP CPU downscale), so full-res stays for
 the QR crop only, not for the live preview.
+
+---
+
+## 8. Full resolution, the V20 cap, and the dynamic QR crop
+
+### The real sample is V17
+
+`artifacts/built/Sparrow-QR-UR-HD.png` is a **version 17** symbol
+(85×85 modules, 923-byte UR payload).  It decodes with the project's
+own quirc on the host and on the device.  That is the evidence for
+capping processing at **V20**: it leaves a version of margin, and V20
+is also the ceiling of Krux's own UR generator.
+
+The cap changes:
+
+```c
+K_QUIRC_MAX_PROCESS_VERSION 20     /* was 40 */
+K_QUIRC_MAX_PROCESS_GRID_SIZE 97   /* 4*20+17 */
+K_QUIRC_MAX_BITMAP 1177            /* ceil(97*97/8) */
+```
+
+and `measure_grid_size` clamps to the **process** cap rather than the
+database maximum, so a noisy V20 estimate is still sampled as V20
+instead of being rejected.  The finder scan itself is unchanged; the
+saving is in candidate validation (a spurious large grid is dropped
+before the perspective setup) and in the bitmap/scratch size.
+
+### The full-resolution pipeline
+
+The default sensor mode is now full resolution (3280×2464):
+
+```
+sensor 3280x2464
+  -> centre crop 2160x2160
+  -> cached bounce (one wide memcpy of the window, ~19 ms)
+  -> 2x2 average -> 1080x1080 preview (integer, no fractional sampling)
+  -> rotate 90 deg CCW -> the shared preview
+```
+
+Measured on the device: the daemon publishes **~30–35 fps** in this
+mode, so the full-res preview is no longer the 2 fps of the old 8 MP
+CPU downscale.  `sensor.snapshot()` still throttles the firmware to
+~15 fps; the 30 fps stream is what camd produces.
+
+The chroma plane is no longer downscaled: the display, the decoder and
+the entropy all run on the luma, so the publish gate keys off the luma
+alone.  The unsharp pass is skipped entirely when it is off (it was
+computing eight neighbours per pixel and writing the same value back).
+
+### The dynamic crop
+
+The preview is a 2× downscale, so a code can be *located* there but be
+too coarse to sample.  The finder pass already computes both the box
+and the version; `k_quirc_scan_*` now returns located-but-undecoded
+candidates too (the corners were already filled by `k_quirc_decode`;
+the old wrapper discarded them).
+
+On a located miss the firmware asks camd for the same box at **1:1**:
+
+```
+C x y w h   (preview pixels)
+  -> camd maps it through the inverse of the rotated downscale
+  -> copies that rectangle from the cached bounce into /tmp/krux/crop
+  -> image.Image.from_crop() decodes it
+```
+
+The crop comes from the same frame's bounce, so hand movement is not a
+factor; the 10 % margin covers the quiet zone and the box estimate.
+The firmware also points the auto-exposure at the located box before
+the first decode.
+
+### Two bugs this exposed
+
+- **`snapshot()` returned stale frames.**  The shared-memory path
+  copied whatever was in the region without checking `frame_seq`, so
+  a stalled daemon looked like a healthy 15 fps camera.  It now waits
+  for a new sequence number.
+- **The daemon's own rate was masked by that.**  With a 5 ms
+  keepalive the daemon is measured at ~35 fps; with a 50 ms keepalive
+  it only publishes ~20, because the per-frame work is gated on a new
+  request.
+
+### The live caveat
+
+At ~21 cm the fixed-focus lens is soft: the 1:1 crop of the real
+sample *locates* the code (grid estimate within a version) but does
+not decode, while the same sample decodes perfectly when fed directly.
+That is a focus-distance limit, not a resolution or version limit;
+the code needs to be at a distance the lens can resolve, or the
+autofocus work has to land on a closer step.
