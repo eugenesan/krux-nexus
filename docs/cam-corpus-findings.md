@@ -24,6 +24,44 @@
 
 ---
 
+## 0. The decode blocker was the focus, not the moiré
+
+The user ran the real Krux page (Tools → Datum → From Camera) and it
+read the tablet's code. The offline harness said the same frames did
+not decode. The harness was not wrong about the pixels; it was feeding
+the decoder frames taken at a **bad or cached focus**.
+
+The QR page runs an autofocus sweep, and the sweep settles at **focus
+step 12**, where the sharpness is about **1.77 M**. The frames the
+offline tests used were at focus steps 7–32 with sharpness about
+0.5 M. At step 12 the code is crisp and decodes; at the others the
+moiré and the blur win.
+
+The proof is direct: after a full refocus, the saved **720×960
+preview** decodes with the same `tools/quirc-replay` the offline tests
+use:
+
+```
+$ tools/quirc-replay af_found2.raw 720 960
+  decoded=1 time_ms=4.3
+  payload=KRUXCAM-V20-DENSE-0003
+```
+
+So:
+
+- **The moiré is survivable** at the right focus. It is not, by
+  itself, the blocker the earlier experiments suggested.
+- **Full resolution is not needed** for the 8 cm v20 code at 21 cm;
+  the binned 720×960 preview decodes.
+- **The crop fix (binning) is what made this possible**, because it
+  restored the field of view so the code is actually in the frame.
+
+The practical rule for the offline harness: a captured frame is only
+meaningful if the autofocus has settled first. Capture after a full
+refocus, and record the focus step and sharpness with the frame.
+
+---
+
 ## 1. The field of view WAS cropped — by the sensor mode
 
 The user observed that in the Android camera the tablet was centred and
