@@ -29,7 +29,7 @@ import qrcode
 from PIL import Image
 
 TABLET = "41036f02470031ff"
-TARGETS = "/tmp/opencode/qr-targets"
+TARGETS = os.environ.get("QR_TARGETS", "/tmp/qr-targets")
 SCREEN_W, SCREEN_H = 1280, 800
 EC_MAP = {"L": 1, "M": 0, "Q": 3, "H": 2}
 
@@ -47,8 +47,17 @@ def wake():
     somewhere harmless -- in the middle of the screen it would land on
     the code and close the gallery -- so it goes to a corner.
     """
-    adb("shell", "svc power stayon true")
+    # The screensaver and the screen timeout both have to go, or the
+    # tablet falls asleep in the middle of a capture and shows nothing.
+    adb("shell", "settings put secure screensaver_enabled 0")
+    adb("shell", "settings put secure screensaver_activate_on_sleep 0")
+    adb("shell", "settings put secure screensaver_activate_on_dock 0")
+    # stay_on_while_plugged_in 3 keeps the screen on for every charging
+    # source, not just USB; 2 is USB only and the tablet was still
+    # sleeping on mains.
+    adb("shell", "settings put global stay_on_while_plugged_in 3")
     adb("shell", "settings put system screen_off_timeout 1800000")
+    adb("shell", "svc power stayon true")
     adb("shell", "input keyevent 26")
     time.sleep(1.0)
     # A touch in the corner: enough to keep it awake, harmless to the

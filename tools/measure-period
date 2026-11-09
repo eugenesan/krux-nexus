@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Is the source frame cropped?
+
+The binned mode is configured with a 60.6 MHz pixel clock, a CAMIF
+window of 1640 pixels per line and 1252 lines.  If the sensor really
+sends 1640 pixels per line, the frame period is
+
+    1640 * 1252 / 60600000 = 33.9 ms   -> 29.5 fps
+
+If the sensor sends 3280 -- the full mode's line -- the same clock
+gives 67.7 ms, and the CAMIF's 1640-pixel window would be taking only
+half of every line: a 2x crop, and the field of view would be half
+what the phone's own camera shows.
+
+So the frame period decides it.  Each dump request makes the daemon
+wait for a fresh frame from the kernel, so timing a series of dumps
+measures the sensor's rate.
+
+  measure-period [count]
+"""
+
+import socket
+import struct
+import sys
+import time
+
+PHONE = "0879524b0068abca"
+CTL = "/data/krux/camd-ctl.sock"
+
+
+def ctl(cmd):
+    """One command on the control socket: it serves one command per
+    connection."""
+    addr = bytes([1, 0] + list(CTL.encode()) + [0] * (108 - len(CTL)))
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(addr)
+    s.settimeout(10)
+    s.sendall(cmd)
+    try:
+        r = s.recv(2)
+    except OSError:
+        r = b""
+    s.close()
+    return r
+
+
+def main():
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 20
+    # the script runs on the device: the socket path is too long for
+    # the host's abstract namespace
+    script = "/tmp/krux-period.py"
+    with open(script, "w") as f:
+        f.write('''
+import socket, time, sys
+CTL = "/data/krux/camd-ctl.sock"
+n = int(sys.argv[1])
+def ctl(cmd):
+    addr = bytes([1, 0] + list(CTL.encode()) + [0] * (108 - len(CTL)))
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(addr); s.settimeout(10)
+    s.sendall(cmd)
+    try: r = s.recv(2)
+    except OSError: r = b""
+    s.close(); return r
+# warm up
+ctl(b"D")
+t0 = time.ticks_ms()
+for i in range(n):
+    ctl(b"D")
+t1 = time.ticks_ms()
+dt = (t1 - t0)
+print("%d dumps in %d ms -> %.2f ms each -> %.1f fps" % (n, dt, dt/n, 1000.0/(dt/n)))
+print("at 1640 px/line the period would be %.2f ms" % (1640*1252/60600000*1000))
+print("at 3280 px/line the period would be %.2f ms" % (3280*1252/60600000*1000))
+''')
+    import subprocess
+    subprocess.run(["adb", "-s", PHONE, "push", script, script], capture_output=True)
+    r = subprocess.run(["adb", "-s", PHONE, "shell",
+                        "/data/krux/micropython -X heapsize=32M %s %d" % (script, n)],
+                       capture_output=True, text=True)
+    print(r.stdout)
+    if r.stderr.strip():
+        print(r.stderr.strip()[:400])
+
+
+if __name__ == "__main__":
+    main()

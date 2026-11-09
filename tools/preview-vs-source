@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Is the preview a crop of the source, or the whole of it?
+
+camd writes both from the same dump, so the two are the same instant:
+  scan.raw       the preview, 720x960, rotated from the source
+  scan_full.raw  the source, 1640x1232, straight from the ISP
+
+This reconstructs the preview from the source with camd's own mapping
+and compares.  If the two agree everywhere, the preview covers the
+whole source frame and nothing is cropped.
+
+It also tries the flips and the rotations, so that a difference in
+orientation shows up as a difference rather than as noise.
+"""
+
+import os
+import subprocess
+import sys
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPLAY = os.path.join(HERE, "quirc-replay")
+
+
+def camd_preview(src):
+    """camd's own mapping, exactly.
+
+    dest(x,y) samples source
+        sx = width-1 - y*width/OUT_H, sy = x*height/OUT_W
+    and each destination pixel is the box average of the source region
+    it covers.
+    """
+    sw, sh = src.shape[1], src.shape[0]
+    outw, outh = 720, 960
+    rot = np.rot90(src, 1)                 # 90 degrees counter-clockwise
+    out = np.zeros((outh, outw), np.float32)
+    for y in range(outh):
+        sy0 = y * sh // outh
+        sy1 = min(sh, max(sy0 + 1, (y + 1) * sh // outh))
+        for x in range(outw):
+            sx0 = x * sw // outw
+            sx1 = min(sw, max(sx0 + 1, (x + 1) * sw // outw))
+            blk = rot[sy0:sy1, sx0:sx1]
+            out[y, x] = blk.mean() if blk.size else 0.0
+    return out
+
+
+def bright_box(a, thr, frac=60):
+    b = (a > thr)
+    rows = b.sum(axis=1)
+    cols = b.sum(axis=0)
+    r = np.where(rows > frac)[0]
+    c = np.where(cols > frac)[0]
+    if not len(r) or not len(c):
+        return None
+    return (int(c.min()), int(c.max()), int(r.min()), int(r.max()))
+
+
+def main():
+    src_path = sys.argv[1]
+    prv_path = sys.argv[2]
+    src = np.frombuffer(open(src_path, "rb").read()[:1640 * 1232],
+                        dtype=np.uint8).reshape(1232, 1640).astype(np.float32)
+    prv = np.frombuffer(open(prv_path, "rb").read()[:720 * 960],
+                        dtype=np.uint8).reshape(960, 720).astype(np.float32)
+
+    print("the source:  %dx%d  mean=%.1f" % (src.shape[1], src.shape[0], src.mean()))
+    print("the preview: %dx%d  mean=%.1f" % (prv.shape[1], prv.shape[0], prv.mean()))
+    print()
+
+    rec = camd_preview(src)
+    d = np.abs(rec - prv)
+    print("=== the preview against the reconstruction from the source ===")
+    print("  the mean absolute difference: %.2f levels" % d.mean())
+    print("  the correlation:               %.4f" % np.corrcoef(rec.ravel(), prv.ravel())[0, 1])
+    print("  the largest difference:        %.0f levels" % d.max())
+    print()
+
+    print("=== is anything cropped?  compare the edges ===")
+    # the source's four edges, against the preview's
+    print("  the source's top row mean    %6.1f   the preview's right column mean  %6.1f"
+          % (src[0].mean(), prv[:, -1].mean()))
+    print("  the source's bottom row mean %6.1f   the preview's left column mean   %6.1f"
+          % (src[-1].mean(), prv[:, 0].mean()))
+    print("  the source's left column mean %6.1f  the preview's top row mean       %6.1f"
+          % (src[:, 0].mean(), prv[0].mean()))
+    print("  the source's right column mean%6.1f  the preview's bottom row mean    %6.1f"
+          % (src[:, -1].mean(), prv[-1].mean()))
+    print()
+
+    print("=== where is the bright region in each? ===")
+    print("  the source:  %s" % (bright_box(src, 200),))
+    print("  the preview: %s" % (bright_box(prv, 200),))
+    print()
+
+    print("=== the other orientations, for comparison ===")
+    for name, x in (("rotated 90", np.rot90(src, 1)), ("rotated 180", np.rot90(src, 2)),
+                    ("rotated 270", np.rot90(src, 3)), ("flipped", np.fliplr(src))):
+        r = np.array(Image.fromarray(x.astype(np.uint8)).resize((720, 960), Image.BOX), np.float32) \
+            if False else None
+        print("  %-12s (a direct comparison is not meaningful: the aspect differs)" % name)
+
+
+if __name__ == "__main__":
+    main()

@@ -4,35 +4,31 @@
 The corpus is the evidence base for every decoder and AE experiment, so
 it is captured once and replayed offline afterwards.
 
-The device is driven through camd's control socket:
+The device does the socket work (camd's control socket lives there);
+this script runs on the host, pushes a one-shot capture script to the
+device, and pulls the result back.
 
-  'E' exp gain   set the sensor exposure (lines) and analog gain
-  'D'            ask camd to write the current preview and source luma
-
-Each capture is pulled off the device and stored with a JSON sidecar
-describing exactly what it was.
-
-  capture-corpus.py --targets /tmp/opencode/qr-targets \\
-                    --out /tmp/opencode/corpus --distances 0.25,0.40,0.60
+  capture-corpus --targets /tmp/opencode/qr-targets \\
+                 --out /tmp/opencode/corpus --distances 0.25,0.40,0.60
 """
 
 import argparse
 import json
 import os
 import re
-import socket
-import struct
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
-CTL = "/data/krux/camd-ctl.sock"
 DEV = "0879524b0068abca"
+REMOTE_SCRIPT = "/tmp/krux-capture-one.py"
 
 # The exposure ladder, in sensor lines.  0x04e0 (1248) is the sensor's
-# real maximum (VMAX 0x04e4 minus the 4-line margin), so the ladder
-# ends exactly there -- going above it would only record frames the
-# sensor discards.
+# real maximum -- VMAX 0x04e4 minus the 4-line margin -- so the ladder
+# ends exactly there.  Going above it would only record frames the
+# sensor silently discards.
 EXPOSURES = [0x0180, 0x0280, 0x0380, 0x0480, 0x0580, 0x0680, 0x0780,
              0x0880, 0x0980, 0x04e0]
 GAIN = 0x00a5          # the vendor's default analog gain
@@ -43,51 +39,39 @@ def adb(*args, **kw):
                           capture_output=True, text=True, **kw)
 
 
-def ctl(cmd):
-    """One command on the control socket (it serves one command per
-    connection, and closes it afterwards)."""
-    addr = bytes([1, 0] + list(CTL.encode()) + [0] * (108 - len(CTL)))
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(addr)
-    s.settimeout(5)
-    s.sendall(cmd)
-    try:
-        r = s.recv(2)
-    except OSError:
-        r = b""
-    s.close()
-    return r
+def push_capture_script():
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(here, "capture-one.py")
+    if not os.path.exists(src):
+        raise SystemExit("capture-one.py must sit next to capture-corpus")
+    subprocess.run(["adb", "-s", DEV, "push", src, REMOTE_SCRIPT],
+                   check=True, capture_output=True)
 
 
-def set_exposure(exp, gain):
-    return ctl(b"E" + struct.pack(">HH", exp, gain))
+def capture(exp, gain, outdir, name):
+    """Set the exposure, ask for a dump, and pull the files back.
 
+    The daemon writes the dump to /data/krux/ as root; the host pulls
+    it, because the device-side interpreter runs as the shell user and
+    cannot read those files (and the source frame is two megabytes
+    against a one-megabyte default heap).
+    """
+    # The heap is sized generously: the device has 2 GB, and the
+    # firmware itself is launched with -X heapsize=32M.
+    r = adb("shell",
+            "/data/krux/micropython -X heapsize=32M %s 0x%04x 0x%04x"
+            % (REMOTE_SCRIPT, exp, gain))
+    out = (r.stdout or "") + (r.stderr or "")
+    if "ok" not in out:
+        return None, out.strip()
 
-def request_dump():
-    return ctl(b"D")
-
-
-def pull(remote, local):
-    r = adb("pull", remote, local)
-    return os.path.exists(local) and os.path.getsize(local) > 0
-
-
-def wait_for_dump(timeout=20):
-    """The dump is written by camd's capture thread; wait for the
-    preview file to change."""
-    stamp = None
-    try:
-        stamp = os.path.getmtime("/data/krux/scan.raw")
-    except OSError:
-        pass
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        r = adb("shell", "stat -c %%Y /data/krux/scan.raw 2>/dev/null")
-        m = r.stdout.strip()
-        if m and m != stamp:
-            return True
-        time.sleep(0.5)
-    return False
+    prev = os.path.join(outdir, name + "_preview.raw")
+    full = os.path.join(outdir, name + "_source.raw")
+    okp = adb("pull", "/data/krux/scan.raw", prev).returncode == 0
+    okf = adb("pull", "/data/krux/scan_full.raw", full).returncode == 0
+    if not (okp and okf):
+        return None, "pull failed"
+    return (prev, full), out.strip()
 
 
 def main():
@@ -96,8 +80,12 @@ def main():
     ap.add_argument("--out", default="/tmp/opencode/corpus")
     ap.add_argument("--distances", default="0.25,0.40,0.60",
                     help="distances in metres, comma separated")
-    ap.add_argument("--note", default="")
     ap.add_argument("--exposures", default="")
+    ap.add_argument("--note", default="")
+    ap.add_argument("--target-names", default="",
+                    help="a comma-separated subset of target names")
+    ap.add_argument("--interactive", action="store_true",
+                    help="wait for ENTER before each capture")
     args = ap.parse_args()
 
     exposures = ([int(x, 0) for x in args.exposures.split(",")]
@@ -107,63 +95,67 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.targets, "targets.json")) as f:
         targets = json.load(f)
+    if args.target_names:
+        want = set(args.target_names.split(","))
+        targets = [t for t in targets if t["name"] in want]
 
-    # The capture list is written out first, so the user can see exactly
-    # what is going to be asked of them.
     plan = []
     for t in targets:
         for d in distances:
             for e in exposures:
                 plan.append({"target": t["name"], "distance_m": d,
                              "exposure": e, "gain": GAIN})
-    plan_path = os.path.join(args.out, "capture-plan.json")
-    with open(plan_path, "w") as f:
+    with open(os.path.join(args.out, "capture-plan.json"), "w") as f:
         json.dump(plan, f, indent=2)
     print("capture plan: %d frames (%d targets x %d distances x %d exposures)"
           % (len(plan), len(targets), len(distances), len(exposures)))
-    print("  written to %s" % plan_path)
+    print("  plan written to %s" % os.path.join(args.out, "capture-plan.json"))
     print()
-    print("Press ENTER when the phone is aimed at the next target.")
-    print()
+
+    push_capture_script()
+    print("Press ENTER to start." if args.interactive else "Starting.")
+    if args.interactive:
+        input()
 
     results = []
-    for i, item in enumerate(plan):
-        name = "%s_%s_d%03dmm_e%04x" % (
-            item["target"], "screen", int(item["distance_m"] * 1000),
-            item["exposure"])
-        print("[%3d/%3d] %s" % (i + 1, len(plan), name), end="", flush=True)
+    try:
+        for i, item in enumerate(plan):
+            name = "%s_d%03dmm_e%04x" % (
+                item["target"], int(item["distance_m"] * 1000),
+                item["exposure"])
+            print("[%3d/%3d] %-34s" % (i + 1, len(plan), name), end="",
+                  flush=True)
+            if args.interactive:
+                input("  aim the phone, then press ENTER: ")
 
-        set_exposure(item["exposure"], item["gain"])
-        time.sleep(1.2)          # let the picture settle at this exposure
-        request_dump()
-        time.sleep(1.0)
-
-        prev = os.path.join(args.out, name + "_preview.raw")
-        full = os.path.join(args.out, name + "_source.raw")
-        okp = pull("/data/krux/scan.raw", prev)
-        okf = pull("/data/krux/scan_full.raw", full)
-
-        # The daemon's own read-out for this frame.
-        meta = {}
-        r = adb("shell", "cat /data/krux/scan.meta 2>/dev/null")
-        for k, v in re.findall(r"(\w+)=(-?\d+)", r.stdout):
-            meta[k] = int(v)
-
-        rec = dict(item)
-        rec["name"] = name
-        rec["preview_bytes"] = os.path.getsize(prev) if okp else 0
-        rec["source_bytes"] = os.path.getsize(full) if okf else 0
-        rec["camd_meta"] = meta
-        rec["note"] = args.note
-        results.append(rec)
-        with open(os.path.join(args.out, name + ".json"), "w") as f:
-            json.dump(rec, f, indent=2)
-        print("  %s" % ("ok" if okp and okf else "PARTIAL"), flush=True)
+            got, msg = capture(item["exposure"], item["gain"], args.out, name)
+            rec = dict(item)
+            rec["name"] = name
+            rec["note"] = args.note
+            if got is None:
+                rec["ok"] = False
+                rec["error"] = msg
+                print("  FAILED (%s)" % msg)
+            else:
+                prev, full = got
+                meta = {}
+                r = adb("shell", "cat /data/krux/scan.meta 2>/dev/null")
+                for k, v in re.findall(r"(\w+)=(-?\d+)", r.stdout):
+                    meta[k] = int(v)
+                rec["ok"] = True
+                rec["camd_meta"] = meta
+                print("  ok  %s" % (meta.get("mean", "?")))
+            with open(os.path.join(args.out, name + ".json"), "w") as f:
+                json.dump(rec, f, indent=2)
+            results.append(rec)
+    finally:
+        pass
 
     with open(os.path.join(args.out, "index.json"), "w") as f:
         json.dump(results, f, indent=2)
+    ok = sum(1 for r in results if r.get("ok"))
     print()
-    print("captured %d frames into %s" % (len(results), args.out))
+    print("captured %d/%d frames into %s" % (ok, len(results), args.out))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Measure the camera's real frame rate.
+
+This settles whether the source frame is cropped.
+
+The binned mode is configured with a 60.6 MHz pixel clock, a CAMIF
+window of 1640 pixels per line and 1252 lines.  The sensor's HMAX
+register reads back as 0x0d70 = 3440 -- the *full* mode's line length.
+So either the sensor sends 1640 pixels per line (and the frame is
+complete), or it sends 3280 and the CAMIF's 1640-pixel window takes
+only half of every line, which would be a 2x crop.
+
+The frame period says which:
+
+    1640 px/line -> 33.9 ms -> 29.5 fps
+    3280 px/line -> 67.8 ms -> 14.8 fps
+
+The daemon publishes a frame per request, and every dump bumps the
+request counter, so a run of dumps keeps the daemon publishing.  The
+frame sequence number in scan.meta counts the published frames.
+
+  measure-rate [seconds]
+"""
+
+import re
+import subprocess
+import sys
+import time
+
+PHONE = "0879524b0068abca"
+
+
+def adb(*args):
+    return subprocess.run(["adb", "-s", PHONE] + list(args),
+                          capture_output=True, text=True)
+
+
+def seq():
+    r = adb("shell", "cat /data/krux/scan.meta 2>/dev/null")
+    m = re.search(r"seq=(\d+)", r.stdout)
+    return int(m.group(1)) if m else None
+
+
+def dump():
+    """Ask for a dump: this also keeps the daemon publishing frames."""
+    r = adb("shell", "/data/krux/micropython /tmp/krux-dump.py")
+    return r.stdout.strip()
+
+
+def main():
+    seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 6.0
+    # the dump helper has to be on the device
+    adb("push", "/tmp/krux-dump.py", "/tmp/krux-dump.py")
+
+    dump()
+    time.sleep(1.0)
+    a = seq()
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        dump()
+    b = seq()
+    t1 = time.time()
+    if a is None or b is None or b <= a:
+        print("the sequence did not advance: %s -> %s" % (a, b))
+        return 1
+    fps = (b - a) / (t1 - t0)
+    print("%d frames in %.1f s -> %.2f fps" % (b - a, t1 - t0, fps))
+    print()
+    print("at 1640 px/line the period is %.1f ms -> %.1f fps"
+          % (1640 * 1252 / 60600000 * 1000, 60600000 / (1640 * 1252)))
+    print("at 3280 px/line the period is %.1f ms -> %.1f fps"
+          % (3280 * 1252 / 60600000 * 1000, 60600000 / (3280 * 1252)))
+    print()
+    if fps > 22:
+        print("=> the sensor sends 1640 pixels per line: the frame is COMPLETE.")
+    else:
+        print("=> the sensor sends 3280 pixels per line and we take half:")
+        print("   the frame IS cropped, and the field of view is half.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

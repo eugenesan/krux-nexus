@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Measure the camera's frame rate, and so settle what the sensor sends.
+
+The binned mode is configured with a pixel clock of 60.6 MHz and the
+CAMIF window is 1640 pixels per line.  If the sensor really sends 1640
+pixels per line, the frame rate is
+
+    60600000 / (1640 * 1252) = 29.5 fps
+
+If it sends 3280 -- the full mode's line -- the same clock gives 14.7
+fps, and the CAMIF's 1640-pixel window would be taking half of every
+line: a 2x crop.
+
+So the frame rate tells us which it is.
+"""
+
+import socket
+import sys
+import time
+
+PHONE = "0879524b0068abca"
+FRAME = "/data/krux/camd.sock"
+
+
+MEASURE = r"""
+import socket, time, sys
+n = int(sys.argv[1])
+FRAME = "/data/krux/camd.sock"
+addr = bytes([1, 0] + list(FRAME.encode()) + [0] * (108 - len(FRAME)))
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(addr)
+s.settimeout(5)
+seqs = []
+t0 = time.ticks_ms()
+for _ in range(n):
+    s.sendall(b"F")
+    hdr = s.recv(32)
+    if len(hdr) != 32 or hdr[31] == 1:
+        continue
+    need = 720*960 + (720//2)*(960//2)*2
+    got = 0
+    while got < need:
+        c = s.recv(min(65536, need-got))
+        if not c:
+            break
+        got += len(c)
+    seqs.append(hdr[4] | (hdr[5] << 8) | (hdr[6] << 16) | (hdr[7] << 24))
+t1 = time.ticks_ms()
+dt = (t1-t0)/1000.0
+print("%d frames in %.2f s -> %.1f fps" % (len(seqs), dt, len(seqs)/dt if dt else 0))
+print("%d distinct frame sequences" % len(set(seqs)))
+"""
+
+
+def main():
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 60
+    # The socket path is too long for the host's abstract namespace, so
+    # the measurement runs on the device.
+    import subprocess
+    script = "/tmp/krux-fps.py"
+    with open(script, "w") as f:
+        f.write(MEASURE)
+    subprocess.run(["adb", "-s", PHONE, "push", script, script], capture_output=True)
+    r = subprocess.run(["adb", "-s", PHONE, "shell",
+                        "/data/krux/micropython -X heapsize=32M %s %d" % (script, n)],
+                       capture_output=True, text=True)
+    print(r.stdout)
+    print(r.stderr)
+    return
+    s.settimeout(5)
+
+    seqs = []
+    t0 = time.ticks_ms()
+    for _ in range(n):
+        s.sendall(b"F")
+        hdr = s.recv(32)
+        if len(hdr) != 32:
+            break
+        if hdr[31] == 1:
+            continue
+        need = 720 * 960 + (720 // 2) * (960 // 2) * 2
+        got = 0
+        while got < need:
+            c = s.recv(min(65536, need - got))
+            if not c:
+                break
+            got += len(c)
+        seq = hdr[4] | (hdr[5] << 8) | (hdr[6] << 16) | (hdr[7] << 24)
+        seqs.append(seq)
+    t1 = time.ticks_ms()
+
+    dt = (t1 - t0) / 1000.0
+    print("%d frames in %.2f s -> %.1f fps" % (len(seqs), dt, len(seqs) / dt if dt else 0))
+    if len(seqs) > 1:
+        # the frames the daemon published (not the ones we asked for)
+        uniq = len(set(seqs))
+        print("%d distinct frame sequences" % uniq)
+    print()
+    print("the binned mode at 1640 px/line:  %.1f fps"
+          % (60600000 / (1640 * 1252)))
+    print("the same clock at 3280 px/line:   %.1f fps"
+          % (60600000 / (3280 * 1252)))
+    s.close()
+
+
+if __name__ == "__main__":
+    main()

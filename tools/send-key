@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Send a key press to the phone, through the evdev device.
+
+The camera page has to be closed before the corpus capture: while it
+is open, the firmware's auto-exposure writes the exposure every third
+frame and fights the capture script's writes.
+
+On the hammerhead the ENTER key is KEY_POWER, and the page leaves on
+ENTER.  This writes the event into the evdev device the firmware
+reads.
+
+  send-key ENTER      (or PAGE, or PAGE_PREV)
+"""
+
+import os
+import struct
+import subprocess
+import sys
+import time
+
+PHONE = "0879524b0068abca"
+
+# from linux/input-event-codes.h
+KEY_POWER = 116
+KEY_VOLUME_DOWN = 114
+KEY_VOLUME_UP = 115
+
+# The hammerhead's board configuration (krux/src/board.py) gives the
+# input device for each key: the power key is on event0, the volume
+# keys on event2.
+KEYS = {
+    "ENTER": (KEY_POWER, "/dev/input/event0"),
+    "PAGE": (KEY_VOLUME_DOWN, "/dev/input/event2"),
+    "PAGE_PREV": (KEY_VOLUME_UP, "/dev/input/event2"),
+}
+
+
+def find_event_device():
+    """The evdev device the firmware reads the keys from."""
+    # /proc/bus/input/devices names the device; the name is not
+    # readable through the device node itself.
+    out = subprocess.run(["adb", "-s", PHONE, "shell", "cat /proc/bus/input/devices"],
+                         capture_output=True, text=True).stdout
+    want = None
+    handlers = ""
+    for line in out.splitlines():
+        if line.startswith("N: Name="):
+            want = line.split('"')[1]
+            handlers = ""
+        elif line.startswith("H: Handlers="):
+            handlers = line.split("=")[1]
+            if want and ("gpio" in want.lower() or "key" in want.lower()):
+                for h in handlers.split():
+                    if h.startswith("event"):
+                        return "/dev/input/" + h
+    return None
+
+
+def main():
+    name = sys.argv[1] if len(sys.argv) > 1 else "ENTER"
+    entry = KEYS.get(name.upper())
+    if entry is None:
+        print("unknown key %r; use one of %s" % (name, ", ".join(KEYS)))
+        return 2
+    code, dev = entry
+    print("the key device: %s" % dev)
+
+    # struct input_event: timeval (16 bytes on 64-bit), type, code, value
+    fmt = "llHHi"
+
+    def ev(type_, value):
+        now = time.time()
+        sec = int(now)
+        usec = int((now - sec) * 1e6)
+        return struct.pack(fmt, sec, usec, type_, code, value)
+
+    script = """
+import struct, time, sys
+dev, code = sys.argv[1], int(sys.argv[2])
+fmt = "llHHi"
+def ev(t, v):
+    now = time.time(); s = int(now); u = int((now-s)*1e6)
+    return struct.pack(fmt, s, u, t, code, v)
+f = open(dev, "wb")
+f.write(ev(1, 1)); f.flush()      # EV_KEY, value 1 = pressed
+time.sleep(0.05)
+f.write(ev(0, 0)); f.flush()      # EV_SYN
+f.write(ev(1, 0)); f.flush()      # EV_KEY, value 0 = released
+f.write(ev(0, 0)); f.flush()
+f.close()
+"""
+    with open("/tmp/krux-key.py", "w") as f:
+        f.write(script)
+    subprocess.run(["adb", "-s", PHONE, "push", "/tmp/krux-key.py", "/tmp/krux-key.py"],
+                   capture_output=True)
+    r = subprocess.run(["adb", "-s", PHONE, "shell",
+                        "/data/krux/micropython /tmp/krux-key.py %s %d" % (dev, code)],
+                       capture_output=True, text=True)
+    if r.stderr.strip():
+        print(r.stderr.strip()[:300])
+    print("sent %s" % name.upper())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
