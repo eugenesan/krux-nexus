@@ -2535,39 +2535,65 @@ static void *client_thread(void *arg)
 					 * sensor uses the full frame.  Cropping here
 					 * scaled the axes differently and stretched the
 					 * image. */
-					int crop_w = width;
-					int crop_x = 0;
-					int dx, dy;
-					for (dy = 0; dy < OUT_H; dy++) {
-						int sx0 = crop_x + crop_w - 1 -
-							(dy + 1) * crop_w / OUT_H;
-						int sx1 = crop_x + crop_w - 1 -
-							dy * crop_w / OUT_H;
-						if (sx0 < crop_x)
-							sx0 = crop_x;
-						if (sx1 > crop_x + crop_w - 1)
-							sx1 = crop_x + crop_w - 1;
-						for (dx = 0; dx < OUT_W; dx++) {
-							int sy0 = dx * height / OUT_W;
-							int sy1 = (dx + 1) * height / OUT_W;
-							int sx, sy;
-							unsigned long acc = 0;
-							int n = (sx1 - sx0 + 1) *
-								(sy1 - sy0);
-							for (sy = sy0; sy < sy1; sy++) {
-								const unsigned char *row =
-									src_y + sy * width;
-								for (sx = sx0; sx <= sx1; sx++)
-									acc += row[sx];
+					/*
+					 * The source is read uncached from ION, so
+					 * the old single pass -- which sampled the
+					 * source column-major for the rotation --
+					 * re-read the whole 2 MP frame once per
+					 * output row: 960 times, about 2 GB of
+					 * uncached traffic, ~230 ms.
+					 *
+					 * Downscale first, with each source row
+					 * read once and contiguously, into a
+					 * 960x720 intermediate; then rotate that
+					 * small image into the output.
+					 */
+					{
+						static unsigned short *mid;
+						int mx, my, sy, sx;
+						if (!mid)
+							mid = malloc((size_t)OUT_H *
+								     OUT_W * 2);
+						if (mid) {
+							memset(mid, 0,
+							       (size_t)OUT_H * OUT_W * 2);
+							for (my = 0; my < OUT_W; my++) {
+								int sy0 = my * height / OUT_W;
+								int sy1 = (my + 1) * height / OUT_W;
+								unsigned short *orow =
+									mid + my * OUT_H;
+								for (sy = sy0; sy < sy1; sy++) {
+									const unsigned char *row =
+										src_y + sy * width;
+									for (mx = 0; mx < OUT_H; mx++) {
+										int sx0 = mx * width / OUT_H;
+										int sx1 = (mx + 1) * width / OUT_H;
+										unsigned int a = 0;
+										int n = sx1 - sx0;
+										for (sx = sx0; sx < sx1; sx++)
+											a += row[sx];
+										orow[mx] += (unsigned short)
+											(a / (n ? n : 1));
+									}
+								}
 							}
-							{
-								unsigned long v =
-									acc / (n ? n : 1);
-								v *= luma_gain;
-								if (v > 255)
-									v = 255;
-								latest_y[dy * OUT_W + dx] =
-									(unsigned char)v;
+							for (my = 0; my < OUT_W; my++) {
+								int sy0 = my * height / OUT_W;
+								int sy1 = (my + 1) * height / OUT_W;
+								int nr = sy1 - sy0;
+								unsigned short *orow =
+									mid + my * OUT_H;
+								for (mx = 0; mx < OUT_H; mx++) {
+									unsigned long v =
+										orow[mx] / (nr ? nr : 1);
+									v *= luma_gain;
+									if (v > 255) v = 255;
+									/* 90 deg CCW:
+									 * out(dy,dx) = mid(dx, OUT_H-1-dy) */
+									latest_y[(OUT_H - 1 - mx) *
+										 OUT_W + my] =
+										(unsigned char)v;
+								}
 							}
 						}
 					}
@@ -3457,8 +3483,11 @@ int main(int argc, char **argv)
 			focus_step = -1;
 		luma_gain = state_read("luma_gain", 1, 1, 4);
 		unsharp_amount = state_read("unsharp", 0, 0, 2);
-		printf("[state] af=%d focus=%d luma_gain=%d unsharp=%d\n",
-		       af_level, focus_step, luma_gain, unsharp_amount);
+		if (state_read("bench", 0, 0, 1))
+			bench_mode = 1;
+		printf("[state] af=%d focus=%d luma_gain=%d unsharp=%d bench=%d\n",
+		       af_level, focus_step, luma_gain, unsharp_amount,
+		       bench_mode);
 	}
 	if (argc > 2) {
 		wh[0] = atoi(argv[1]);
