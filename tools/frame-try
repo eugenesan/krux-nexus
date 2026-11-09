@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Try to decode a captured frame under several corrections.
+
+The camera sees a screen on a desk, and the frame has three separate
+problems, each with its own fix:
+
+  * an illumination gradient across the frame (a lamp on one side),
+    which a global threshold cannot cope with;
+  * a 2-pixel period pattern in the sensor's output, whose phase
+    depends on the geometry;
+  * the moire of the screen's own pixel grid.
+
+This tries each fix alone and in combination, so that it is clear
+which one matters.
+"""
+
+import os
+import subprocess
+import sys
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPLAY = os.path.join(HERE, "quirc-replay")
+
+
+def flat_field(a, size=64):
+    """Remove a slow illumination gradient.
+
+    The frame is divided by a heavily blurred copy of itself: the
+    result is flat, and the code's own structure is untouched.
+    """
+    b = a.astype(np.float32)
+    h, w = b.shape
+    # a box blur by summing along the rows and the columns
+    k = max(3, size | 1)
+    cs = b.cumsum(0)
+    cs = np.vstack([np.zeros((1, w), np.float32), cs])
+    out = np.empty_like(b)
+    half = k // 2
+    for y in range(h):
+        y0 = max(0, y - half)
+        y1 = min(h, y + half + 1)
+        out[y] = (cs[y1] - cs[y0]) / (y1 - y0)
+    cs = out.cumsum(1)
+    cs = np.hstack([np.zeros((h, 1), np.float32), cs])
+    out = np.empty_like(b)
+    for x in range(w):
+        x0 = max(0, x - half)
+        x1 = min(w, x + half + 1)
+        out[:, x] = (cs[:, x1] - cs[:, x0]) / (x1 - x0)
+    out[out < 1] = 1
+    return b / out * 100.0
+
+
+def notch(a, diagonal=True, axis=True):
+    """Remove the 2-pixel period component."""
+    b = a.astype(np.float32).copy()
+    h, w = b.shape
+    if diagonal:
+        for y in range(h):
+            r = b[y]
+            n = len(r)
+            i0 = np.arange(y % 2, n, 2)
+            i1 = np.arange((y + 1) % 2, n, 2)
+            if len(i0) and len(i1):
+                d = (r[i0].mean() - r[i1].mean()) * 0.5
+                r[i0] -= d
+                r[i1] += d
+    if axis:
+        for y in range(h):
+            r = b[y]
+            e, o = r[0::2], r[1::2]
+            d = (e - o) * 0.5
+            r[0::2] = e - d
+            r[1::2] = o + d
+        for x in range(w):
+            c = b[:, x]
+            e, o = c[0::2], c[1::2]
+            d = (e - o) * 0.5
+            c[0::2] = e - d
+            c[1::2] = o + d
+    return b
+
+
+def box(a, n):
+    h, w = a.shape
+    return a[:h // n * n, :w // n * n].reshape(h // n, n, w // n, n).mean(axis=(1, 3))
+
+
+def decode(arr, mode="global"):
+    arr = np.ascontiguousarray(np.clip(arr, 0, 255).astype(np.uint8))
+    tmp = "/tmp/opencode/_ff.raw"
+    arr.tofile(tmp)
+    h, w = arr.shape
+    r = subprocess.run([REPLAY, tmp, str(w), str(h), "--threshold", mode],
+                       capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.strip().startswith("decoded="):
+            if "decoded=1" in line:
+                for l2 in r.stdout.splitlines():
+                    if l2.strip().startswith("payload="):
+                        return l2.strip().split("=", 1)[1]
+                return "<decoded>"
+    return None
+
+
+def main():
+    path = sys.argv[1]
+    w = int(sys.argv[2])
+    h = int(sys.argv[3])
+    a = np.frombuffer(open(path, "rb").read()[:w * h],
+                      dtype=np.uint8).reshape(h, w)
+    print("%s  %dx%d  mean=%.1f" % (os.path.basename(path), w, h, a.mean()))
+    print()
+
+    steps = [
+        ("raw", lambda x: x),
+        ("flat-field", lambda x: flat_field(x)),
+        ("notch", lambda x: notch(x)),
+        ("flat-field + notch", lambda x: notch(flat_field(x))),
+        ("notch + flat-field", lambda x: flat_field(notch(x))),
+        ("2x2 average", lambda x: box(x, 2)),
+        ("2x2 average + notch", lambda x: notch(box(x, 2))),
+        ("2x2 + notch + flat-field", lambda x: flat_field(notch(box(x, 2)))),
+        ("3x3 average", lambda x: box(x, 3)),
+        ("3x3 + notch + flat-field", lambda x: flat_field(notch(box(x, 3)))),
+    ]
+    for label, fn in steps:
+        try:
+            b = fn(a)
+        except Exception as e:
+            print("  %-26s failed: %s" % (label, e))
+            continue
+        res = decode(b)
+        print("  %-26s %s" % (label, res if res else "-"))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,36 @@
+#!/bin/bash
+# Boot the Nexus into the Krux stub.
+#
+# `fastboot boot` does not flash, so the device comes back to Android
+# after any reboot; this puts it back into the stub.  Run it detached:
+# interrupting it leaves the device in Android.
+#
+#   tools/boot-stub [image]
+set -u
+cd "$(dirname "$0")/.."
+D=0879524b0068abca
+IMG=${1:-/tmp/opencode/boot-dev.img}
+
+if [ ! -f "$IMG" ]; then
+	echo "no boot image at $IMG" >&2
+	exit 1
+fi
+
+adb -s $D reboot bootloader 2>/dev/null
+for i in $(seq 1 30); do
+	sleep 2
+	fastboot devices 2>/dev/null | grep -q $D && break
+done
+if ! fastboot devices 2>/dev/null | grep -q $D; then
+	echo "NOT-IN-FASTBOOT"
+	fastboot devices
+	exit 1
+fi
+fastboot -s $D boot "$IMG"
+for i in $(seq 1 40); do
+	sleep 5
+	s=$(adb devices 2>/dev/null | grep $D | awk '{print $2}')
+	[ "$s" = "recovery" ] && { echo "stub-up after $((i*5))s"; exit 0; }
+	[ "$s" = "device" ] && { echo "android-again"; exit 1; }
+done
+echo "no-answer"

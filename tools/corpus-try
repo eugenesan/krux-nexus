@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Try to decode every frame of the corpus and report what works.
+
+Each frame is tried as it is, and with the three threshold modes, and
+with the 2-pixel notch, so the effect of each can be seen separately.
+"""
+
+import glob
+import json
+import os
+import subprocess
+import sys
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPLAY = os.path.join(HERE, "quirc-replay")
+
+
+def notch(a):
+    """Remove the 2-pixel component along the diagonals and the axes.
+
+    The sensor's output carries a 2-pixel-period pattern whose phase
+    depends on the geometry; on the paper code it was axis-aligned, on
+    the tablet it is diagonal.  Both are removed.
+    """
+    b = a.astype(np.float32).copy()
+    h, w = b.shape
+    # the diagonal component: the two (x+y) parity classes
+    for y in range(h):
+        r = b[y]
+        n = len(r)
+        i0 = np.arange(y % 2, n, 2)
+        i1 = np.arange((y + 1) % 2, n, 2)
+        if len(i0) and len(i1):
+            d = (r[i0].mean() - r[i1].mean()) * 0.5
+            r[i0] -= d
+            r[i1] += d
+    # the axis-aligned component
+    for y in range(h):
+        r = b[y]
+        e, o = r[0::2], r[1::2]
+        d = (e - o) * 0.5
+        r[0::2] = e - d
+        r[1::2] = o + d
+    for x in range(w):
+        c = b[:, x]
+        e, o = c[0::2], c[1::2]
+        d = (e - o) * 0.5
+        c[0::2] = e - d
+        c[1::2] = o + d
+    return b
+
+
+def decode(arr, mode):
+    arr = np.ascontiguousarray(np.clip(arr, 0, 255).astype(np.uint8))
+    tmp = "/tmp/opencode/_try.raw"
+    arr.tofile(tmp)
+    h, w = arr.shape
+    r = subprocess.run([REPLAY, tmp, str(w), str(h), "--threshold", mode],
+                       capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.strip().startswith("decoded="):
+            if "decoded=1" in line:
+                for l2 in r.stdout.splitlines():
+                    if l2.strip().startswith("payload="):
+                        return l2.strip().split("=", 1)[1]
+                return "<decoded>"
+            return None
+    return None
+
+
+def main():
+    root = sys.argv[1] if len(sys.argv) > 1 else "/tmp/opencode/corpus"
+    which = sys.argv[2] if len(sys.argv) > 2 else "source"
+
+    files = sorted(glob.glob(os.path.join(root, "*_%s.raw" % which)))
+    print("%d frames\n" % len(files))
+    print("%-34s %-7s %-9s %-9s %-9s %s" %
+          ("frame", "mean", "raw", "notch", "bilinear", "adaptive"))
+    hits = 0
+    for f in files:
+        name = os.path.basename(f).rsplit("_", 1)[0]
+        if which == "preview":
+            w, h = 720, 960
+        else:
+            w, h = 1640, 1232
+        a = np.frombuffer(open(f, "rb").read()[:w * h],
+                         dtype=np.uint8).reshape(h, w)
+        n = notch(a)
+        r_raw = decode(a, "global")
+        r_notch = decode(n, "global")
+        r_bil = decode(n, "bilinear")
+        r_ad = decode(n, "adaptive")
+
+        def s(x):
+            return "OK" if x else "-"
+        print("%-34s %-7.1f %-9s %-9s %-9s %s" %
+              (name, a.mean(), s(r_raw), s(r_notch), s(r_bil), s(r_ad)))
+        if r_raw or r_notch or r_bil or r_ad:
+            hits += 1
+            if r_notch or r_bil or r_ad:
+                print("      payload: %s" % (r_notch or r_bil or r_ad))
+    print()
+    print("%d of %d frames decoded at all" % (hits, len(files)))
+
+
+if __name__ == "__main__":
+    main()

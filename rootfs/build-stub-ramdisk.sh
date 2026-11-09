@@ -44,7 +44,13 @@ ROOT="$(cd "$HERE/.." && pwd)"
 FORCE=""
 BUNDLE=${BUNDLE:-0}
 # gzip (default TWRP), xz (best size; needs CONFIG_RD_XZ), lzma or lz4.
-COMPRESS=${COMPRESS:-xz}
+#
+# The device boots the stock bootloader, and IT decides how to unpack
+# the ramdisk: it looks for a gzip ramdisk and does not look for xz.  A
+# ramdisk packed as xz therefore does not boot -- the device accepts
+# the image, flashes nothing, and comes straight back to Android with
+# no error message anywhere.  That is why this is gzip.
+COMPRESS=${COMPRESS:-gzip}
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--force)  FORCE=1; shift ;;
