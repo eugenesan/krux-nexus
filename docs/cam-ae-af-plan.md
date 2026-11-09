@@ -124,28 +124,106 @@ pixel of the downscaled preview.
 
 ### Step 1 — Host harness and a saved corpus (the enabler)
 
-**What:** build a small host program, `tools/quirc-replay`, that reads
-a saved raw luma frame, runs it through a chosen threshold mode, and
-reports decode success, payload, and timing. Add a `--threshold
-global|bilinear|adaptive` switch and a `--invert` flag.
+**Status: the harness is built** (`tools/quirc-replay`, commit
+`0a9e2d5`). It reads a saved raw luma frame, runs it through a chosen
+threshold mode, and reports the decode result and the time it took:
 
-**Also:** capture the corpus. This is the one step that needs the
-device and the user. Procedure:
+```
+tools/quirc-replay <file.raw> <w> <h> [--threshold global|bilinear|adaptive]
+```
 
-- Fix the test targets: 3 QR codes (version ~2 low density, ~7
-  medium, ~20+ dense) at two displayed sizes, on a second screen and
-  printed on paper. Record version, size, and distance.
-- For each target: hold the phone at a fixed distance, and have `camd`
-  dump both `scan.raw` (preview) and `scan_full.raw` (source) at
-  several exposures spanning the useful range.
-- Save each capture as `<target>_<exposure>_<resolution>.raw` plus a
-  small JSON sidecar with the exposure, gain, luma_gain, and any
-  decode result.
+`k_quirc` is self-contained, so this is a 43 KB host binary built in
+seconds. **The harness was verified against the ground truth**: it
+decodes the corpus targets and reports the expected payloads.
 
-**Cost:** one session with the user, then everything else is offline.
+**Also built:** `tools/capture-corpus`, which drives camd's control
+socket to capture the corpus (preview luma + full-resolution source
+luma + a JSON sidecar with the exposure, gain and the daemon's
+read-out for each frame).
 
-**Done when:** `quirc-replay` decodes a known-good preview frame and
-prints the expected payload.
+**What is left for this step is the capture itself** — the one part
+that needs the device and the user. The targets are prepared; the
+procedure is in §3 below.
+
+#### Two limits found while making the ground truth
+
+Both were found by decoding the prepared targets with the host
+harness, and both change the plan:
+
+**1. The decoder's version ceiling is version 27, not 40.** The
+`k_quirc` fork documents support "up to version 40", and the version
+database has all 40 entries — but `k_quirc.h` has:
+
+```c
+#define K_QUIRC_MAX_BITMAP 1954  /* ceil(125*125/8) for version 27 */
+```
+
+`k_quirc_decode.c` checks the reserved-bitmap size against that
+constant and refuses anything larger. Version 27 needs 1954 bytes
+exactly; version 28 needs 2081 and is rejected with
+`K_QUIRC_ERROR_INVALID_GRID_SIZE`.
+
+Raising the constant to 3917 (version 40's 3917 bytes) makes v28, v30
+decode immediately — verified on the host, one line, no other change.
+**This is a real bug and it is very likely part of why the "HD QR"
+never decoded**: a code denser than version 27 cannot decode at all,
+at any exposure, with any thresholding, at any resolution. It is worth
+checking what version the failing code actually is.
+
+**2. The decoder refuses any image larger than 1280 pixels in either
+dimension.** `K_QUIRC_MAX_IMAGE_DIM` is 1280, checked in
+`k_quirc_decode_grayscale`. The **full-resolution source frame is
+1640×1232 — it is rejected outright.** The preview (720×960) is
+accepted.
+
+This is decisive for Step 6: the full-resolution path cannot work as
+a straight "decode the whole source frame", because the decoder will
+not accept it. It must be one of:
+
+- raise `K_QUIRC_MAX_IMAGE_DIM` (the decoder's working memory scales
+  with the image, so this needs a look at the heap and the frame rate),
+- or **decode a crop** of the source frame corresponding to the QR's
+  position in the preview — which the review already suggests, and
+  which is now *necessary* rather than merely an optimisation. A
+  1100×1100 crop of the source decoded perfectly on the host while the
+  whole frame failed.
+
+So Step 6 becomes "crop-and-decode" rather than "decode the whole
+frame", unless the dimension limit is raised as well.
+
+#### 3. The field of view is NOT cropped (settled 2026-11-08)
+
+The tablet was cut off at the edge of our preview while the Android
+camera showed it whole and centred, which looked like a crop. It was
+tested directly and it is not one.
+
+The phone was rebooted into Android (never flashed), the stock camera
+opened, and two photographs taken of the same scene — they agreed
+within **1 px**, so the phone was steady. The stub was restored with
+`fastboot boot`. The measurement is the same physical object in both:
+the tablet's screen, 172.2 mm wide.
+
+| | the Android photo | our preview |
+|---|---|---|
+| the frame | 2448×3264 (the full 8 MP sensor) | 720×960 (from the 1640×1232 source) |
+| the tablet's screen spans | 1765 px | 473 px |
+| **as a fraction of the frame's width** | **72.1 %** | **65.7 %** |
+
+**Our field of view is 1.10× *wider* than the Android camera's.** A 2×
+crop would put the tablet at 144 % of our frame; it is at 66 %. The
+tablet is cut off because the phone is aimed a little to the left of
+it — its centre is at col 483 of our 720-wide preview against col 1180
+of Android's 2448-wide frame.
+
+Two independent confirmations: the kernel reports **no CAMIF geometry
+errors** at all (it prints "camif error status" whenever the front
+end's window does not match the sensor's line), and camd's own
+downscale reconstructs the preview from the source with a correlation
+of **0.979**, the four edges mapping to each other correctly.
+
+**So the resolution argument is unchanged, and the Android camera's
+own photo is a useful third data point: it resolves the code at 8 px
+per module where our preview gives it about 2.6.**
 
 ### Step 2 — Exposure ceiling (one line, provably safe)
 
@@ -194,9 +272,36 @@ With the harness from Step 1, this is pure host work:
 **This is where the answer to the review's central question comes
 from**, and it costs no device time at all.
 
+**But the measurements say the thresholding is not the whole story.**
+The simulation in `docs/cam-corpus-findings.md` separates the effects,
+and the result is:
+
+```
+neither                                             OK
+gradient                                            OK
+moire 61                                            OK
+sensor 2-px                                         OK
+
+gradient + moire                                    -     <-- breaks it
+```
+
+**Only the gradient and the moiré together break the decode.** So
+Step 3 must test each effect separately, not just the threshold mode:
+the thresholding has to be tried on a frame that has had the 2-pixel
+artefact removed and the illumination flattened, or the result will
+be the same failure every time and will tell us nothing.
+
+The order within Step 3 therefore becomes:
+
+3a. **Remove the 2-pixel artefact** (a per-row and per-column even/odd
+    subtraction, plus the diagonal variant) and re-test the threshold
+    modes.
+3b. **Flatten the illumination** and re-test.
+3c. Only then, if it still fails, implement the `HybridBinarizer`.
+
 **Done when:** we have a table of success rate per (resolution ×
-threshold mode) over the corpus, and the winning combination is
-identified.
+threshold mode × artefact treatment) over the corpus, and the winning
+combination is identified.
 
 ### Step 4 — Gain characterisation (device, lit target)
 
@@ -254,12 +359,20 @@ The removed code is recoverable: `sensor.snapshot_full()` and camd's
 `3b5761d`/`82f07bfc` removed). The removal was collateral damage from
 a preview-stability change, not a judgement on the approach.
 
-The memory cost is fine (2 MB luma against a 32 MB heap). The design
-the review proposes is right: **preview decode first, and only after a
-few consecutive preview failures request one full-resolution decode**,
-before falling back to an AF sweep. If a QR bounding box can be
-obtained from the preview, decode only the corresponding
-full-resolution crop — that is much cheaper than the whole frame.
+The memory cost is fine (2 MB luma against a 32 MB heap). But note the
+limit found in Step 1: **the decoder refuses the 1640×1232 frame
+outright**, so this step is a **crop-and-decode**, not a whole-frame
+decode:
+
+- find the code's position in the preview (the decoder already
+  reports the corner positions even when the decode fails, so a
+  located-but-undecoded code is measurable),
+- crop the corresponding region out of the source luma, with a quiet
+  margin,
+- decode the crop, which is under the 1280-pixel limit.
+
+A 1100×1100 crop of a synthetic source frame decoded on the host
+while the whole frame failed, so the approach is sound.
 
 **Done when:** dense codes decode reliably with the preview path
 untouched, and the full-res attempt costs an acceptable latency.
@@ -289,18 +402,27 @@ the manual exposure lock is ignored, and the unsharp mask stays off.
 ## 3. Order of work, and what each step depends on
 
 ```
-Step 1  host harness + corpus          <- needs the user once
-   |
+Step 1  host harness + corpus          <- harness DONE; corpus needs the user
+   |                                      (the tablet is up; the camera
+   |                                       page must be CLOSED first)
 Step 2  exposure ceiling (camd clamp)   <- 2 lines, provably safe
-   |
+   |                                      do this FIRST: the baseline
+   |                                      is otherwise measured through
+   |                                      a controller commanding
+   |                                      exposures the sensor discards
 Step 3  decoder thresholds (host)       <- no device needed
-   |                                      yields: which decoder config
-   |                                      actually decodes the corpus
+   |                                      3a: remove the 2-pixel artefact
+   |                                      3b: flatten the illumination
+   |                                      3c: then the threshold modes
+   |  (plus: the version ceiling, found in step 1, is a 1-line fix
+   |   and may matter more than anything else here)
 Step 4  gain characterisation (device)  <- needs a lit target + user
    |
 Step 5  percentile AE (native module)   <- informed by 3 and 4
    |
-Step 6  full-res fallback (device)      <- only if step 3 says so
+Step 6  full-res fallback (device)      <- only if step 3 says so;
+   |                                      a CROP of the source, not the
+   |                                      whole frame (1280-pixel limit)
    |
 Step 7  AF scheduling (device)          <- only if 2-6 leave focus as
    |                                      the limit
@@ -311,20 +433,63 @@ Steps 3 and 4 are independent of each other and can be interleaved.
 Step 2 is independent of everything except that it should precede any
 measurement.
 
+### The physical finding that reorders the work
+
+The measurements say the decode fails because of the **illumination
+gradient together with the screen's moiré**, and not because of the
+thresholding alone:
+
+```
+neither                                             OK
+gradient                                            OK
+moire 61                                            OK
+gradient + moire                                    -     <-- breaks it
+```
+
+So there are two tracks, and they need different people:
+
+- **The physical track** is the user's: even lighting on the tablet.
+  A dim but even code decodes; a bright code with a 5.8× gradient
+  does not, and the gradient has to come down to about 1.1×. This is
+  worth doing before any of the software work is judged, because the
+  software work is measured against the corpus.
+- **The software track** is ours: remove the 2-pixel artefact, flatten
+  the illumination in the decoder, fix the exposure ceiling, and use a
+  local threshold.
+
+**These interact.** A flat-field correction in the decoder is a
+software way of doing what even lighting does physically, and it would
+work regardless of how the room is lit. It is worth building, because
+it makes the camera robust rather than dependent on the user's
+lighting.
+
+### The device must be in a known state for a capture
+
+Two things have to be true before a capture means anything:
+
+1. **The camera page in Krux must be closed.** While it is open, the
+   firmware's auto-exposure writes the exposure every third frame and
+   fights the capture script. `tools/send-key ENTER` closes it.
+2. **The exposure write must stick.** Check it in `camd.log`: the
+   last line should be `[sensor] E exp=0x.... gain=0x.... (ctl)`, and
+   nothing after it.
+
 ---
 
 ## 4. What I expect the answer to be, and why
 
 For the record, so it can be falsified:
 
-- **Local thresholding will matter a lot** for a screen-displayed code
-  in a dark frame, because a global threshold computed over the whole
-  frame is dominated by the dark surroundings. The corpus will show
-  this quickly.
+- **Local thresholding will matter** for a screen-displayed code in a
+  dark frame, because a global threshold computed over the whole frame
+  is dominated by the dark surroundings — but the simulation says it
+  is **not sufficient on its own**: the threshold only gets to help
+  once the 2-pixel artefact and the gradient are dealt with.
 - **Full resolution will matter** for dense codes, because the
-  measurement above shows the source carries ~1.7–2.3× the edge
-  energy per pixel that the preview does — the downscale is not
-  throwing away information, it is destroying it.
+  measurement shows the source carries ~1.7–2.3× the edge energy per
+  pixel that the preview does — the downscale is not throwing away
+  information, it is destroying it. The Android camera resolves the
+  same code at 8 px per module where our preview gives it 2.6.
 - **The AE fix is necessary but not sufficient.** It removes a real
   bug (the controller commanding an exposure the sensor discards) and
   it makes the measurement honest, but on its own it will not make a
@@ -334,6 +499,11 @@ For the record, so it can be falsified:
   length) and the sharpness metric is reasonable for contrast-detect
   AF. What is wrong with it is *scheduling* — it fires when the real
   problem is binarisation.
+- **Even lighting will matter more than any of the software**, if the
+  user can achieve it. The gradient has to come down from 5.8× to
+  about 1.1× for the code to decode at all, and no threshold mode
+  substitutes for it. A flat-field correction in the decoder is the
+  software equivalent, and is worth building for that reason.
 
 If the corpus contradicts any of that, the corpus wins.
 
