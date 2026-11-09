@@ -200,30 +200,44 @@ tested directly and it is not one.
 The phone was rebooted into Android (never flashed), the stock camera
 opened, and two photographs taken of the same scene — they agreed
 within **1 px**, so the phone was steady. The stub was restored with
-`fastboot boot`. The measurement is the same physical object in both:
-the tablet's screen, 172.2 mm wide.
+`fastboot boot`.
 
-| | the Android photo | our preview |
+**The field of view is the same in both.** The phone's own body
+covers **87 %** of the Android frame and **84 %** of ours. The kernel
+reports **no CAMIF geometry errors** at all (it prints "camif error
+status" whenever the front end's window does not match the sensor's
+line), and camd's own downscale reconstructs the preview from the
+source with a correlation of **0.979**, the four edges mapping to each
+other correctly.
+
+**What had changed was the aim and the distance.** The same physical
+tablet, its screen 172.2 mm wide, and the same code (105 modules of
+0.808 mm):
+
+| | the Android photo | our source frame |
 |---|---|---|
-| the frame | 2448×3264 (the full 8 MP sensor) | 720×960 (from the 1640×1232 source) |
-| the tablet's screen spans | 1765 px | 473 px |
-| **as a fraction of the frame's width** | **72.1 %** | **65.7 %** |
+| the tablet's screen | 1765 px → 10.25 px/mm | 334 px → 1.94 px/mm |
+| the code | 809 px → **7.70 px/module** | 149 px → **1.42 px/module** |
 
-**Our field of view is 1.10× *wider* than the Android camera's.** A 2×
-crop would put the tablet at 144 % of our frame; it is at 66 %. The
-tablet is cut off because the phone is aimed a little to the left of
-it — its centre is at col 483 of our 720-wide preview against col 1180
-of Android's 2448-wide frame.
+The resolutions differ by 1.49× (2448 against 1640) but the scales
+differ by **5.3×**: the phone was about **3.5× further away**.
 
-Two independent confirmations: the kernel reports **no CAMIF geometry
-errors** at all (it prints "camif error status" whenever the front
-end's window does not match the sensor's line), and camd's own
-downscale reconstructs the preview from the source with a correlation
-of **0.979**, the four edges mapping to each other correctly.
+And the whole chain is proven good — the Android photo's code decodes
+with **our** decoder at 809×815, and still decodes scaled down to
+541×545 (5.1 px/module), which is what our source would give at the
+same distance:
+
+```
+  raw        809x815  KRUXCAM-V20-DENSE-0003
+  at 0.67x   541x545  KRUXCAM-V20-DENSE-0003
+```
+
+Our frame had it at 1.42 px/module — three and a half times too
+small. The decoder, the tablet and the code are all fine.
 
 **So the resolution argument is unchanged, and the Android camera's
-own photo is a useful third data point: it resolves the code at 8 px
-per module where our preview gives it about 2.6.**
+own photo is a useful third data point: it resolves the code at
+7.7 px per module where our preview gives it about 2.6.**
 
 ### Step 2 — Exposure ceiling (one line, provably safe)
 
