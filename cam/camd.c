@@ -2433,6 +2433,22 @@ static void *client_thread(void *arg)
 			if (p_y != MAP_FAILED && p_uv != MAP_FAILED) {
 				src_y = (const unsigned char *)p_y;
 				{
+					/* The ION frame is uncached: a
+					 * byte-by-byte read of it runs at
+					 * ~20 MB/s (98 ms for 2 MP).  A wide
+					 * memcpy reads it at ~250 MB/s, so
+					 * copy it once into this cached
+					 * buffer and downscale from there. */
+					static unsigned char *bounce;
+					if (!bounce)
+						bounce = malloc((size_t)width * height);
+					if (bounce) {
+						memcpy(bounce, src_y,
+						       (size_t)width * height);
+						src_y = bounce;
+					}
+				}
+				{
 					static int dumped;
 					const char *dump = getenv("CAMD_DUMP_RAW");
 					if (dump && !dumped) {
@@ -2548,6 +2564,7 @@ static void *client_thread(void *arg)
 					 * 960x720 intermediate; then rotate that
 					 * small image into the output.
 					 */
+					uint64_t td0 = now_ns();
 					{
 						static unsigned short *mid;
 						int mx, my, sy, sx;
@@ -2597,6 +2614,9 @@ static void *client_thread(void *arg)
 							}
 						}
 					}
+					if (bench_mode)
+						printf("[bench] downscale %.1f ms\n",
+						       (now_ns() - td0) / 1e6);
 				}
 				{
 					/* Unsharp mask: the box downscale is a low-pass
