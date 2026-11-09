@@ -41,36 +41,48 @@ screen, which is 1280 screen px = 172.2 mm wide.
 half of it. If the pipeline were taking half of every line — a 2×
 crop — the tablet would fill **144 %** of our frame. It fills 66 %.
 
-So the tablet is cut off at our frame's right edge because **the phone
-is aimed a little to the left of it**: the tablet's centre sits at col
-483 of our 720-wide preview, and at col 1180 of Android's 2448-wide
-frame. That is an aiming difference, not an optical one.
+Two independent confirmations:
 
-The code agrees with the arithmetic. On the tablet the code is 105
-modules wide and the Android camera resolves it at **8 px per module**
-(the finder pattern's run length), while ours resolves it at fewer —
-because our frame is a downscaled 1640×1232, and the preview is a
-further downscale of that.
-
-This is consistent with the kernel reporting **no CAMIF geometry
-errors** at all (`msm_vfe32_process_error_status` prints
-"camif error status" whenever the front end's window does not match
-the sensor's line, and it never did).
-
-### The geometry is consistent throughout
-
-- The sensor's HMAX register reads back as `0x0d70` = 3440, the
-  *full* mode's line length. The binned mode's override
-  (`imx179_settings_7`) sets VMAX to `0x04e4` = 1252 and leaves HMAX
-  alone. HMAX is the line length in sensor clocks; the sensor bins
-  internally and outputs 1640 pixels. The CAMIF window
-  (`pixels_per_line = 1640`, `last_pixel = 1639`) matches the output,
-  so it takes the whole line.
+- The kernel reports **no CAMIF geometry errors** at all.
+  `msm_vfe32_process_error_status` prints "camif error status"
+  whenever the front end's window does not match the sensor's line,
+  and it never did.
 - camd's own downscale maps the whole source into the preview: the
   preview reconstructed from the source through camd's exact mapping
-  correlates at **0.979**, and the four edges map to each other
-  correctly (`tools/preview-vs-source`). **Nothing is cropped in the
-  daemon either.**
+  correlates at **0.979**, with the four edges mapping to each other
+  correctly (`tools/preview-vs-source`).
+
+### So why is the tablet cut off in ours?
+
+**Because the phone is aimed too far to the right.** The tablet's centre
+sits at col 483 of our 720-wide preview against col 1180 of Android's
+2448-wide frame — and our frame is *rotated* relative to the source
+(camd rotates the source 90° counter-clockwise into the portrait
+preview), so "left" and "right" in the two are not the same axes.
+
+The measurement that settles it: **the code's finder pattern is at
+source col 1480**, and the frame's edge is at 1640, so only **160 px
+of the code is in frame**. At the 8 px per module that Android
+resolves it at, the code needs **904 px** — we are missing **744 px**
+of it. The code is not unreadable; it is *mostly outside the frame*.
+
+**The fix is aiming, not optics:** point the phone a little to the
+left of the tablet, or move the tablet further away. The Android
+camera gives the reference for what "aimed correctly" looks like.
+
+### The control that makes the comparison meaningful
+
+**The Android photo of your code decodes with our decoder**, cropped
+to the code:
+
+```
+$ tools/decode-qr /tmp/opencode/android_ref.jpg 2448 3264
+  raw                          809x815  KRUXCAM-V20-DENSE-0003
+  bilinear                    809x815  KRUXCAM-V20-DENSE-0003
+```
+
+So the decoder is fine, the tablet is fine, and the code itself is
+fine. The failure is the framing.
 
 ---
 
@@ -182,49 +194,6 @@ The measured case was **5.8×**.
 
 ---
 
-## 3a. The field of view: not cropped
-
-This was worth settling early, because if the frame were cropped the
-whole resolution argument would change.
-
-**The test.** The phone was rebooted into Android (never flashed), the
-stock camera opened, and two photographs taken of the same scene. They
-agreed within **1 px**, so the phone was steady. The stub was then
-restored with `fastboot boot`. The measurement is the same physical
-object in both: the tablet's screen, 1280 screen px = 172.2 mm wide.
-
-| | the Android photo | our preview |
-|---|---|---|
-| the frame | 2448×3264 (the full 8 MP sensor) | 720×960 (from the 1640×1232 source) |
-| the tablet's screen spans | 1765 px | 473 px |
-| **as a fraction of the frame's width** | **72.1 %** | **65.7 %** |
-
-**Our field of view is 1.10× *wider* than the Android camera's.** A 2×
-crop would put the tablet at 144 % of our frame; it is at 66 %. The
-tablet is cut off at our right edge because the phone is aimed a
-little to the left of it — its centre sits at col 483 of our 720-wide
-preview against col 1180 of Android's 2448-wide frame. That is aiming,
-not optics.
-
-Two independent confirmations:
-
-- The kernel reports **no CAMIF geometry errors** at all.
-  `msm_vfe32_process_error_status` prints "camif error status"
-  whenever the front end's window does not match the sensor's line,
-  and it never did.
-- camd's own downscale maps the whole source into the preview: the
-  preview reconstructed from the source through camd's exact mapping
-  correlates at **0.979**, with the four edges mapping to each other
-  correctly (`tools/preview-vs-source`).
-
-So the resolution argument stands: the source is 1640×1232 and the
-preview is 720×960, and the full-resolution path is worth restoring.
-The Android camera's own 2448×3264 photo of the same scene is a
-useful third data point — it resolves the code at **8 px per module**
-where our preview gives it about 2.6.
-
----
-
 ## 4. Other findings
 
 - **The AE's exposure ceiling is a real bug.** `MAX_EXPOSURE` is
@@ -244,6 +213,8 @@ where our preview gives it about 2.6.
   gzip ramdisk and does not look for xz; an xz-packed ramdisk boots
   nothing and the device comes straight back to Android with no error
   anywhere.
+- **The tablet's screen goes off.** `stay_on_while_plugged_in 3`,
+  `screensaver_enabled 0` and a long `screen_off_timeout` keep it up.
 
 ---
 
@@ -263,3 +234,38 @@ The codes are about **9×9 cm to 11×11 cm** physically on the tablet.
 | `v7-mid` | 7 | 53 | 8 |
 | `v20-dense` | 20 | 105 | 6 |
 | `v27-max` | 27 | 133 | 6 |
+
+### The first corpus capture
+
+20 frames of `v20-dense` on the tablet, across the exposure ladder at
+two gains. **The exposure writes stuck** (the camera page was closed),
+and the daemon's own read-out shows the picture brightening properly:
+
+```
+g0x00a5  e0x0180  mean=18     g0x00ed  e0x0180  mean=30
+g0x00a5  e0x0280  mean=18     g0x00ed  e0x0280  mean=40
+g0x00a5  e0x0380  mean=22     g0x00ed  e0x0380  mean=48
+g0x00a5  e0x0480  mean=25     g0x00ed  e0x0480  mean=54
+g0x00a5  e0x0580  mean=27     g0x00ed  e0x0580  mean=59
+g0x00a5  e0x0680  mean=29     g0x00ed  e0x0680  mean=63
+g0x00a5  e0x0780  mean=31     g0x00ed  e0x0780  mean=67
+g0x00a5  e0x0880  mean=33     g0x00ed  e0x0880  mean=73
+g0x00a5  e0x0980  mean=35     g0x00ed  e0x0980  mean=76
+g0x00a5  e0x04e0  mean=26     g0x00ed  e0x04e0  mean=57
+```
+
+**The code's finder patterns are now detected** in the frames at
+`g0x00ed` and exposures `0x0480`–`0x0780`, at a module pitch of
+**8.14 px** — the same 8 px per module that the Android camera
+resolves it at. So the camera is resolving the code as well as the
+Android camera does.
+
+**But the code is cut off at the frame's edge**, so nothing decodes
+yet: only 160 px of a 904-px-wide code is in frame.
+
+### What the corpus needs next
+
+The phone has to be aimed so the whole code is in frame. The Android
+photo is the reference: the code should sit well inside the frame,
+as it does there.
+
