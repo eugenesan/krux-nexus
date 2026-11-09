@@ -84,8 +84,8 @@ off each edge, so this can be done by feedback.
 
 ### The control that makes the comparison meaningful
 
-**The Android photo of your code decodes with our decoder**, cropped
-to the code:
+**The Android photo of your code decodes with our decoder**, cropped to
+the code:
 
 ```
 $ tools/decode-qr /tmp/opencode/android_ref.jpg 2448 3264
@@ -93,8 +93,16 @@ $ tools/decode-qr /tmp/opencode/android_ref.jpg 2448 3264
   bilinear                    809x815  KRUXCAM-V20-DENSE-0003
 ```
 
+And it still decodes when the code is scaled down to what our source
+would give at the same distance — 541×545 px, **5.1 px per module**:
+
+```
+  at 0.67x (541x545) -> KRUXCAM-V20-DENSE-0003
+```
+
 So the decoder is fine, the tablet is fine, and the code itself is
-fine. The failure is the framing.
+fine. The failure was the framing: our frame had the code at
+**1.42 px per module** — three and a half times too small.
 
 ---
 
