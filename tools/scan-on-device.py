@@ -7,9 +7,13 @@ from krux.camera import Camera, QR_SCAN_MODE
 cam = Camera()
 cam.initialize_run(QR_SCAN_MODE)
 print("camera up")
-# The app does not refocus at page open; it decodes with the focus it
-# already has and asks for a sweep only after frames go unread.
-print("decoding with the current focus")
+sensor.refocus(True)
+print("full sweep requested")
+for _ in range(200):
+    time.sleep_ms(200)
+    if not sensor.sweeping():
+        break
+print("sweep done; sweeping", sensor.sweeping())
 # Start from the exposure the sweep found good, so this test exercises
 # the lock rather than the acquisition search.
 try:

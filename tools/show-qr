@@ -28,14 +28,14 @@ import numpy as np
 import qrcode
 from PIL import Image, ImageDraw
 
-TABLET = "41036f02470031ff"
+DEVICE = "41036f02470031ff"
 TARGETS = os.environ.get("QR_TARGETS", "/tmp/qr-targets")
 SCREEN_W, SCREEN_H = 1280, 800
 EC_MAP = {"L": 1, "M": 0, "Q": 3, "H": 2}
 
 
 def adb(*args, **kw):
-    return subprocess.run(["adb", "-s", TABLET] + list(args),
+    return subprocess.run(["adb", "-s", DEVICE] + list(args),
                           capture_output=True, text=True, **kw)
 
 
@@ -221,12 +221,12 @@ def show(png, name="code.png"):
     adb("shell", "input keyevent KEYCODE_BACK")
     time.sleep(0.8)
     adb("shell", "am start -a android.intent.action.VIEW "
-                 "-d file://" + remote + " -t image/png "
-                 "-n com.sec.android.gallery3d/.app.GalleryActivity")
+                 "-d file://" + remote + " -t image/png")
     time.sleep(3.0)
 
 
 def main():
+    global DEVICE, SCREEN_W, SCREEN_H
     ap = argparse.ArgumentParser()
     ap.add_argument("--target")
     ap.add_argument("--file")
@@ -244,9 +244,20 @@ def main():
     ap.add_argument("--brightness", type=int, default=255,
                     help="tablet panel brightness 0-255 (150-190 is a "
                          "realistic indoor 150-200 nits)")
+    ap.add_argument("--device", default=DEVICE,
+                    help="target display's adb serial")
+    ap.add_argument("--screen", default="1280x800",
+                    help="target screen size, e.g. 1080x1920")
     ap.add_argument("--out", default="/tmp/opencode/tablet-show")
     ap.add_argument("--no-check", action="store_true")
     args = ap.parse_args()
+
+    DEVICE = args.device
+    try:
+        _w, _h = args.screen.lower().split("x")
+        SCREEN_W, SCREEN_H = int(_w), int(_h)
+    except Exception:
+        pass
 
     os.makedirs(args.out, exist_ok=True)
 
