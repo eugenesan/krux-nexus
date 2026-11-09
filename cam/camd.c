@@ -685,6 +685,34 @@ static int sensor_program_mode(void)
 		 * "config change" settings of the 1632x1224 mode:
 		 * HMAX 1640, VMAX 1232 */
 		sensor_write_regs(imx179_settings_7, 20);
+
+		/*
+		 * settings_7 halves the *output* size but does not touch
+		 * the readout increments.  settings_9 (the full-resolution
+		 * mode) leaves x_odd_inc/y_odd_inc at 1, so the sensor
+		 * reads the top-left 1640x1232 of its 3280x2464 window
+		 * and throws the rest away -- a 2x crop in both axes.
+		 *
+		 * That is exactly the quarter-frame the preview showed:
+		 * the tablet's centre, which is the centre of the full
+		 * sensor, landed in the bottom-right corner of the
+		 * captured frame, and the QR came out at the full 8 px
+		 * per module rather than the 4 px a binned frame would
+		 * give.
+		 *
+		 * 0x0383/0x0387 are x_odd_inc/y_odd_inc.  The IMX074 and
+		 * IMX135 drivers use 3 for their 2x2-binned modes
+		 * (binning_factor = 2) and 1 for full resolution; the
+		 * IMX179 has the same register layout, so 3 bins the
+		 * whole window down into the 1640x1232 output.
+		 */
+		{
+			static const struct imx179_reg binning[2] = {
+				{ 0x0383, 0x03, 0 },	/* x_odd_inc */
+				{ 0x0387, 0x03, 0 },	/* y_odd_inc */
+			};
+			sensor_write_regs(binning, 2);
+		}
 	}
 	return 0;
 }

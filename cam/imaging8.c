@@ -550,6 +550,19 @@ static int sensor_program_mode(void)
 		 * "config change" settings of the 1632x1224 mode:
 		 * HMAX 1640, VMAX 1232 */
 		sensor_write_regs(imx179_settings_7, 20);
+
+		/* settings_7 halves the output size but leaves
+		 * x_odd_inc/y_odd_inc at 1 (full resolution), so the
+		 * sensor reads the top-left quarter of its window.
+		 * 3 is the 2x2-binning value the IMX074/IMX135 drivers
+		 * use (binning_factor = 2). */
+		{
+			static const struct imx179_reg binning[2] = {
+				{ 0x0383, 0x03, 0 },	/* x_odd_inc */
+				{ 0x0387, 0x03, 0 },	/* y_odd_inc */
+			};
+			sensor_write_regs(binning, 2);
+		}
 	}
 	return 0;
 }

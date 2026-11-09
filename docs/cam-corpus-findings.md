@@ -3,84 +3,100 @@
 > Date: 2026-11-06 to 2026-11-08. The first capture sessions: the
 > user's paper QR, and the tablet-driven corpus.
 >
-> **The headline: for a QR code on a screen, the blocker is the
-> illumination gradient across the frame. It is not the exposure, not
-> the focus, and not the resolution.**
+> **The headline: the frame really was cropped — by the sensor's own
+> configuration, not by the daemon and not by the optics.** The binned
+> mode set the output size to 1640×1232 but never switched the sensor's
+> 2×2 binning on, so the sensor read only the top-left quarter of its
+> 3280×2464 window. Setting `x_odd_inc`/`y_odd_inc` to 3 (the value the
+> sibling Sony drivers use for binning) restores the full field of
+> view; the whole tablet now sits centred in the frame, exactly as the
+> Android camera shows it.
 >
-> **And: the field of view is NOT cropped.** The user's suspicion that
-> the pipeline crops was tested directly against the Android camera on
-> the same device, in the same setup, and disproved.
+> **The previous model's "the phone was 3.5× further away" conclusion
+> was wrong.** It measured the visible sliver of the tablet in a
+> cropped frame and divided by the tablet's full width, which turns a
+> 2× crop into an apparent 3.5× distance change. The devices were
+> affixed; the scene did not move.
+>
+> The illumination gradient and the screen moiré are still real
+> obstacles, but they come *after* the crop: they could not be judged
+> properly while the camera was only seeing a quarter of the scene.
 
 ---
 
-## 1. The field of view: not cropped
+## 1. The field of view WAS cropped — by the sensor mode
 
-The user observed that in the Android camera the tablet was centred
-and wholly visible, while in our preview it was at the right edge and
-cut off. That looked like a crop.
+The user observed that in the Android camera the tablet was centred and
+wholly visible, while in our preview only about a quarter of the scene
+was there and only the top-left quarter of the QR. That was a real
+crop, and the user's suspicion was right: the sensor was configured
+incorrectly.
 
-**The test:** the phone was rebooted into Android (never flashed), the
-stock camera was opened, and two photographs were taken of the same
-scene. They agreed with each other to within **1 px** (the screen
-spanned 1765 and 1766 px), so the phone was steady and the reference
-is sound. The stub was then restored with `fastboot boot`.
+### The bug
 
-The Android photo is **2448×3264** — the IMX179's full 8 MP sensor.
-Ours is **1640×1232** — the binned mode.
+`camd`'s binned mode programs the sensor with `imx179_settings_9` (the
+full 3280×2464 mode) and then `imx179_settings_7` (the "config change"
+that sets the output size to 1640×1232 and VMAX to 1252). But
+`settings_7` does **not** touch the readout-increment registers:
 
-The measurement is the same physical object in both: the tablet's
-screen, which is 1280 screen px = 172.2 mm wide.
+```c
+/* imx179_settings_9, the full-resolution mode */
+{ 0x0383, 0x01, 0 },   /* x_odd_inc */
+{ 0x0387, 0x01, 0 },   /* y_odd_inc */
+```
 
-| | the Android photo | our preview |
-|---|---|---|
-| the frame | 2448×3264 | 720×960 |
-| the tablet's screen spans | 1765 px | 473 px |
-| **as a fraction of the frame's width** | **72.1 %** | **65.7 %** |
+`0x0383`/`0x0387` are `x_odd_inc`/`y_odd_inc`. `1` means "take every
+pixel" (full resolution); `3` is the 2×2-binning value the sibling Sony
+IMX074 and IMX135 drivers use for their binned modes
+(`binning_factor = 2`). Because `settings_7` leaves them at `1`, the
+sensor keeps its full 3280×2464 readout window but is told to output
+only 1640×1232 pixels — so it reads the **top-left quarter** of the
+sensor and throws the rest away.
 
-**Our field of view is 1.10× *wider* than the Android camera's**, not
-half of it. If the pipeline were taking half of every line — a 2×
-crop — the tablet would fill **144 %** of our frame. It fills 66 %.
+That is exactly what the frames showed: the tablet's centre, which is
+the centre of the full sensor, landed at the **bottom-right** of the
+captured frame, and the QR came out at the **full-resolution** scale
+(≈8 px per module, matching the Android photo's 7.7) rather than the
+≈4 px a genuinely binned frame gives.
 
-Two independent confirmations:
+### Why the previous model concluded "3.5× further away"
 
-- The kernel reports **no CAMIF geometry errors** at all.
-  `msm_vfe32_process_error_status` prints "camif error status"
-  whenever the front end's window does not match the sensor's line,
-  and it never did.
-- camd's own downscale maps the whole source into the preview: the
-  preview reconstructed from the source through camd's exact mapping
-  correlates at **0.979**, with the four edges mapping to each other
-  correctly (`tools/preview-vs-source`).
+It measured the tablet's **visible sliver** in the cropped frame
+(334 px) and divided by the tablet's **full** width (172.2 mm), giving
+1.94 px/mm. Compared with the Android photo's 10.25 px/mm, that looks
+like a 5.3× scale difference; after allowing for the 1.49× resolution
+ratio it looks like 3.5× more distance. But the 334 px was not the
+tablet — it was the part of the tablet that happened to fall inside a
+2× crop. A crop and a distance change are indistinguishable if you
+measure the wrong object, and the devices were affixed the whole time.
 
-### So why is the tablet cut off in ours?
+### The fix
 
-**Because the phone is aimed too far to the right, and too far away.**
-Both pictures show the same scene, and the field of view is the same —
-the phone's own body covers **87 %** of the Android frame and **84 %**
-of ours. What changed between the two captures is where the phone was
-pointed and how far it was from the tablet.
+Set the readout increments to the binning value in the binned mode:
 
-The measurements, on the same physical tablet (its screen is 172.2 mm
-wide) and the same code (105 modules of 0.808 mm):
+```c
+static const struct imx179_reg binning[2] = {
+    { 0x0383, 0x03, 0 },   /* x_odd_inc: 2x2 binning */
+    { 0x0387, 0x03, 0 },   /* y_odd_inc: 2x2 binning */
+};
+sensor_write_regs(binning, 2);
+```
 
-| | the Android photo | our source frame |
-|---|---|---|
-| the tablet's screen | 1765 px → 10.25 px/mm | 334 px → 1.94 px/mm |
-| the code | 809 px → **7.70 px/module** | 149 px → **1.42 px/module** |
+**Verified on the device.** With the fix, the source frame and the
+720×960 preview show the **whole tablet, centred, with the QR fully in
+frame** — the same framing as the Android camera. Before the fix the
+tablet sat at the right edge with only a sliver visible.
 
-The resolutions differ by 1.49× (2448 against 1640), but the scales
-differ by **5.3×**. The extra 3.5× is distance: **the phone was about
-3.5× further from the tablet when our frame was taken.**
+### What this changes
 
-That is why nothing decoded: at 1.42 px per module the code is far
-below what the decoder can resolve, and it is also cut off at the
-frame's right edge. The camera is fine — the framing is not.
-
-**The fix is aiming and distance, not optics:** bring the phone to
-roughly the distance of the Android photo (the tablet filling about
-70 % of the frame's width) and aim at the middle of the code.
-`tools/aim-check` reports where the code is and how much of it falls
-off each edge, so this can be done by feedback.
+The crop was masking everything else. The code is now at roughly
+**3 px per module** in the 1640×1232 binned frame (the Android photo
+gets 7.7 px/module because it is the full 8 MP sensor). The decoder
+wants about 5 px/module, so the code still does not decode at this
+distance — but now that is an honest resolution question, not a
+framing one. The options are: bring the phone closer, show the code
+larger on the tablet, or use the full-resolution source (the plan's
+Step 6, a crop of the 3280×2464 frame).
 
 ### The control that makes the comparison meaningful
 
@@ -93,16 +109,16 @@ $ tools/decode-qr /tmp/opencode/android_ref.jpg 2448 3264
   bilinear                    809x815  KRUXCAM-V20-DENSE-0003
 ```
 
-And it still decodes when the code is scaled down to what our source
-would give at the same distance — 541×545 px, **5.1 px per module**:
+And it still decodes when the code is scaled down to what our **full-
+resolution** source would give at the same distance — 541×545 px,
+**5.1 px per module**:
 
 ```
   at 0.67x (541x545) -> KRUXCAM-V20-DENSE-0003
 ```
 
-So the decoder is fine, the tablet is fine, and the code itself is
-fine. The failure was the framing: our frame had the code at
-**1.42 px per module** — three and a half times too small.
+So the decoder, the tablet and the code are all fine. What was wrong
+was the sensor mode.
 
 ---
 
