@@ -1,0 +1,15 @@
+#!/bin/bash
+# One capture, then a report on where the code is.
+#
+#   aim-now [exposure] [gain]
+#
+# Run it as the phone is moved, to see whether the code is coming
+# into the frame.
+set -e
+cd /home/user/Develop/src/krux-nexus
+E=${1:-0x0580}
+G=${2:-0x00ed}
+adb -s 0879524b0068abca shell "/data/krux/micropython -X heapsize=32M /tmp/krux-capture-one.py $E $G" >/dev/null 2>&1
+sleep 0.4
+adb -s 0879524b0068abca pull /data/krux/scan_full.raw /tmp/opencode/aimnow.raw >/dev/null 2>&1
+./tools/aim-check /tmp/opencode/aimnow.raw 1640 1232
