@@ -182,6 +182,49 @@ The measured case was **5.8×**.
 
 ---
 
+## 3a. The field of view: not cropped
+
+This was worth settling early, because if the frame were cropped the
+whole resolution argument would change.
+
+**The test.** The phone was rebooted into Android (never flashed), the
+stock camera opened, and two photographs taken of the same scene. They
+agreed within **1 px**, so the phone was steady. The stub was then
+restored with `fastboot boot`. The measurement is the same physical
+object in both: the tablet's screen, 1280 screen px = 172.2 mm wide.
+
+| | the Android photo | our preview |
+|---|---|---|
+| the frame | 2448×3264 (the full 8 MP sensor) | 720×960 (from the 1640×1232 source) |
+| the tablet's screen spans | 1765 px | 473 px |
+| **as a fraction of the frame's width** | **72.1 %** | **65.7 %** |
+
+**Our field of view is 1.10× *wider* than the Android camera's.** A 2×
+crop would put the tablet at 144 % of our frame; it is at 66 %. The
+tablet is cut off at our right edge because the phone is aimed a
+little to the left of it — its centre sits at col 483 of our 720-wide
+preview against col 1180 of Android's 2448-wide frame. That is aiming,
+not optics.
+
+Two independent confirmations:
+
+- The kernel reports **no CAMIF geometry errors** at all.
+  `msm_vfe32_process_error_status` prints "camif error status"
+  whenever the front end's window does not match the sensor's line,
+  and it never did.
+- camd's own downscale maps the whole source into the preview: the
+  preview reconstructed from the source through camd's exact mapping
+  correlates at **0.979**, with the four edges mapping to each other
+  correctly (`tools/preview-vs-source`).
+
+So the resolution argument stands: the source is 1640×1232 and the
+preview is 720×960, and the full-resolution path is worth restoring.
+The Android camera's own 2448×3264 photo of the same scene is a
+useful third data point — it resolves the code at **8 px per module**
+where our preview gives it about 2.6.
+
+---
+
 ## 4. Other findings
 
 - **The AE's exposure ceiling is a real bug.** `MAX_EXPOSURE` is
