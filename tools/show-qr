@@ -26,7 +26,7 @@ import time
 
 import numpy as np
 import qrcode
-from PIL import Image
+from PIL import Image, ImageDraw
 
 TABLET = "41036f02470031ff"
 TARGETS = os.environ.get("QR_TARGETS", "/tmp/qr-targets")
@@ -39,13 +39,18 @@ def adb(*args, **kw):
                           capture_output=True, text=True, **kw)
 
 
-def wake():
-    """Wake the tablet and keep it awake.
+def is_awake():
+    out = adb("shell", "dumpsys power").stdout or ""
+    return "mWakefulness=Awake" in out
 
-    The screen turns itself off after a while, and a dark screen shows
-    no code at all.  The power key wakes it.  The touch has to be
-    somewhere harmless -- in the middle of the screen it would land on
-    the code and close the gallery -- so it goes to a corner.
+
+def wake(brightness=255):
+    """Keep the tablet awake, at a fixed brightness.
+
+    It must NOT send a synthetic touch: this tablet's panel blinks on
+    every touch event, and a blink puts a dark frame in the middle of a
+    capture.  The stay-on setting and, only when it is actually
+    asleep, the WAKEUP key are enough.
     """
     # The screensaver and the screen timeout both have to go, or the
     # tablet falls asleep in the middle of a capture and shows nothing.
@@ -59,18 +64,16 @@ def wake():
     adb("shell", "settings put system screen_off_timeout 1800000")
     adb("shell", "svc power stayon true")
     # The screensaver dims the panel after a while, and a dim screen
-    # makes the code's contrast too low to decode.  Force the panel to
-    # full brightness and keep it there for the capture.
+    # makes the code's contrast too low to decode.  Set a fixed
+    # brightness (0-255); 150-200 nits indoors is roughly 150-190.
     adb("shell", "settings put system screen_brightness_mode 0")
-    adb("shell", "settings put system screen_brightness 255")
+    adb("shell", "settings put system screen_brightness %d" % brightness)
     # WAKEUP (224) only wakes; the power key (26) toggles, so it would
-    # turn an already-on screen off.
-    adb("shell", "input keyevent 224")
-    time.sleep(1.0)
-    # A touch in the corner: enough to keep it awake, harmless to the
-    # gallery.
-    adb("shell", "input tap 20 20")
-    time.sleep(0.4)
+    # turn an already-on screen off.  Only send it if the tablet is
+    # actually asleep -- a key event can also disturb the display.
+    if not is_awake():
+        adb("shell", "input keyevent 224")
+        time.sleep(1.0)
 
 
 def build_code(payload, version, ec, module_px, quiet=4):
@@ -87,22 +90,63 @@ def build_code(payload, version, ec, module_px, quiet=4):
     return img, n
 
 
-def compose(code_img, background="white"):
-    """Put the code on a screen-sized field, centred.
+def compose(code_img, background="white", scene="plain"):
+    """Put the code on a screen-sized field.
 
-    The field is white by default.  ``background="black"`` reproduces
-    how a code usually appears on a real screen: the code's own white
-    quiet zone, surrounded by the dark rest of the display.
+    ``scene="plain"`` is the old behaviour: the code centred on a
+    white or black field.
 
-    A code larger than the screen is scaled down to fit: the gallery
-    would scale it anyway, and this way the scale is known.
+    ``scene="computer"`` reproduces a computer screen: a desktop
+    gradient, a second window behind, a main window with a gradient
+    title bar, the code on the white page inside it, and a gradient
+    taskbar.  That is the realistic case -- the code is not the only
+    bright thing in the picture, and the frame has other edges and
+    gradients for the auto-exposure to trip over.
     """
+    canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), background)
+    d = ImageDraw.Draw(canvas)
+
+    if scene == "computer":
+        for y in range(SCREEN_H):
+            t = y / float(SCREEN_H)
+            d.line([(0, y), (SCREEN_W, y)],
+                   fill=(int(18 + 26 * t), int(26 + 34 * t),
+                         int(44 + 52 * t)))
+        d.rectangle([880, 150, 1280, 560], fill=(58, 66, 84))
+        d.rectangle([880, 150, 1280, 190], fill=(76, 86, 108))
+        wx0, wy0, wx1, wy1 = 70, 70, 1130, 720
+        d.rectangle([wx0, wy0, wx1, wy1], fill=(236, 236, 236))
+        for x in range(wx0, wx1):
+            t = (x - wx0) / float(wx1 - wx0)
+            d.line([(x, wy0), (x, wy0 + 40)],
+                   fill=(int(38 + 70 * t), int(88 + 70 * t),
+                         int(150 + 70 * t)))
+        px0, py0, px1, py1 = wx0 + 40, wy0 + 70, wx1 - 40, wy1 - 40
+        d.rectangle([px0, py0, px1, py1], fill=(255, 255, 255))
+        cw, ch = code_img.size
+        maxw, maxh = px1 - px0 - 40, py1 - py0 - 40
+        if cw > maxw or ch > maxh:
+            s = min(maxw / float(cw), maxh / float(ch))
+            cw, ch = int(cw * s), int(ch * s)
+            code_img = code_img.resize((cw, ch), 0)
+        x = px0 + (px1 - px0 - cw) // 2
+        y = py0 + (py1 - py0 - ch) // 2
+        canvas.paste(code_img, (x, y))
+        for x in range(SCREEN_W):
+            t = x / float(SCREEN_W)
+            d.line([(x, 760), (x, SCREEN_H)],
+                   fill=(int(24 + 34 * t), int(26 + 36 * t),
+                         int(34 + 44 * t)))
+        for i in range(6):
+            d.rectangle([16 + i * 54, 770, 50 + i * 54, 792],
+                        fill=(96, 112, 140))
+        return canvas, (x, y)
+
     w, h = code_img.size
     if w > SCREEN_W or h > SCREEN_H:
         s = min(SCREEN_W / float(w), SCREEN_H / float(h))
         w, h = int(w * s), int(h * s)
         code_img = code_img.resize((w, h), 0)
-    canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), background)
     x = (SCREEN_W - w) // 2
     y = (SCREEN_H - h) // 2
     canvas.paste(code_img, (x, y))
@@ -193,6 +237,13 @@ def main():
     ap.add_argument("--quiet", type=int, default=4)
     ap.add_argument("--background", default="white",
                     choices=["white", "black"])
+    ap.add_argument("--scene", default="plain",
+                    choices=["plain", "computer"],
+                    help="plain: the code on a flat field; computer: a "
+                         "desktop with a window, title bar and taskbar")
+    ap.add_argument("--brightness", type=int, default=255,
+                    help="tablet panel brightness 0-255 (150-190 is a "
+                         "realistic indoor 150-200 nits)")
     ap.add_argument("--out", default="/tmp/opencode/tablet-show")
     ap.add_argument("--no-check", action="store_true")
     args = ap.parse_args()
@@ -227,20 +278,21 @@ def main():
         px = max(1, int(round(want * draw_scale)))
         img, n = build_code(payload, version, ec, px, args.quiet) \
             if payload else (code, n)
-        canvas, origin = compose(img, args.background)
+        canvas, origin = compose(img, args.background, args.scene)
         png = os.path.join(args.out, "code.png")
         canvas.save(png)
-        wake()
+        wake(args.brightness)
         # A name that changes with the code, so the gallery does not
         # serve a cached copy of the previous one.
         name = "code-%d-%d.png" % (int(time.time()), attempt)
         show(png, name)
         # The gallery can leave the screen off if the tablet had gone
-        # to sleep; one more wake (WAKEUP, not the power toggle), then
-        # the gallery again.
-        adb("shell", "input keyevent 224")
-        time.sleep(0.5)
-        show(png, name)
+        # to sleep; wake it only if it actually is, then show the
+        # gallery again.  No touch: this panel blinks on touch.
+        if not is_awake():
+            adb("shell", "input keyevent 224")
+            time.sleep(0.5)
+            show(png, name)
         if args.no_check:
             break
         shot = os.path.join(args.out, "screen.png")
