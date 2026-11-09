@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Make the QR test targets.
+
+Each target is written as a PNG (for a screen) and a PDF (for
+printing), plus a JSON description, so the corpus metadata can be
+built from it.
+
+The payloads are marked, so a decoded frame can be traced back to the
+target it came from.
+"""
+
+import json
+import os
+import sys
+
+import qrcode
+from qrcode.constants import ERROR_CORRECT_H, ERROR_CORRECT_L, ERROR_CORRECT_M, ERROR_CORRECT_Q
+
+OUT = sys.argv[1] if len(sys.argv) > 1 else "qr-targets"
+os.makedirs(OUT, exist_ok=True)
+
+EC_NAME = {ERROR_CORRECT_L: "L", ERROR_CORRECT_M: "M",
+           ERROR_CORRECT_Q: "Q", ERROR_CORRECT_H: "H"}
+
+# name, payload, error correction, version, screen pixels per module
+TARGETS = [
+    ("v2-low",    "KRUXCAM-V2-LOW-0001",    ERROR_CORRECT_M,  2, 10),
+    ("v7-mid",    "KRUXCAM-V7-MID-0002",    ERROR_CORRECT_M,  7,  8),
+    ("v20-dense", "KRUXCAM-V20-DENSE-0003", ERROR_CORRECT_Q, 20,  6),
+    ("v27-max",   "KRUXCAM-V27-MAX-0004",   ERROR_CORRECT_Q, 27,  6),
+]
+
+PRINT_MODULE_MM = 5.0
+PRINT_DPI = 600
+QUIET_MM = 8.0
+
+
+def build(name, payload, ec, version, ppm):
+    qr = qrcode.QRCode(version=version, error_correction=ec,
+                       box_size=1, border=4)
+    qr.add_data(payload)
+    qr.make(fit=False)
+    n = len(qr.get_matrix())
+
+    # The screen version: exactly ppm pixels per module, no scaling.
+    img = qr.make_image(fill_color="black", back_color="white")
+    img = img.convert("RGB").resize((n * ppm, n * ppm), 0)
+    png = os.path.join(OUT, "%s_screen.png" % name)
+    img.save(png)
+
+    # The print version: 5 mm modules at 600 dpi.
+    from PIL import Image
+    qr2 = qrcode.QRCode(version=version, error_correction=ec,
+                        box_size=1, border=0)
+    qr2.add_data(payload)
+    qr2.make(fit=False)
+    module_px = int(PRINT_MODULE_MM / 25.4 * PRINT_DPI)
+    img2 = qr2.make_image(fill_color="black", back_color="white")
+    img2 = img2.convert("RGB").resize((n * module_px, n * module_px), 0)
+    total_px = int((n * PRINT_MODULE_MM + 2 * QUIET_MM) / 25.4 * PRINT_DPI)
+    canvas = Image.new("RGB", (total_px, total_px), "white")
+    canvas.paste(img2, ((total_px - img2.size[0]) // 2,
+                        (total_px - img2.size[1]) // 2))
+    pdf = os.path.join(OUT, "%s_print.pdf" % name)
+    canvas.save(pdf, "PDF", resolution=PRINT_DPI)
+
+    meta = {
+        "name": name,
+        "payload": payload,
+        "version": version,
+        "modules": n,
+        "error_correction": EC_NAME[ec],
+        "screen_png": png,
+        "screen_pixels_per_module": ppm,
+        "screen_pixels": n * ppm,
+        "print_pdf": pdf,
+        "print_module_mm": PRINT_MODULE_MM,
+        "print_total_mm": n * PRINT_MODULE_MM + 2 * QUIET_MM,
+        "print_dpi": PRINT_DPI,
+    }
+    with open(os.path.join(OUT, "%s.json" % name), "w") as f:
+        json.dump(meta, f, indent=2)
+    print("%-11s v%-2d %3dx%-3d  screen %2d px/module (%4d px)  print %3.0f mm  ec=%s"
+          % (name, version, n, n, ppm, n * ppm, meta["print_total_mm"],
+             meta["error_correction"]))
+    return meta
+
+
+if __name__ == "__main__":
+    print("targets in %s" % OUT)
+    metas = [build(*t) for t in TARGETS]
+    with open(os.path.join(OUT, "targets.json"), "w") as f:
+        json.dump(metas, f, indent=2)

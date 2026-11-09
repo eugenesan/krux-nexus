@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Is the lighting gradient the blocker, or the screen's moire?
+
+This builds a faithful simulation of what the camera sees of the
+tablet, and then adds one effect at a time, so it is clear which one
+breaks the decode.
+
+The geometry is the measured one:
+
+  * the tablet shows the code at 5.54 screen px per module;
+  * the camera's source frame (1640x1232) sees it at 7.43 source px
+    per module, so the camera magnifies it by 1.34;
+  * camd then rotates the source 90 degrees counter-clockwise and box
+    averages it into the 720x960 preview, which is what the decoder
+    is given.
+
+The effects added are the ones measured on the device:
+
+  * an illumination gradient from 15 to 87 levels across the frame;
+  * the screen's moire: a 2-pixel diagonal, up to 61 levels;
+  * the sensor's 2-pixel artefact: 16 levels on the axes.
+
+Usage:
+    moire-test <the tablet's screenshot> [--scale 1.34]
+"""
+
+import os
+import subprocess
+import sys
+
+import numpy as np
+from PIL import Image
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPLAY = os.path.join(HERE, "quirc-replay")
+SRC_W, SRC_H = 1640, 1232
+OUT_W, OUT_H = 720, 960
+MODULES = 105
+
+
+def decode(arr, label, mode="global"):
+    arr = np.ascontiguousarray(np.clip(arr, 0, 255).astype(np.uint8))
+    tmp = "/tmp/opencode/_syn.raw"
+    arr.tofile(tmp)
+    h, w = arr.shape
+    r = subprocess.run([REPLAY, tmp, str(w), str(h), "--threshold", mode],
+                       capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.strip().startswith("decoded="):
+            if "decoded=1" in line:
+                for l2 in r.stdout.splitlines():
+                    if l2.strip().startswith("payload="):
+                        print("  %-50s OK   %s" % (label, l2.strip().split("=", 1)[1]))
+                        return True
+                print("  %-50s OK" % label)
+                return True
+    print("  %-50s -" % label)
+    return False
+
+
+def camd_preview(source):
+    """camd's rotation and box downscale, exactly.
+
+    dest(x,y) samples source
+        sx = width-1 - y*width/OUT_H, sy = x*height/OUT_W
+    and each destination pixel is the box average of the source region
+    it covers.
+    """
+    sw, sh = source.shape[1], source.shape[0]
+    rot = np.rot90(source, 1)          # 90 degrees counter-clockwise
+    out = np.zeros((OUT_H, OUT_W), np.float32)
+    for y in range(OUT_H):
+        sy0 = y * sh // OUT_H
+        sy1 = min(sh, max(sy0 + 1, (y + 1) * sh // OUT_H))
+        for x in range(OUT_W):
+            sx0 = x * sw // OUT_W
+            sx1 = min(sw, max(sx0 + 1, (x + 1) * sw // OUT_W))
+            out[y, x] = rot[sy0:sy1, sx0:sx1].mean() if (sy1 > sy0 and sx1 > sx0) else 0.0
+    return out
+
+
+def build_source(screen, scale):
+    """Place the tablet's image in the camera's source frame."""
+    sw, sh = screen.shape[1], screen.shape[0]
+    # the tablet's image, magnified by the camera's scale factor
+    new_w = int(sw * scale)
+    new_h = int(sh * scale)
+    img = Image.fromarray(screen).resize((new_w, new_h), Image.BICUBIC)
+    frame = np.zeros((SRC_H, SRC_W), np.float32)
+    # the code sits in the middle of the tablet's screen
+    ox = max(0, (SRC_W - new_w) // 2)
+    oy = max(0, (SRC_H - new_h) // 2)
+    region = img.crop((0, 0, min(new_w, SRC_W - ox), min(new_h, SRC_H - oy)))
+    frame[oy:oy + region.size[1], ox:ox + region.size[0]] = np.array(region)
+    return frame
+
+
+def gradient(a, lo=0.20, hi=0.55):
+    h, w = a.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    g = lo + (hi - lo) * (0.6 * (xx / w) + 0.4 * (yy / h))
+    return a * g
+
+
+def moire(a, amplitude, period=2.0):
+    h, w = a.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    return a + amplitude * np.sign(np.sin(2 * np.pi * (xx + yy) / period))
+
+
+def sensor2px(a, amplitude):
+    h, w = a.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    return a + amplitude * ((-1.0) ** (xx + yy))
+
+
+def noise(a, sigma):
+    rng = np.random.default_rng(1)
+    return a + rng.normal(0, sigma, a.shape)
+
+
+def main():
+    shot = sys.argv[1]
+    scale = 1.34
+    if "--scale" in sys.argv:
+        scale = float(sys.argv[sys.argv.index("--scale") + 1])
+
+    screen = Image.open(shot).convert("L")
+    if screen.size[1] > screen.size[0]:
+        screen = screen.rotate(-90, expand=True)
+    a = np.array(screen)
+    print("the tablet's screenshot: %dx%d" % (a.shape[1], a.shape[0]))
+
+    src = build_source(a, scale)
+    print("the camera's source frame: %dx%d" % (src.shape[1], src.shape[0]))
+    print()
+
+    print("=== 0. the tablet's own screenshot ===")
+    decode(a, "the screenshot, as the tablet draws it")
+    print()
+
+    print("=== 1. the camera's view, no artefacts (the ideal) ===")
+    ideal = camd_preview(src)
+    decode(ideal, "the ideal preview")
+    print()
+
+    print("=== 2. + the illumination gradient (15..87 across the frame) ===")
+    grad = camd_preview(gradient(src))
+    decode(grad, "gradient only")
+    for m in ("bilinear", "adaptive"):
+        decode(camd_preview(gradient(src)), "gradient only, %s" % m, m)
+    print()
+
+    print("=== 3. + the screen's moire (a 2-pixel diagonal) ===")
+    for amp in (10, 20, 30, 45, 61):
+        decode(camd_preview(moire(src, amp)), "moire %d levels" % amp)
+    print()
+
+    print("=== 4. + the sensor's 2-pixel artefact (16 levels) ===")
+    decode(camd_preview(sensor2px(src, 16)), "sensor 2-px, 16 levels")
+    print()
+
+    print("=== 5. everything together, as the device sees it ===")
+    full = sensor2px(moire(gradient(src), 61), 16)
+    decode(camd_preview(full), "all three")
+    print()
+
+    print("=== 6. everything, but the source decoded instead of the preview ===")
+    decode(full, "the source frame, all artefacts")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,245 +1,204 @@
-# Camera corpus — findings from the first captures
+# Camera corpus — findings
 
-> Date: 2026-11-06. The first real capture session: the user's paper QR
-> (version 17, 70×70 mm, 30 cm) and the setup for the tablet-driven
-> corpus.
+> Date: 2026-11-06 to 2026-11-08. The first capture sessions: the
+> user's paper QR, and the tablet-driven corpus.
 >
-> **The headline: the reason a dense code does not decode is not the
-> exposure, not the focus, and not the resolution. It is a 2-pixel
-> checkerboard in the sensor's output.**
+> **The headline: for a QR code on a screen, the blocker is the
+> illumination gradient across the frame. It is not the exposure, not
+> the focus, and not the resolution.**
 
 ---
 
-## 1. What was captured
+## 1. The paper QR (version 17, 70×70 mm, 30 cm)
 
-The user's own "HD QR" — **70×70 mm printed on paper, 30 cm from the
-phone**, held steady. Captured at a range of exposures through
-camd's control socket (`tools/capture-corpus`, `tools/capture-one.py`).
+### What it is
 
-### The code itself
+Measured, not assumed — the decoder's own grid detector reported
+`grid_size = 85` with the noise removed, and `(85 − 17) / 4 = 17`:
 
 | | |
 |---|---|
-| Version | **17** (85×85 modules) — measured, not assumed |
-| Size | 70×70 mm on paper |
-| Distance | 30 cm |
+| Version | **17** (85×85 modules) |
 | Size in the source frame | ~510 px across → **6.0 source px per module** |
 | Size in the preview | **2.63 preview px per module** |
 
-The version was measured with the decoder's own grid detector
-(`tools/locate-qr` and the `dbg` harness): with the noise removed the
-decoder reports `grid_size = 85`, and `(85 − 17) / 4 = 17`.
-
-**So the code is version 17 — comfortably inside the decoder's version
-27 ceiling.** The `K_QUIRC_MAX_BITMAP` bug does not affect this code.
-(It still affects versions 28–40, which is a separate, real bug.)
+Version 17 is comfortably inside the decoder's version-27 ceiling, so
+the `K_QUIRC_MAX_BITMAP` bug does not affect it.
 
 ### The exposure makes a large difference
 
-| exposure | gain | frame mean | code contrast (paper − modules) |
+| exposure | gain | frame mean | code contrast |
 |---|---|---|---|
 | 0x0180 | 0x00a5 | 15 | 7 levels |
 | 0x0400 | 0x00a5 | 21 | 7 levels |
 | **0x04e0** | **0x00ed** | **100** | **139 levels** |
 
-At the exposure the sensor's AE settled on (`0x09d6`, gain `0xff`), the
-picture was **dark and flat** — 7 levels of contrast between the paper
-and the black modules. At `0x04e0` with gain `0x00ed` the same code
-has **139 levels** of contrast and is plainly visible.
+At the exposure the AE settled on (`0x09d6`, gain `0xff`), the code had
+**7 levels** of contrast. At the sensor's real maximum it has **139**.
+The AE was walking toward a ceiling the sensor silently discards — the
+exposure ceiling bug, confirmed, and worth two lines.
 
-This is the AE problem in its clearest form: the AE was walking the
-exposure toward a ceiling the sensor silently discards, so it never
-reached an exposure that could see the code. (The sensor's own
-read-back: `0x0202/0x0203 = 0x04e0` and `0x0340/0x0341 = 0x04e4` — VMAX
-is 1252 lines and the legal integration time is 1248. The AE was
-commanding 2518.)
+### The sensor's 2-pixel artefact
 
----
-
-## 2. The real blocker: a 2-pixel checkerboard
-
-Even at 139 levels of contrast, the decoder **fails to find the code's
-finder patterns**. The binarised image comes out *entirely black*:
-
-```
-binarized: white=0 black=324900 (of 324900)
-```
-
-That is not a threshold problem — it is a **spatial** problem. The
-sensor's output has a strong 2-pixel-period checkerboard:
-
-```
-source 1640x1232   mean=73.8 std=19.4 | 1px mean|d| = 36.01
-preview 720x960    mean=87.9 std=14.3 | 1px mean|d| =  6.13
-```
-
-and the checkerboard is a **systematic bias**, not noise:
+The output carries a systematic 2-pixel-period pattern:
 
 ```
 source even-vs-odd column mean: +2.08
 source even-vs-odd row mean:    +1.97
 ```
 
-The even columns are systematically brighter than the odd ones, and the
-even rows brighter than the odd ones, everywhere in the frame — on
-blank paper as well as on the code. In the 2-pixel averages it is
-**33 % of the total variance**.
+**33 % of the total variance** on blank paper. Removing it keeps the
+full resolution and makes the code detectable:
 
-The preview does not have it (0 %) because camd's box downscale happens
-to average over 1.71 source pixels per output pixel in each direction,
-which is close to 2 and so cancels the pattern — but that downscale is
-also what destroys the resolution.
+| image | result |
+|---|---|
+| raw | `grids=0` — not found |
+| **notched** (full resolution) | **`grids=1`, 3 capstones** |
+| 2×2 box average | `grids=1`, 3 capstones — but at half the resolution |
 
-### The fix, and it is cheap
+So on paper, the notch is the fix, and it costs nothing.
 
-Removing the 2-pixel component — a per-row and per-column even/odd
-subtraction — **keeps the full resolution and makes the code
-detectable**:
+---
 
-| image | size | result |
+## 2. The tablet (a screen, not paper)
+
+### The display chain
+
+The tablet shows the code at an exact, **verified** size: the PNG is
+drawn at the screen's size with the code at the requested pixels per
+module, and the tool measures the pitch back from the tablet's own
+screenshot (`"verified": true`).
+
+### What the camera sees
+
+| | |
+|---|---|
+| The tablet's own screenshot | **decodes** — the code is fine |
+| The camera's view of the same code | does not decode |
+| The code on the tablet | 5.54 screen px per module |
+| The camera's source frame | 7.43 source px per module |
+| The camera's preview | ~3.1 preview px per module |
+
+### The three effects, measured
+
+| effect | size | measured as |
 |---|---|---|
-| raw | 570×570 | `grids=0` — the code is not found |
-| **notched** (2-px component removed) | **570×570** | **`grids=1`, 3 capstones found** |
-| 2×2 box average | 285×285 | `grids=1`, 3 capstones found |
+| illumination gradient | **15 → 87 levels** (a 5.8× range) | the brightness map across the frame |
+| screen moiré | **61 levels**, a 2-pixel diagonal | the even/odd difference along the diagonals |
+| sensor artefact | 16 levels, on the axes | the even/odd difference on the rows and columns |
 
-And the notch does what it should:
+Note the moiré is **larger than the code's own contrast** (61 against
+46 levels), and it is *diagonal* here, where on paper it was
+axis-aligned.
+
+### The decisive experiment
+
+Each effect was added to a faithful simulation of the camera's view
+(the tablet's own screenshot, magnified into the 1640×1232 source
+frame, then camd's exact rotation and box downscale into the 720×960
+preview):
 
 ```
-raw     : std=33.1  1px mean|d|=34.0
-notched : std=26.1  1px mean|d|= 4.5
+neither                                             OK
+gradient                                            OK
+moire 61                                            OK
+sensor 2px                                          OK
+
+gradient + moire                                    -     <-- breaks it
+moire + sensor                                      OK
+gradient + sensor                                   OK
+
+all three                                           -
 ```
 
-The high-frequency content collapses from 34 to 4.5 while the
-resolution is untouched. The 2×2 average reaches the same place but
-throws away half the resolution, leaving only **3.0 px per module** —
-barely more than the preview's 2.63, which is not enough.
+**Only the gradient and the moiré together break it.** Each alone is
+survivable.
 
-### What still fails
+### Why
 
-With the code found, the decode still ends in `err=4 (ECC failure)`.
-So the finder detection was the *first* barrier, and there is at least
-one more behind it. The likely candidates, in order:
+The gradient scales the code's *local* contrast down in the dark part
+of the frame while the moiré stays at its full 61 levels there. So in
+the dark region the artefact is larger than the signal, and the
+threshold — global, bilinear or adaptive — has nothing left to
+threshold. Making the code bigger does not help (tested up to 12.2
+source px per module); flattening the illumination does.
 
-1. **Residual noise.** After the notch, 1-px `mean|d|` is still 4.5
-   levels; with 6 px per module that is a meaningful fraction of a
-   module's edge.
-2. **Focus.** The lens is fixed-focus and cannot resolve a small code
-   closer than ~50 cm; the sharpness score at the time was low.
-3. **The exposure is still not right.** 139 levels of contrast is good,
-   but the AE would have to *stay* there.
+### How strong the gradient has to be
 
-This is exactly the ordering the review predicted, and the order the
-measurements support: **binarisation first, resolution second, the AE
-third.** But the specific binarisation problem turned out to be
-something no thresholding scheme can fix — the input has to be cleaned
-first.
+With the moiré at its measured 61 levels:
+
+| the bright side | the dark side | the range | |
+|---|---|---|---|
+| 55 | 20 | 2.8× | fails |
+| 55 | 35 | 1.6× | fails |
+| 58 | 45 | 1.3× | fails |
+| 60 | 50 | 1.2× | fails |
+| **62** | **55** | **1.1×** | **decodes** |
+
+The measured case was 5.8×. **The gradient has to come down to about
+1.1× — roughly a stop — for the code to decode at all.**
 
 ---
 
-## 3. What this changes in the plan
+## 3. The answer to the lighting question
 
-### New: the checkerboard must be removed before anything else
+**Yes, the lighting is the problem, and it is worth fixing.**
 
-This is a **preprocessing** step, and it belongs in `camd`, on the
-source luma, before the frame is handed on. It is:
-- cheap (one pass over the frame, O(n)),
-- lossless in resolution (unlike the downscale it would replace),
-- and it removes 33 % of the variance.
+It is not the brightness that matters but the *evenness*: the code
+has to be lit within about a tenth of a stop across the frame, with
+the moiré present. A dim but even code decodes; a bright code with a
+5.8× gradient does not.
 
-It also **changes the arithmetic of the whole camera**: the preview's
-1.71× downscale is doing two jobs at once — resizing *and* accidentally
-filtering the checkerboard. If the checkerboard is notched out at the
-source, the preview can be built by a cleaner downscale and more of the
-source's detail survives.
+What helps, in order of effect:
 
-**Open question for the implementation:** where exactly does the
-checkerboard come from? Candidates:
-- the IMX179's Bayer pattern and the ISP's demosaic (the sensor runs
-  in *binned* mode at 1640×1232, and 2×2 binning of a Bayer array is
-  the classic source of a 2-px pattern),
-- the CPP's processing,
-- or the mode's geometry.
+1. **Even lighting on the screen.** A lamp or a sheet of paper
+   diffusing the tablet's own light, or moving the phone so the
+   gradient falls across the code rather than along it. The gradient
+   is what kills it, and it is the one thing the user controls.
+2. **A closer phone.** The tablet is a large, bright, even source; the
+   gradient comes from the *room*, and the phone's own position
+   decides how much of the room's falloff lands on the code.
+3. **A matte screen protector or a sheet of tracing paper** over the
+   tablet: it evens the illumination and knocks the moiré down at
+   once.
 
-The tree has `cam/cam_chromatrix.h` and the CPP firmware; the
-question is whether the fix belongs in the sensor mode (a different
-mode without the artefact) or in software. **The software notch is
-worth doing regardless**, because it is 20 lines and it works.
+What does **not** help, and is worth knowing before spending time on
+it:
 
-### Confirmed: the exposure ceiling is a real bug
-
-The AE's `MAX_EXPOSURE` is `0x09d6` (2518) and the sensor's VMAX is
-`0x04e4` (1252). Every exposure above `0x04e0` is discarded. The
-capture above shows what that costs: at the AE's chosen exposure the
-code has 7 levels of contrast; at the sensor's real maximum it has 139.
-**That is the single biggest contrast improvement available**, and it
-is a two-line fix.
-
-### Confirmed: the version ceiling is a real bug (but not for this code)
-
-`K_QUIRC_MAX_BITMAP 1954` refuses versions above 27. This code is
-version 17, so it is unaffected — but versions 28–40 cannot decode at
-all. One-line fix, verified on the host.
-
-### Refined: the 1280-pixel limit shapes the full-resolution design
-
-The decoder refuses any image over 1280 px in either dimension, and
-the source frame is 1640×1232. The full-resolution path must
-therefore **crop and decode**, not decode the whole frame. (Verified on
-the host: a 1100×1100 crop of a source frame decodes; the whole frame
-is refused.)
-
-### Revised: local thresholding is *necessary but not sufficient*
-
-The threshold modes (global Otsu, the unused bilinear path, the unused
-adaptive path) all failed on this code — because they all threshold a
-picture whose high-frequency content is a checkerboard. **They must be
-re-tested after the notch**, on cleaned frames. The corpus makes that
-possible offline in milliseconds.
+- **A bigger code on the screen.** Tested to 12.2 source px per
+  module; it makes no difference while the gradient is there.
+- **A different threshold.** Global Otsu, the unused bilinear path and
+  the unused adaptive path all fail identically. The problem is
+  upstream of the threshold.
+- **The camera's exposure.** The exposure ladder from `0x0180` to
+  `0x04e0` and the gain from `0x00a5` to `0x00ff` all fail the same
+  way.
 
 ---
 
-## 4. The corpus, driven from the tablet
+## 4. What this means for the plan
 
-The tablet (Samsung GT-N5110, 800×1280, Android 4.4.2) is now
-available over adb and displays a code full-screen in landscape at an
-exact pixel size. The chain is verified end to end: `tools/show-qr`
-pushes the PNG, the gallery shows it, and **the tablet's own screenshot
-decodes back to the expected payload** with the host harness.
+The ordering the review proposed — binarisation, then resolution, then
+the AE — was right for the paper code, and it is **wrong for the
+screen code**, which is the case that matters.
 
-```
-$ tools/show-qr --target v7-mid --module-px 8
-showing: {"payload": "KRUXCAM-V7-MID-0002", "modules": 53, "module_px": 8, ...}
+For a screen:
 
-$ # screencap the tablet, rotate to landscape, decode:
-decoded=1 time_ms=4.1 | payload=KRUXCAM-V7-MID-0002
-```
+1. **The illumination gradient is the first thing to fix**, and it is
+   a physical fix, not a software one. It is also the thing the
+   review's "percentile AE" would *not* fix: a percentile measured
+   over the ROI would follow the gradient, not remove it.
+2. **A local threshold is still needed**, and the review's case for it
+   stands: the gradient alone (5.8×) is survivable in simulation, but
+   only just, and only because the code is bright. The per-quadrant
+   bilinear path in `k_quirc` is the cheapest way to get there.
+3. **The 2-pixel sensor artefact must be notched out** regardless —
+   on paper it was the whole blocker.
+4. **The full-resolution path becomes attractive again**: at 7.4 source
+   px per module the code has more than twice the preview's, and the
+   2-pixel artefact is a fixed pattern that does not get worse with
+   resolution.
 
-The display is pixel-exact (the PNG is shown at its natural size), so
-the **pixels per module on the screen is known exactly** — which is
-what makes the corpus reproducible. The tablet's codes are about
-**11×11 cm** physically.
-
-### The corpus to capture
-
-With the tablet in landscape (1280×800) and a code filling most of
-the width, at a known number of pixels per module:
-
-| target | version | modules | px/module | note |
-|---|---|---|---|---|
-| `v2-low` | 2 | 33 | 10 | the easy case |
-| `v7-mid` | 7 | 53 | 8 | |
-| `v20-dense` | 20 | 105 | 6 | the failing workload |
-| `v27-max` | 27 | 133 | 6 | the decoder's current ceiling |
-
-Each at two or three **distances** (which changes the pixels per module
-in the camera's view) and across the **exposure ladder** (which
-changes the contrast and the noise). That gives the matrix the review
-asked for, and every frame of it is replayable offline.
-
-### What the corpus must be captured with
-
-- The phone **held steady**, aimed at the tablet.
-- The tablet in **landscape**, filling as much of the frame as
-  possible.
-- The screen brightness **as high as it goes** — the tablet is a
-  light source, and the code's white level is what the AE has to hit.
+So the software work is: notch the 2-pixel artefact, use a local
+threshold, and correct the exposure ceiling. The physical work is:
+even lighting.
