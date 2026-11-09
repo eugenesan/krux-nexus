@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Decode the QR in a captured frame, cropping to the code if needed.
+
+The decoder refuses any image over 1280 pixels in either dimension,
+so the full-resolution source frame (1640x1232) has to be cropped to
+the code's region first.  The code is located by the finder patterns.
+
+Each correction is applied in turn and the result reported, so it is
+clear which one matters:
+
+  raw            the crop as captured
+  notch          the 2-pixel artefact removed (axis-aligned)
+  notch+diag     and the diagonal component removed too
+  flat           the illumination gradient flattened
+  flat+notch     both
+  flat+notch+diag  all three
+"""
+
+import os
+import subprocess
+import sys
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPLAY = os.path.join(HERE, "quirc-replay")
+
+
+def runs(line):
+    out = []
+    cur = line[0]
+    n = 0
+    for v in line:
+        if v == cur:
+            n += 1
+        else:
+            out.append((cur, n))
+            cur = v
+            n = 1
+    out.append((cur, n))
+    return out
+
+
+def find_code(a):
+    """The bounding box of the QR code, from the finder patterns."""
+    from collections import Counter
+
+    def finder_runs(img):
+        d = (img < 128).astype(np.uint8)
+        c = Counter()
+        for y in range(d.shape[0]):
+            rs = runs(d[y])
+            for i in range(len(rs) - 4):
+                if rs[i][0] != 0:
+                    continue
+                w = [x for _, x in rs[i:i + 5]]
+                if w[1] < 3 or w[3] < 3 or w[2] < 8:
+                    continue
+                if (abs(w[0] - w[1]) <= max(1, w[1] // 3)
+                        and abs(w[2] - 3 * w[1]) <= max(1, w[1] // 3)
+                        and abs(w[3] - w[1]) <= max(1, w[1] // 3)
+                        and abs(w[4] - w[1]) <= max(1, w[1] // 3)):
+                    c[w[1]] += 1
+        return c
+
+    # The bright screen and the dark code inside it.
+    bright = (a > 200)
+    rows = bright.sum(axis=1)
+    cols = bright.sum(axis=0)
+    r = np.where(rows > a.shape[1] * 0.25)[0]
+    c = np.where(cols > a.shape[0] * 0.15)[0]
+    if not len(r) or not len(c):
+        return None
+    region = a[r.min():r.max() + 1, c.min():c.max() + 1]
+    cnt = finder_runs(region)
+    if not cnt:
+        return None
+    pitch = cnt.most_common(1)[0][0]
+    # the code's dark block inside the screen
+    dark = region < 128
+    rr = np.where(dark.sum(axis=1) > 20)[0]
+    cc = np.where(dark.sum(axis=0) > 20)[0]
+    if not len(rr) or not len(cc):
+        return None
+    return (c.min() + int(cc.min()), c.min() + int(cc.max()),
+            r.min() + int(rr.min()), r.min() + int(rr.max()), pitch)
+
+
+def notch(a, diagonal=False, axis=True):
+    b = a.astype(np.float32).copy()
+    h, w = b.shape
+    if diagonal:
+        for y in range(h):
+            r = b[y]
+            n = len(r)
+            i0 = np.arange(y % 2, n, 2)
+            i1 = np.arange((y + 1) % 2, n, 2)
+            if len(i0) and len(i1):
+                d = (r[i0].mean() - r[i1].mean()) * 0.5
+                r[i0] -= d
+                r[i1] += d
+    if axis:
+        for y in range(h):
+            r = b[y]
+            e, o = r[0::2], r[1::2]
+            d = (e - o) * 0.5
+            r[0::2] = e - d
+            r[1::2] = o + d
+        for x in range(w):
+            c = b[:, x]
+            e, o = c[0::2], c[1::2]
+            d = (e - o) * 0.5
+            c[0::2] = e - d
+            c[1::2] = o + d
+    return b
+
+
+def flat(a, k=64):
+    """Flatten the illumination: divide by a heavily blurred copy."""
+    b = a.astype(np.float32)
+    h, w = b.shape
+    cs = np.vstack([np.zeros((1, w), np.float32), b.cumsum(0)])
+    out = np.empty_like(b)
+    half = k // 2
+    for y in range(h):
+        out[y] = (cs[min(h, y + half + 1)] - cs[max(0, y - half)]) \
+            / (min(h, y + half + 1) - max(0, y - half))
+    cs = np.cumsum(np.hstack([np.zeros((h, 1), np.float32), out.cumsum(1)]), 1)
+    out2 = np.empty_like(out)
+    for x in range(w):
+        out2[:, x] = (cs[:, min(w, x + half + 1)] - cs[:, max(0, x - half)]) \
+            / (min(w, x + half + 1) - max(0, x - half))
+    out2[out2 < 1] = 1
+    return b / out2 * 120.0
+
+
+def decode(arr, label):
+    arr = np.ascontiguousarray(np.clip(arr, 0, 255).astype(np.uint8))
+    tmp = "/tmp/opencode/_crop.raw"
+    arr.tofile(tmp)
+    h, w = arr.shape
+    r = subprocess.run([REPLAY, tmp, str(w), str(h)], capture_output=True, text=True)
+    payload = None
+    for line in r.stdout.splitlines():
+        if line.strip().startswith("payload="):
+            payload = line.strip().split("=", 1)[1]
+    print("  %-24s %4dx%-4d %s" % (label, w, h, payload if payload else "-"))
+    return payload
+
+
+def main():
+    path = sys.argv[1]
+    w = int(sys.argv[2])
+    h = int(sys.argv[3])
+    a = np.frombuffer(open(path, "rb").read()[:w * h], dtype=np.uint8).reshape(h, w)
+
+    box = find_code(a)
+    if box is None:
+        print("  the code was not found; trying the whole frame")
+        crop = a
+    else:
+        x0, x1, y0, y1, pitch = box
+        print("  the code: cols %d..%d rows %d..%d, the finder pitch is %.1f px"
+              % (x0, x1, y0, y1, pitch))
+        # a margin around the code, and under the 1280 limit
+        m = int(pitch * 4)
+        x0 = max(0, x0 - m)
+        y0 = max(0, y0 - m)
+        x1 = min(w, x1 + m)
+        y1 = min(h, y1 + m)
+        cw, ch = x1 - x0, y1 - y0
+        if cw > 1280 or ch > 1280:
+            s = min(1280.0 / cw, 1280.0 / ch)
+            print("  the crop is %dx%d, too big: scaling it to %.2f" % (cw, ch, s))
+            from PIL import Image
+            crop = np.array(Image.fromarray(a[y0:y1, x0:x1]).resize(
+                (int(cw * s), int(ch * s)), Image.BOX))
+        else:
+            crop = a[y0:y1, x0:x1]
+
+    print()
+    for label, fn in (
+        ("raw", lambda x: x),
+        ("notch", lambda x: notch(x, diagonal=False)),
+        ("notch+diag", lambda x: notch(x, diagonal=True)),
+        ("flat", lambda x: flat(x)),
+        ("flat+notch", lambda x: notch(flat(x), diagonal=False)),
+        ("flat+notch+diag", lambda x: notch(flat(x), diagonal=True)),
+    ):
+        decode(fn(crop), label)
+
+
+if __name__ == "__main__":
+    main()
