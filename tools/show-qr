@@ -87,8 +87,12 @@ def build_code(payload, version, ec, module_px, quiet=4):
     return img, n
 
 
-def compose(code_img):
-    """Put the code on a screen-sized white field, centred.
+def compose(code_img, background="white"):
+    """Put the code on a screen-sized field, centred.
+
+    The field is white by default.  ``background="black"`` reproduces
+    how a code usually appears on a real screen: the code's own white
+    quiet zone, surrounded by the dark rest of the display.
 
     A code larger than the screen is scaled down to fit: the gallery
     would scale it anyway, and this way the scale is known.
@@ -98,7 +102,7 @@ def compose(code_img):
         s = min(SCREEN_W / float(w), SCREEN_H / float(h))
         w, h = int(w * s), int(h * s)
         code_img = code_img.resize((w, h), 0)
-    canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), "white")
+    canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), background)
     x = (SCREEN_W - w) // 2
     y = (SCREEN_H - h) // 2
     canvas.paste(code_img, (x, y))
@@ -187,6 +191,8 @@ def main():
     ap.add_argument("--ec", default="M")
     ap.add_argument("--module-px", type=int, default=6)
     ap.add_argument("--quiet", type=int, default=4)
+    ap.add_argument("--background", default="white",
+                    choices=["white", "black"])
     ap.add_argument("--out", default="/tmp/opencode/tablet-show")
     ap.add_argument("--no-check", action="store_true")
     args = ap.parse_args()
@@ -221,7 +227,7 @@ def main():
         px = max(1, int(round(want * draw_scale)))
         img, n = build_code(payload, version, ec, px, args.quiet) \
             if payload else (code, n)
-        canvas, origin = compose(img)
+        canvas, origin = compose(img, args.background)
         png = os.path.join(args.out, "code.png")
         canvas.save(png)
         wake()

@@ -9,9 +9,7 @@ cam.initialize_run(QR_SCAN_MODE)
 print("camera up")
 sensor.refocus(True)
 print("full sweep requested")
-time.sleep(6)
-print("waited; sweeping", sensor.sweeping())
-for i in range(30):
+for i in range(120):
     try:
         img = cam.snapshot(2000)
     except Exception as e:
