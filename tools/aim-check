@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
-"""Where is the QR code in the frame, and is it all in?
+"""Where is the QR code, and is it big enough to read?
 
-Reports the code's position and how much of it is missing, so the
-phone can be aimed by feedback rather than by guesswork.
+Two measurements, because they fail in different ways:
+
+  * the code's finder patterns, which say exactly where the code is
+    and how much of it falls off each edge -- but they can only be
+    found when the code is already big enough to resolve (roughly
+    3 px per module);
+
+  * the tablet's bright screen, which is always visible and gives
+    the scale: the code is 105 modules of the screen's 1280 px, so
+    the screen's width in the frame says how many pixels each module
+    gets.
+
+The second is what makes this usable when the phone is too far away:
+it says how much closer the phone has to be.
 
   aim-check <file.raw> <width> <height>
 """
@@ -11,6 +23,13 @@ import os
 import sys
 
 import numpy as np
+
+# The tablet's screen is 1280 screen px wide; the code is 105 modules
+# of the screen's width (630 screen px at 6 px per module), plus a
+# 4-module quiet zone on each side.
+CODE_MODULES = 105
+QUIET = 4
+SCREEN_PX = 1280
 
 
 def runs(line):
@@ -29,7 +48,6 @@ def runs(line):
 
 
 def finders(a, thr=128):
-    """The finder patterns, by the 1:1:3:1:1 run signature."""
     d = (a < thr).astype(np.uint8)
     hits = []
     for y in range(d.shape[0]):
@@ -65,6 +83,18 @@ def finders(a, thr=128):
     return out
 
 
+def screen_box(a, thr=240):
+    """The tablet's bright screen: the biggest bright region."""
+    b = (a > thr)
+    rows = b.sum(axis=1)
+    cols = b.sum(axis=0)
+    r = np.where(rows > a.shape[1] * 0.05)[0]
+    c = np.where(cols > a.shape[0] * 0.05)[0]
+    if not len(r) or not len(c):
+        return None
+    return int(c.min()), int(c.max()), int(r.min()), int(r.max())
+
+
 def main():
     path = sys.argv[1]
     w = int(sys.argv[2])
@@ -73,19 +103,53 @@ def main():
                       dtype=np.uint8).reshape(h, w)
 
     print("the frame is %dx%d" % (w, h))
-    # the threshold matters: the code's modules are dark on a bright
-    # screen, but the whole frame may be dark too.
+
+    # --- the scale, from the tablet's screen ---
+    #
+    # The source frame is the sensor's own landscape layout, and camd
+    # rotates it 90 degrees counter-clockwise into the portrait
+    # preview.  The tablet lies in landscape, so its screen's width
+    # runs along the source's VERTICAL axis.
+    box = screen_box(a)
+    if box:
+        x0, x1, y0, y1 = box
+        sw = x1 - x0 + 1     # the source's horizontal extent
+        sh = y1 - y0 + 1     # the source's vertical extent
+        # the screen's width is the larger of the two, and it is the
+        # one that runs along the source's vertical axis
+        screen_w = max(sw, sh)
+        # the code is 105/1280 of the screen's width
+        code_px = screen_w * (CODE_MODULES / float(SCREEN_PX))
+        ppm = code_px / CODE_MODULES
+        print()
+        print("the tablet's screen: %d px wide, %d px tall" % (sw, sh))
+        print("  => the code is about %.0f px wide -> %.2f px per module"
+              % (code_px, ppm))
+        if ppm < 3:
+            print("  TOO SMALL: the decoder needs about 3 px per module to")
+            print("  find the code at all, and 5 to decode it reliably.")
+            need = 5.0
+            factor = need / ppm
+            print("  The phone must be about %.1fx closer (or the code" % factor)
+            print("  %.1fx bigger on the tablet)." % factor)
+        elif ppm < 5:
+            print("  marginal: about 5 px per module is wanted.")
+        else:
+            print("  big enough.")
+
+    # --- the position, from the finders ---
     fs = []
     for thr in (128, 100, 150, 80, 180):
         fs = finders(a, thr)
         if len(fs) >= 3:
-            print("  (threshold %d)" % thr)
             break
-    if not fs:
-        print("  no finder pattern found -- the code is not in view")
+    print()
+    if len(fs) < 3:
+        print("the code's finder patterns were not found")
+        if fs:
+            print("  (%d found -- the code is too small or too far)" % len(fs))
         return 1
 
-    # the three finders of one code are the ones nearest to each other
     best = None
     for i in range(len(fs)):
         for j in range(i + 1, len(fs)):
@@ -99,49 +163,30 @@ def main():
                 if best is None or span < best[0]:
                     best = (span, trio)
     if best is None:
-        print("  the finders are too scattered to tell which code they are")
         return 1
-
     span, trio = best
     pitch = span / 104.0
     xs = [t[0] for t in trio]
     ys = [t[1] for t in trio]
-    print("  %d finder pattern(s); the code's three are %d px apart"
-          % (len(fs), span))
-    print("  the module pitch is %.2f px" % pitch)
+    print("the code: %d finder patterns, %.2f px per module" % (len(fs), pitch))
     for x, y, n in trio:
-        print("     at %6.0f,%-6.0f  (%s, %s)"
+        print("   at %6.0f,%-6.0f  (%s, %s)"
               % (x, y, "left" if x < w / 2 else "right", "top" if y < h / 2 else "bottom"))
 
-    # the code is 105 modules + a 4-module quiet zone on each side
-    full = (105 + 8) * pitch
-    x0 = min(xs) - 4 * pitch
-    x1 = max(xs) + 104 * pitch + 4 * pitch
+    full = (CODE_MODULES + 2 * QUIET) * pitch
     print()
-    print("  the code needs %.0f px of width (105 modules plus the quiet zone)" % full)
-    print("  it starts at col %.0f and should end at col %.0f" % (x0, x1))
-    missing_l = max(0, -x0)
-    missing_r = max(0, x1 - (w - 1))
-    missing_t = max(0, min(ys) - 4 * pitch)
-    missing_b = max(0, (max(ys) + 104 * pitch + 4 * pitch) - (h - 1))
-    print()
-    if missing_l or missing_r or missing_t or missing_b:
-        print("  IT IS CUT OFF:")
-        if missing_l:
-            print("     %.0f px are off the LEFT edge" % missing_l)
-        if missing_r:
-            print("     %.0f px are off the RIGHT edge" % missing_r)
-        if missing_t:
-            print("     %.0f px are off the TOP edge" % missing_t)
-        if missing_b:
-            print("     %.0f px are off the BOTTOM edge" % missing_b)
-        print()
-        print("  aim so the code sits in the middle of the frame;")
-        print("  moving the tablet further away also helps.")
+    print("the whole code needs %.0f px of width" % full)
+    if full > w:
+        print("  MORE than the frame is wide: the code cannot fit.")
+        print("  the phone must be further away, or the code smaller.")
+    left = max(0, (4 * pitch) - min(xs))
+    right = max(0, (max(xs) + 104 * pitch + 4 * pitch) - (w - 1))
+    if left or right:
+        print("  IT IS CUT OFF at the %s edge."
+              % ("left" if left > right else "right"))
+        print("     %.0f px are missing." % (left if left > right else right))
     else:
-        print("  THE WHOLE CODE IS IN FRAME.")
-        print("  it spans %.0f px, %.0f%% of the frame's width"
-              % (full, 100 * full / w))
+        print("  the whole code is in frame.")
     return 0
 
 
