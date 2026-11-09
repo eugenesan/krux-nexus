@@ -1380,6 +1380,50 @@ static int cpp_send_chromatrix(void)
 	return 0;
 }
 
+/*
+ * Drain the CPP's completed-frame queue.
+ *
+ * The CPP enqueues a processed-frame entry for every frame
+ * (msm_cpp_notify_frame_done), and only
+ * VIDIOC_MSM_CPP_GET_EVENTPAYLOAD takes it out.  Nothing did, so the
+ * kernel list grew without bound -- dmesg's "queue eventdata new max
+ * is N" climbing into the thousands -- until the box ran out of memory
+ * and hard-locked, often on the main screen with no camera page open.
+ * The CPP's v4l2 frame-done event says a payload is ready, so drain
+ * one per event.  Do not call GET_EVENTPAYLOAD without an event: the
+ * driver dequeues without a NULL check and would fault on an empty
+ * queue.
+ */
+static void *cpp_event_thread(void *arg)
+{
+	struct v4l2_event_subscription sub;
+	(void)arg;
+
+	memset(&sub, 0, sizeof(sub));
+	sub.type = CPP_FRAME_DONE_EVENT;
+	if (ioctl(cpp_fd, VIDIOC_SUBSCRIBE_EVENT, &sub) < 0)
+		printf("[cpp] subscribe frame-done: %s\n", strerror(errno));
+
+	for (;;) {
+		struct v4l2_event ev;
+		struct msm_camera_v4l2_ioctl_t io;
+		struct msm_cpp_frame_info_t info;
+
+		if (ioctl(cpp_fd, VIDIOC_DQEVENT, &ev) < 0) {
+			struct timespec ts = { 0, 2 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
+			continue;
+		}
+		memset(&io, 0, sizeof(io));
+		memset(&info, 0, sizeof(info));
+		io.id = ev.id;
+		io.len = sizeof(info);
+		io.ioctl_ptr = &info;
+		ioctl(cpp_fd, VIDIOC_MSM_CPP_GET_EVENTPAYLOAD, &io);
+	}
+	return NULL;
+}
+
 /* Sum of horizontal gradients in the middle of the frame: a simple,
  * robust focus metric for the VCM sweep. */
 static unsigned long af_sharpness(const unsigned char *p)
@@ -2109,6 +2153,11 @@ static void *server_thread(void *arg)
 			 * starts the sensor afterwards.
 			 */
 			isp_start();
+			if (cpp_fd >= 0) {
+				pthread_t cpp_ev;
+				pthread_create(&cpp_ev, NULL, cpp_event_thread,
+					       NULL);
+			}
 			if (cam->kernel_programs_sensor) {
 				static struct msm_camera_i2c_reg_array dummy[1];
 				struct msm_camera_i2c_reg_setting set;
@@ -2396,6 +2445,20 @@ static void *client_thread(void *arg)
 				last_requests = req;
 				idle = 0;
 			}
+		}
+		if (idle > 20) {
+			/* No camera client is reading.  Stop driving the CPP
+			 * and the ISP every frame: the idle loop was
+			 * enqueueing a CPP frame and its event ~30 times a
+			 * second with nobody consuming them, and the
+			 * kernel's CPP event queue grew until the box
+			 * hard-locked on the main screen, with no camera
+			 * page open at all.  Sleeping here lets the queue
+			 * drain; the next client's keepalive clears idle
+			 * and the loop resumes. */
+			struct timespec ts = { 0, 50 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
+			continue;
 		}
 
 		/* The vendor's per-frame order: the chromatrix goes to
