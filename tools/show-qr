@@ -58,7 +58,14 @@ def wake():
     adb("shell", "settings put global stay_on_while_plugged_in 3")
     adb("shell", "settings put system screen_off_timeout 1800000")
     adb("shell", "svc power stayon true")
-    adb("shell", "input keyevent 26")
+    # The screensaver dims the panel after a while, and a dim screen
+    # makes the code's contrast too low to decode.  Force the panel to
+    # full brightness and keep it there for the capture.
+    adb("shell", "settings put system screen_brightness_mode 0")
+    adb("shell", "settings put system screen_brightness 255")
+    # WAKEUP (224) only wakes; the power key (26) toggles, so it would
+    # turn an already-on screen off.
+    adb("shell", "input keyevent 224")
     time.sleep(1.0)
     # A touch in the corner: enough to keep it awake, harmless to the
     # gallery.
