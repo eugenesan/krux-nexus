@@ -3108,3 +3108,106 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - The LG phone shows the Sparrow QR full screen, kept awake (`svc power
   stayon`), brightness 100.  The camera is aimed at it.  The exposure and the
   focus are set by the camera page's AE/AF when it is open.
+
+## 2026-11-10 23:05:38 UTC - session compaction (auto)
+
+* session: `ses_e3c8c1f29ffeTK6LRQer4sg8qy`
+
+## Objective
+- Continue development of `qpy-rsync`, a PySide6 rsync GUI, from milestone 1.15e through the remaining roadmap, then profiles/icon work.
+- Current focus: profiles/recent-profile behavior and UI polish, with packaging/desktop integration deferred.
+
+## Requirements
+- Use system-Python compatibility and offscreen Qt tests; keep the full test suite green.
+- GUI validation should be done on X11 `DISPLAY=:50` using `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` and `python3-pyatspi`.
+- Keep changes committed in small increments.
+- Defer packaging and desktop integration for later.
+- Recent profiles should replace saving individual Source/Destination/Backup fields.
+- On exit, only prompt to save a profile if settings changed since the last profile load/save; allow saving to a new profile rather than overwriting.
+- Profile save/load messages must not overwrite the status bar.
+- Tooltip text should be multiline by sentence and use default tooltip color; it must attach only to the status bar area.
+- Avoid terminal messages from Qt/X11 where possible.
+
+## Decisions
+- Override count is derived from active explicit decisions, not historical clicks.
+- Added `modified` to `DecisionSummary` and `PlanSummary`; action rows use `*` and `#0891B2`.
+- Progress parsing is canonical in `qpy_rsync.backend.sync_progress`, with compatibility aliases in backend/services modules.
+- Inventory mode uses `rsync --list-only` to merge unchanged objects as `NO_CHANGE`.
+- Local-to-local execution restriction was removed (Phase 1), then SSH execution restriction was removed (Phase 3).
+- Profile save/load messages go to the diagnostics log.
+- Recent profiles are stored at `~/.local/share/qpy-rsync/recent-profile.json`, referenced by QSettings key `profile/recent_path`.
+- Close-time dirty check ignores `profile_id` and `name`.
+
+## Work State
+### Completed
+- 1.15e override visibility and structured synchronization progress.
+- 1.15f inventory mode, unchanged-entry rendering, Copy Path, and toggle.
+- Post-1.15f Phase 1 (local execution anywhere), Phase 2 validation, Phase 3 (SSH execution enabled).
+- Smoke-test docs and runner checks updated for 1.15e/1.15f; progress/override marker collection added.
+- UI compact controls, renamed Verify Actions, backup/log 50/50 row, progress bar placement, status backup messages.
+- Application icon added as `qpy-rsync.svg`.
+- Profile Save/Load buttons implemented.
+- Recent-profile restore on startup fixed and verified on `DISPLAY=:50`.
+- False save-on-exit prompt fixed by ignoring regenerated profile identity fields.
+- All current tests pass: **151**.
+
+### Active
+- (none)
+
+### Blocked
+- (none)
+
+## Next Move
+1. Optionally add dedicated offscreen tests for inventory merge, filtering, proxy models, and Copy Path.
+2. Continue remaining milestone 1.16 work only when requested: recent-profile UI refinements, desktop integration, Debian packaging.
+3. Keep packaging/desktop integration deferred per user.
+
+## Relevant Files
+- `src/qpy_rsync/gui/main_window.py`: main UI, profile save/load, recent-profile restore, close prompt, status handling.
+- `src/qpy_rsync/gui/comparison_view.py`: compact buttons, inventory toggle, Copy Path context menu.
+- `src/qpy_rsync/core/changes.py`: decision/override counting.
+- `src/qpy_rsync/core/execution_plan.py`: `PlanSummary.modified` and plan summaries.
+- `src/qpy_rsync/backend/sync_progress.py`: progress parser and compatibility aliases.
+- `src/qpy_rsync/backend/inventory.py`: `rsync --list-only` inventory gathering.
+- `src/qpy_rsync/services/sync_service.py`: execution boundary, progress callback.
+- `src/qpy_rsync/storage/profile_store.py`: profile JSON save/load.
+- `src/qpy_rsync/app.py`: application/window icon and quit behavior.
+- `qpy-rsync.svg`: application icon.
+- `tools/run-sync-smoke-test.sh`: guided milestone checks.
+- `tools/collect-sync-smoke-results.sh`: progress/override marker collection.
+- `tests/unit/test_change_tree_decisions.py`: override visibility tests.
+- `tests/unit/test_execution_plan.py`: plan override tests.
+- `tests/unit/test_sync_progress_parser.py`: progress parser tests.
+
+## Important Context
+- Last commits: `aebfa22` (profile close comparison ignoring identity), `23227d8` (recent profile baseline), `f23cd6f` (avoid backup status before endpoints), `b95cccb`, `dd68a49`, `38931a6`, `5455ce1`, `6443fc2`, `94bb9d1`, `dc1c7b2`, `50d2824`, `88cd6fe`, `8316771`, `20483f2`, `9e9cc7a`, `243255f`, `4a9e89d`, `fa66eec`, `2ec2108`, `70d793f`.
+- Working tree is clean; branch is ahead of `origin/main` by 27+ commits and has not been pushed.
+- A stale/corrupt recent-profile file caused earlier startup failures; it was deleted and QSettings `profile/recent_path` cleared during testing.
+- `QMessageBox` prompting in `closeEvent` is skipped when `QT_QPA_PLATFORM=offscreen` to avoid offscreen crashes.
+- `QT_XCB_GL_INTEGRATION=none` is set in `qpy-rsync.sh` to suppress GLX warnings.
+- The “Falling back to using screens root_visual” message is a Qt/X11 tooltip warning and remains difficult to suppress.
+- Smoke-test runner is interactive and waits for manual GUI steps; real write-capable smoke runs were performed manually on `DISPLAY=:50`.
+
+## 2026-11-10 16:30:00 UTC - the entropy/QR preview, end to end
+
+### The preview was a buffer mix-up, not the sensor
+- The ISP and the CPP take their buffers from the same pool, so the daemon could not know which buffer held the raw frame it had to point the CPP at.  Its ring guessed, drifted, and sometimes named a buffer with nothing in it: the blank frame that blinked, and the seconds of lag.
+- Fixed in the kernel: the ISP records the buffer it wrote each frame and the CPP reads that one (`93cca9690e9`).  The daemon enables the stream's buffer divert so the ISP takes that path (`f86fa25`).
+- The buffer is held two frames before it goes back into the pool (`cf9fd9c2edf`); one frame was too short now, four drained the pool and rebooted the device.
+
+### The frame rate: 7.5 -> 34.5 fps
+- The downscale did four integer divisions per output pixel (two box edges, the box width, the box height).  This CPU has no divide instruction: 2.3 million software divisions per frame, 89 ms of the 130.
+- The edges are now a table and the "divide by one or two" are shifts (`ad19b6c`).  The frame work is 26-32 ms: **34.5 fps**, against the 15 the preview used to reach.
+
+### The grey bar: five chroma stripes overlapping
+- The vendor's CPP message carries **five** stripes with **one** shared chroma matrix, drawn for their 1280x960 preview.  Our frames are 1640x1232, so the rectangles overlap, the last one to write wins, and the preview is banded.
+- With a **single** stripe (the message rebuilt at start-up: 158 words, stripe 0, trailer; `20e886d`) the picture is clean and the Sparrow UR code **decodes** from it (`UR:CRYPTO-PSBT/...`), where five stripes gave no finder pattern at all.
+
+### Two things that were mine, not the camera's
+- My injected taps landed on the entropy page's `-/+ exp` strip, which sets `_ae_manual` and switches the auto-exposure off.  It is cleared when a page starts a session.
+- The double-buffered preview (vertical zones of two frames) — reverted; the panel is switched while it is being sent a frame.
+- The auto-exposure step was widened to 45% while chasing the speed and brought the flicker back; it is 25% again (`2ff5a725`).
+
+### Where to look next
+- The stripe rectangle comes from the message *header*, not the stripe entry: changing the stripe's own fields (stride, height) changed nothing.
+- The QR page's auto-exposure cannot control a self-luminous screen: past a certain phone brightness the screen clips the sensor at the minimum exposure and the AE walks to the bottom.  Keep the phone's brightness where its white sits below clipping (about 60-100).
