@@ -3064,3 +3064,47 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
   survive the cold boot a test needs.
 - `b05dabf` — the `cycle` knob, the dump in the raw-crop path, the build-script
   fix, the send-key fix.
+
+## 2026-11-10 04:00:00 UTC - the session's results
+
+### The stall is fixed (kernel `04893de2b9b`)
+- 22 minutes of continuous streaming with **no** `no free buffer`, no dropped
+  frames, no `stalled on one buffer`, no `no frame after 2s` and no tasklet or
+  watchdog event.  The stall used to come at 10–15 minutes.
+- 190 frame deliveries a second (the daemon is not paced to the sensor).
+
+### The picture is live
+- Two dumps 0.3 s apart now differ in 27% of their pixels; before the fix they
+  were byte-identical, because the daemon was reading a stale frame.
+
+### The bands are gone
+| | before | after |
+|---|---|---|
+| the source's flat lower region: row-to-row step | up to **14.35** | **1.86** |
+| the same: standard deviation | **6.33** | **0.74** |
+| the last 40 rows | **0.00** (never written) | 15.93 (the scene) |
+
+### The user's three tests
+1. **Full resolution, linear 1:1, no other processing** — the row profile is
+   smooth; the largest step is 2.3, and it is a scene edge.
+2. **The same in binned mode** — smooth; the only steps are the QR's own edges
+   (16.2 at row 118, −13.8 at row 485).
+3. **Raw frame vs what is displayed** — the camera page renders the published
+   preview (the shared region `/tmp/krux/frame`); it and the source show the
+   same structure, both without bands.  The framebuffer itself could not be
+   captured with the preview on it: the key injection does not reach the
+   firmware, so the camera page could not be opened.
+
+### The ISP-config bisection, repeated on the fixed pipeline
+- Counts 56, 45, 35, 25 and 5 of the 56 initial uploads: the frames come out
+  **byte identical**.  The ISP's initial uploads are not the cause of anything.
+
+### Also
+- The full-resolution mode needs the vendor's per-frame ISP cycle (`cycle` knob):
+  without it the frame has a black band of 64 rows and a step of 19.4; with it,
+  it is smooth.
+- The log no longer fills the data partition: 23 KB in 90 s instead of 14 MB in
+  14 minutes.
+- The LG phone shows the Sparrow QR full screen, kept awake (`svc power
+  stayon`), brightness 100.  The camera is aimed at it.  The exposure and the
+  focus are set by the camera page's AE/AF when it is open.
