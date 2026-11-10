@@ -2441,10 +2441,12 @@ static void *client_thread(void *arg)
 	static unsigned last_requests;
 	static int idle;
 	static int no_frame;
+	static int qfail;
 	for (n = 0; ; n++) {
 		struct v4l2_buffer buf;
 		struct pollfd pfd = { .fd = fd, .events = POLLIN };
 		int r;
+		int cfg_ok = 0;
 		uint64_t p0 = now_ns(), p1 = 0, p2 = 0, p3 = 0;
 		uint64_t p4 = 0, p5 = 0, p5a = 0, p6 = 0, p7 = 0;
 		static uint64_t a_upd, a_cpp, a_rep, a_wait, a_dq;
@@ -2514,8 +2516,10 @@ static void *client_thread(void *arg)
 			 */
 			int retry;
 			for (retry = 0; retry < 3; retry++) {
-				if (cpp_send_chromatrix() == 0)
+				if (cpp_send_chromatrix() == 0) {
+					cfg_ok = 1;
 					break;
+				}
 				struct timespec ts = { 0, 2 * 1000 * 1000 };
 				nanosleep(&ts, NULL);
 			}
@@ -2544,7 +2548,8 @@ static void *client_thread(void *arg)
 			 * camera stalled -- reboot to recover -- but it does
 			 * not crash the box.
 			 */
-			printf("[client] no frame after 2s (%d)\n", ++no_frame);
+			printf("[client] no frame after 2s (%d) idle=%d cfg=%d qfail=%d\n",
+			       ++no_frame, idle, cfg_ok, qfail);
 			continue;
 		}
 		no_frame = 0;
@@ -2794,10 +2799,6 @@ static void *client_thread(void *arg)
 							free(tmp);
 						}
 					}
-				}
-				if (camd_q_count > 0) {
-					cpp_input_index = camd_q[camd_q_head];
-					camd_q_head = (camd_q_head + 1) % camd_q_count;
 				}
 				/* Hold the frame lock while latest_y is rewritten:
 				 * the socket thread copies it, and a half-written
@@ -3322,6 +3323,20 @@ static void *client_thread(void *arg)
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
 		}
 
+		/*
+		 * Pick the CPP's input buffer for the next frame from the
+		 * ring of buffers the ISP has just been given back.  This
+		 * must run whether or not a client is reading: it used to
+		 * live inside the "!idle" block, so with no client the
+		 * CPP was pointed at (buf.index + 1) instead -- the
+		 * buffer the ISP was about to write, not the one it had
+		 * finished.  Keep the two paths selecting the same buffer.
+		 */
+		if (camd_q_count > 0) {
+			cpp_input_index = camd_q[camd_q_head];
+			camd_q_head = (camd_q_head + 1) % camd_q_count;
+		}
+
 		p6 = now_ns();
 
 		/* re-queue the buffer */
@@ -3335,7 +3350,13 @@ static void *client_thread(void *arg)
 							: (width * height) / 2;
 			cbufs.buf[buf.index].m.planes = qplanes;
 			cbufs.buf[buf.index].length = 2;
-			ioctl(fd, VIDIOC_QBUF, &cbufs.buf[buf.index]);
+			if (ioctl(fd, VIDIOC_QBUF,
+				  &cbufs.buf[buf.index]) < 0) {
+				qfail++;
+				if (qfail <= 10 || qfail % 100 == 0)
+					printf("[client] QBUF %u: %s (qfail=%d)\n",
+					       buf.index, strerror(errno), qfail);
+			}
 			if (camd_q_count > 0) {
 				camd_q[camd_q_tail] = buf.index;
 				camd_q_tail = (camd_q_tail + 1) % camd_q_count;
