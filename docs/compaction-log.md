@@ -3213,3 +3213,96 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 ### Where to look next
 - The stripe rectangle comes from the message *header*, not the stripe entry: changing the stripe's own fields (stride, height) changed nothing.
 - The QR page's auto-exposure cannot control a self-luminous screen: past a certain phone brightness the screen clips the sensor at the minimum exposure and the AE walks to the bottom.  Keep the phone's brightness where its white sits below clipping (about 60-100).
+
+## 2026-11-10 23:37:01 UTC - session compaction (auto)
+
+* session: `ses_e3c8c1f29ffeTK6LRQer4sg8qy`
+
+## Objective
+- Continue developing `qpy-rsync`, a PySide6 rsync GUI. Current focus is a large batch of UI/layout fixes, performance optimizations for very large comparisons (~77,000 objects), streaming output, and crash/debug fixes.
+
+## Requirements
+- Use system Python (`/usr/bin/python3`) and offscreen Qt tests; keep the full test suite green.
+- GUI validation on X11 `DISPLAY=:50` with `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` and `python3-pyatspi` when available.
+- Commit changes in small increments.
+- Defer packaging and desktop integration.
+- Tooltips must be multiline by sentence, default color, and attach only to the status bar area.
+- Recent profiles replace saving individual Source/Destination/Backup fields; close prompt only when settings changed since last profile load/save.
+- Profile save/load and status-bar messages must go to the diagnostics/journal.
+- Avoid terminal messages from Qt/X11 where possible.
+
+## Decisions
+- Override count derives from active explicit decisions, not click history.
+- Progress parsing canonical in `qpy_rsync.backend.sync_progress`.
+- Inventory mode uses `rsync --list-only`; unchanged objects render as `NO_CHANGE`.
+- Local and SSH execution both allowed.
+- Recent profiles at `~/.local/share/qpy-rsync/recent-profile.json`, QSettings key `profile/recent_path`.
+- Close-time dirty check ignores `profile_id` and `name`.
+- Action pane will rely on icons only (no action words) to maximize object-name space.
+- Tree row heights standardized via a delegate; all three panes must scroll identically.
+
+## Work State
+### Completed
+- Milestones through 1.15f, post-1.15f execution validation, app icon, profiles, recent-profile restore, dirty-check fixes.
+- Prior UI batch: action-type filters, action/source/destination icons, Journal rename, command preview in progress pane, status logging, Filters `[N/M]` button with STALE tooltip, Compare/Verify tooltips.
+- Verified OpenGL warnings: root cause is `QT_XCB_GL_INTEGRATION=none` combined with KDE platform theme (`XDG_CURRENT_DESKTOP=KDE`). Setting `QT_QPA_PLATFORMTHEME=generic` (with GL integration none) or `gtk3` removes all GL warnings; only `qt.qpa.xcb: X server does not support XInput 2` remains.
+- `ChangeDecisions` optimized with precomputed default decisions, `explicit_items()`, `override_paths()`, and O(decisions) `modified_count`.
+- `ChangeTreeModel` rewritten for performance: precomputed subtree destination-only flags, row indexes, cached override paths, icon caching via `lru_cache`, icon-only action column, full-path tooltips, action tooltips with rsync status.
+- `ChangeTreeFilterProxyModel` rewritten with a cached visible-path set; uses `invalidateFilter()` instead of model reset to preserve expansion.
+- `ComparisonView` updated with uniform row delegate (`ROW_HEIGHT = 22`, `CONTROL_SIZE = 30`), per-pixel scrolling, disabled horizontal scrollbars, first-level-only auto-expand, capped visible-match expansion, and action-filter hooks.
+- `icons.py` now caches `action_icon`, `unchanged_icon`, `swap_icon`, `source_icon`, `destination_icon`.
+- Tests passed after earlier batch: 156.
+
+### Active
+- Debugging a reproducible segfault when more than one `ComparisonView` exists (or after `MainWindow` is constructed) during the sequence: set changes → select action row → toggle decision (emits `layoutChanged`) → set changes again.
+- Crash stack shows `QSortFilterProxyModel::parent` during `QItemSelectionModel::select`, called from `QTreeView::setCurrentIndex`; Python reports `comparison_view.py:278` (`self.model.set_changes(changes)`).
+- Meanwhile implementing remaining user items below.
+
+### Blocked
+- Segfault must be resolved before full test suite can pass.
+
+## Next Move
+1. Fix multi-view segfault, likely by avoiding source-model reset while persistent proxy selection exists; try clearing all three views' selections/current index and proxy selection before reset, or defer reset; verify two-view repro.
+2. Update failing tests for icon-only action column (remove assertions on `"→ update"`, `"← keep"`, `"× delete*"` text).
+3. Implement remaining user items:
+   - P1: remove OpenGL warnings in launcher/app.
+   - P2/N10/N11: command preview must wrap, be inspectable/scrolling, and not widen window; remove vertical gap above it.
+   - P3/P4/N2/N12: standardize icon-only control sizes at `CONTROL_SIZE`; move Swap between mode selector and Compare.
+   - P5: Source/Destination icons left of their input fields (done structurally; verify size).
+   - N1: stream rsync output to Journal as it arrives (compare currently drops stdout; validation ignores stdout).
+   - N3/N4/N14: verify action filters restore correctly and unchanged toggle no longer hangs; make inventory asynchronous and cache result.
+   - N5: Filters editor Type column should use a dropdown delegate.
+   - N6: Compare needs progress monitoring and working Cancel.
+   - N7: confirm large-tree post-rsync CPU hang fixed by model/proxy/expand changes.
+   - N8: full object path in tree item tooltips (implemented; test).
+   - N9: drop action words (implemented; update tests).
+   - N13: extra empty tree line/scroll desync (row-height delegate implemented; verify all three scrollbar maxima match).
+   - N15: import `ChangeAction` in `main_window.py` and guard `eventFilter` during shutdown.
+
+## Relevant Files
+- `src/qpy_rsync/gui/change_tree_model.py`: rewritten model; icon-only actions, tooltips, override caching.
+- `src/qpy_rsync/gui/change_filter_proxy.py`: rewritten cached filter proxy; likely involved in segfault.
+- `src/qpy_rsync/gui/comparison_view.py`: layout, delegate, expansion, filter hooks; line ~278 is crash site.
+- `src/qpy_rsync/gui/main_window.py`: layout rework, inventory, preview, status logging, event filter bug.
+- `src/qpy_rsync/gui/icons.py`: cached icons; may add control icon helpers.
+- `src/qpy_rsync/core/changes.py`: optimized `ChangeDecisions`.
+- `src/qpy_rsync/services/compare_service.py`: needs streaming, progress, cancel.
+- `src/qpy_rsync/services/plan_validation_service.py`: add `on_spec`, stream stdout.
+- `src/qpy_rsync/services/sync_service.py`: already streams stdout/progress.
+- `src/qpy_rsync/backend/rsync_command.py`: add `--info=progress2` to compare spec.
+- `src/qpy_rsync/backend/inventory.py`: inventory gathering; candidate for async service.
+- `src/qpy_rsync/gui/filter_rule_model.py` / `filter_editor.py`: Type dropdown delegate.
+- `src/qpy_rsync/app.py` / `qpy-rsync.sh`: platform theme / OpenGL warning suppression.
+- `tests/unit/test_change_tree_decisions.py`: needs updates for icon-only action column.
+- `tests/unit/test_main_window_offscreen.py`: segfault repro `test_mode_reset_sequence_clears_proxy_selection_without_stale_indexes`.
+- `tests/unit/test_action_filters.py`: existing action filter tests.
+
+## Important Context
+- Repro: creating two `ComparisonView` instances (even deleting the first) or constructing `MainWindow` makes this sequence segfault: first `set_changes`, select `proxy.index(0, ACTION)` in action tree, `model.setData(... CheckStateRole ...)`, then second `set_changes`. A single fresh `ComparisonView` alone does not crash.
+- The crash disappears if the view is shown and `app.processEvents()` is called, suggesting pending `QTimer.singleShot(0, restore_views)` / view setup interacts with model reset.
+- `ComparisonView.set_changes()` currently clears current index and selection but still crashes on source model reset.
+- `layoutChanged` is emitted from `ChangeTreeModel.setData` for nodes with children; this may leave proxy persistent indexes that break on subsequent reset.
+- Environment: `DISPLAY=:50` is currently up. `QT_QPA_PLATFORMTHEME=generic QT_XCB_GL_INTEGRATION=none` gives no GL warnings.
+- Working tree has uncommitted changes from the performance rewrite; last commit `801ead8`.
+- `qpy-rsync-test.sh` wraps `/usr/bin/python3 -m pytest`.
+- Large test tree: 5,720 changed objects, 12 filters, ~77,000 total objects.
