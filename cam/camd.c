@@ -3228,9 +3228,18 @@ static void *client_thread(void *arg)
 												int n = sx1 - sx0;
 												for (sx = sx0; sx < sx1; sx++)
 													a += row[sx];
+												/*
+												 * The box is one or
+												 * two pixels wide
+												 * (crop_w/out_h is
+												 * 1.71): divide with
+												 * a shift, not the
+												 * software divide.
+												 */
+												if (n == 2)
+													a = (a + 1) >> 1;
 												orow[mx] +=
-													(unsigned short)
-													(a / (n ? n : 1));
+													(unsigned short)a;
 											}
 										}
 									}
@@ -3245,7 +3254,9 @@ static void *client_thread(void *arg)
 									mid + my * out_h;
 								for (mx = 0; mx < out_h; mx++) {
 									unsigned long v =
-										orow[mx] / (nr ? nr : 1);
+										(nr == 2) ?
+										(((unsigned long)orow[mx] + 1) >> 1) :
+										orow[mx];
 									v *= luma_gain;
 									if (v > 255) v = 255;
 									/* 90 deg CCW:
