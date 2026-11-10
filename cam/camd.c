@@ -1470,7 +1470,15 @@ static void *cpp_event_thread(void *arg)
 		io.id = ev.id;
 		io.len = sizeof(info);
 		io.ioctl_ptr = &info;
-		ioctl(cpp_fd, VIDIOC_MSM_CPP_GET_EVENTPAYLOAD, &io);
+		if (ioctl(cpp_fd, VIDIOC_MSM_CPP_GET_EVENTPAYLOAD, &io) == 0) {
+			static int ev_n;
+			if (++ev_n % 100 == 0)
+				printf("[cpp] ev#%d out=%u in=%u divert=%u\n",
+				       ev_n,
+				       info.output_buffer_info[0].index,
+				       info.input_buffer_info.index,
+				       info.output_buffer_info[0].processed_divert);
+		}
 		/*
 		 * DQEVENT can keep returning events (a fast producer, or
 		 * a spurious repeat) with no sleep on success, which pins
