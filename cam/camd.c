@@ -2515,6 +2515,18 @@ static void *client_thread(void *arg)
 		r = poll(&pfd, 1, 5000);
 		if (r <= 0) {
 			printf("[client] no frame after 5s\n");
+			/*
+			 * The stream stalled after it had been producing
+			 * frames (the ISP drops them and never recovers in
+			 * place).  A fresh camd does recover, so exit and
+			 * let the init stub's supervisor start one; the
+			 * client reconnects.  Do not do this before the
+			 * first frame: the start-up can take longer than
+			 * the poll timeout, and exiting there would just
+			 * loop.
+			 */
+			if (latest_seq > 0)
+				_exit(1);
 			continue;
 		}
 		p4 = now_ns();
