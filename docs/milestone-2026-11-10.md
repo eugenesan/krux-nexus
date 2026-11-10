@@ -89,6 +89,29 @@ page's auto-exposure cannot win against a self-luminous subject.
   `/data/krux/cppmsg.bin`, a raw little-endian array of 32-bit words.  It
   must start with `0x3e646d63` and end with `0xabcdefaa`.
 
+## Observed on the rebuilt state (to test and fix after the stripes)
+
+Recorded as reported, on the clean rebuild (`gcf9fd9c2edf`, `camd`
+`9e4f42c7`, interpreter `2e79e259`):
+
+1. A **7 % strip on the left** of the preview that flickers when
+   something moves in the frame.
+2. A **20 % band immediately right of that strip**, transparent but
+   visible when something moves.
+3. The camera **finds and decodes a QR**, then the page throws
+   `ValueError('Failed to decode BIP39 from CBOR')`.  The phone is
+   showing the Sparrow **PSBT UR**, which belongs on Sign -> PSBT, not
+   on Load Mnemonic -> QR Code, so the payload type is the mismatch,
+   not the decoder.
+4. The **entropy preview started to flicker**: its auto-exposure sits at
+   the maximum (`exp=0x09d6`, `gain=0x00ff`) with the picture below its
+   target (`ENTROPY_TARGET` 128) and the phone's screen changing under
+   it.
+
+Numbers 1 and 2 are the five chroma stripes (see below).  Number 4 is
+the auto-exposure being unable to darken a self-luminous screen: the
+same reason the QR page cannot expose for a screen that is too bright.
+
 ## The rules this state respects
 
 - The tree is the source of truth; the device's copy is a deploy
