@@ -3564,6 +3564,17 @@ proc_done:
 			}
 		}
 		if (stalled) {
+			/*
+			 * The same buffer keeps coming back: the ISP is not
+			 * writing and the stream is not recovering by
+			 * itself.  Do NOT try STREAMOFF/STREAMON to restart
+			 * it -- on this kernel STREAMOFF does not release
+			 * the ISP write masters, STREAMON then fails with
+			 * "No free write masters", the buffers never return
+			 * and the hardware watchdog bites (wdog_bite).
+			 * Just back off so the stall does not spin a core;
+			 * a reboot is the only recovery.
+			 */
 			static int s_log;
 			if (s_log++ < 5)
 				printf("[client] stalled on one buffer; backing off\n");
