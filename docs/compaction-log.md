@@ -2536,3 +2536,531 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - The 293-word CPP message is clamped/logged as 266; do not use it.
 - `krux` submodule is dirty (`m krux`) and `docs/compaction-log.md` is modified.
 - Camera scans: ask the user, give a 10-second cue, scan ~20 s, then tell them to return.
+
+## 2026-11-06 16:15:52 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable in the Krux port: QR scanning (compact/medium/high density, static/animated UR/BBQR) and then entropy collection from camera images, with the project tree as the single source of truth.
+
+## Requirements
+- Project tree is the source of truth; device code must never be newer than the tree.
+- Two deployment targets: `/data/krux` (dev, pushed by `scripts/deploy-firmware.sh`) and `/opt/krux` (bundled in the boot image). Use `/data/krux` exclusively until the project is finalised; do not edit files on the device directly.
+- Temporary camera state (e.g. `af`) must live in `/tmp`, be optional, and be reinitialised when missing.
+- Do not break the entropy capture while tuning QR scanning.
+- Never flash; `fastboot boot` only. Cold boot when the camera pipeline needs a clean session.
+- Never aim/start a camera scan without asking; 10-second cue, ~20 s scan, then tell the user to return.
+- No modem/Wi-Fi/BT/vendor HAL; no symlinks in the Krux tree.
+- Camera scans: ask the user, give a 10-second cue, scan ~20 s, then tell them to return.
+- Keep the delivered frame modest; 720×960 is current, 1640×1232 is the source.
+
+## Decisions
+- The device's `/data/krux` snapshot was commit `9bfd7c20` (11-04 21:11) — 27 commits behind the project tree, not newer. The previous "restore from device" was a pure regression; reverted (`fc0709ee`).
+- `/data/krux` now takes precedence over `/opt/krux`; the dev boot image is built without `--bundle` (one firmware copy only).
+- Camera tuning state lives in `/tmp/krux/{af,focus,luma_gain,unsharp}`; camd reads it at startup and writes defaults when missing.
+- `af` level 0 = autofocus off (silent failure); default is now 2. `MIN_GAIN=0x0060`, `MAX_GAIN=0x00FF`, `MIN_EXPOSURE=0x0100`, `MAX_EXPOSURE=0x09d6`, `BRIGHT_TARGET=225`, `SATURATED=250`, `SETTLED_TOLERANCE=18`.
+- AE measures the bright pixels of the **middle of the frame** (`l_bright_mean` over the ROI, native stat added).
+- AE rules: saturated → digital gain off first, then exposure ×0.7, then analog gain; too dark → exposure first, then analog gain; digital gain never used to brighten (it lifts noise with signal and pins the measurement). Digital gain reset to 1 at every scan start.
+- Auto-exposure follows the scene continuously (every 3rd frame) and is frozen while the AF sweeps (`hdr[18]` carries the sweep state; `sensor.sweeping()`).
+- The AF sweep is deferred: no sweep at page open; a sweep is requested when the code is unread for ≥15 frames, the picture is settled, at most 2 per scan. Tap = full refocus; PWR (== ENTER) leaves the camera; `−`/`+` strip and Vol± adjust exposure.
+- The decoder and the statistics now use the sensor's **own luma plane** (kept in the native image object); the RGB565 round trip cost up to 5 levels/pixel and was removed from both paths.
+- The picture stays **grey**: the chroma plane is centred on 16, not 128, so it is not NV12 and a YUV conversion turns the picture green. The chroma is read and dropped.
+- ZXing/Android reference: `PlanarYUVLuminanceSource` "uses Y channel directly without RGB conversion"; robustness to lighting comes from `HybridBinarizer` (local 8×8 thresholding), not from the camera; ZXing's Android app does no AE of its own.
+- The memory-wipe kexec experiment is off master (branches `airgap/memory-wipe` in outer repo, `krux`, `krux/firmware/micropython`; kernel side already on `linux:airgap/memory-wipe`).
+- `scripts/deploy-firmware.sh` now verifies the interpreter md5 on the device and fails loudly if it differs.
+
+## Work State
+### Completed
+- Snapshot analysed: 195 `.py` files; 138 identical to the tree, 1 (`image.py`) newer in the tree, 56 device-only scratch `test_*.py`. `docs/device-snapshot-analysis.md` written.
+- Reverted the bogus device "restore"; deleted `deploy/working-krux/` and `scripts/deploy-working-krux.sh`.
+- Init stub rebuilt with `/data/krux` precedence; dev image without bundle; `rootfs/stub/krux-init` rebuilt.
+- Fixed the ROI-statistics call bug (native `get_statistics_roi`, not the Python wrapper) — the AE had been measuring the whole frame all along.
+- Fixed `stats.l_bright_mean` missing `()` (bound-method arithmetic crash) and `self._ae_exposure` read before assignment.
+- Added `sys.print_exception` traceback for camera-start failures; replaced the bogus "Let it cool" message with "Try again".
+- Added the native `l_bright_mean`/`l_bright_count` statistics; the image object keeps the luma plane.
+- `camd` rebuilt from source; `deploy-firmware.sh` rebuilds it when the source is newer; removed the obsolete `tools/ae-patch.py`/`build-ae-camd.sh` (they duplicated the AE block).
+- QR scanning works: low/medium density, animated and non-animated; HD QR decoded on the first attempt after the brightness settled, and instantly on repeat scans with a good starting exposure.
+- Entropy path isolated: digital gain forced off, manual exposure lock ignored, in `ENTROPY_MODE`.
+
+### Active
+- HD QR still sensitive to the exact exposure and takes ~10 s to settle; pointing away at a darker scene sends the exposure to the ceiling and it does not come back down promptly.
+- User was asked to re-test HD QR with the true-luma decoder/AE (device running `7d90d5c9…`).
+
+### Blocked
+- Chroma format unknown (values centred on 16, not 128) — colour preview cannot be enabled safely without a colourful test scene.
+- Memory-wipe kexec handoff still hangs/resets at the bootloader; needs a serial console on `ttyHSL0`.
+- Intermittent broken preview (grey bar, odd shapes) seen once; not reproduced since, cause unknown.
+
+## Next Move
+1. Wait for the user's HD QR re-test with the true-luma decoder/AE; check `fw.log` `Camera AE mean=…` lines and `camd.log` `[af]` trace.
+2. Restore the full-resolution decode path for dense codes (`sensor.snapshot_full()` + camd `H` command, removed in `3b5761d`/`f8cce078`, known code in `16fa1cd`/`2d69a789`): preview is 720×960 from a 1640×1232 source, so a dense code is decoded at ~1/3 of the pixels per module.
+3. Consider a ZXing-style local adaptive binariser in the native module (currently quirc thresholds globally — the other half of "detects instantly regardless of lighting").
+4. Make the AE converge faster / recover from a dark scene: investigate why pointing away leaves the exposure at the ceiling.
+5. Then start the entropy capture task (entropy collection from camera image with preview), using the new AE.
+6. Update `docs/cam-state.md` with the final AE/AF design; commit and push everything.
+
+## Relevant Files
+- `krux/src/krux/camera.py`: the Camera object, `_stats`, `_level`, `_auto_expose`, `auto_expose_step`, `adjust_exposure`, `picture_settled`, `auto_expose_follow`, `initialize_run`.
+- `krux/src/krux/pages/qr_capture.py`: the scan loop — continuous AE every 3rd frame, deferred sweep trigger, tap = refocus, PWR = exit.
+- `krux/src/sensor.py`: `snapshot()`, `set_luma_gain()`, `set_exposure_gain()`, `refocus()`, `sweeping()`.
+- `krux/src/image.py`: `from_nv12` wrapper, `get_statistics(roi)`.
+- `cam/camd.c`: camera daemon — publish gate, AF sweep state machine, `af_best_contrast`, `af_sweeping`, `af_abort`, `state_read`, `luma_gain` command, `H`/full-res path absent.
+- `krux/firmware/micropython/ports/unix/image_maixpy.c`: `from_nv12` (grey packing + luma plane), `find_qrcodes`, `get_statistics`, `get_statistics_roi`, `image_luma`.
+- `scripts/deploy-firmware.sh`: the deployment path; now verifies the interpreter md5 and rebuilds camd when stale.
+- `rootfs/init-stub.c`: firmware dir selection (`/data/krux` first, `/opt/krux` fallback).
+- `rootfs/build-stub-ramdisk.sh`, `rootfs/make-boot-image.sh`: ramdisk/boot-image build (no `--bundle` for dev).
+- `deploy/device-config/`: `af`, `focus`, `luma_gain`, `unsharp` + README.
+- `docs/device-snapshot-analysis.md`: the snapshot-vs-tree analysis and the two extra traps found.
+- `docs/cam-state.md`: camera state (needs updating with the final AE/AF design).
+- `docs/cam-autofocus.md`, `docs/cam-frame-path.md`: camera findings; the former records the `damping_step=0` stall.
+- `/tmp/opencode/look.py`: host-side analysis of a dumped frame (luma/ROI means, clipped counts, brightness map).
+- `/tmp/opencode/bootonly.sh`: reboot-to-stub helper (`adb reboot bootloader` → `fastboot boot /tmp/opencode/boot-dev.img`).
+
+## Important Context
+- Devices: original `0643efdcf0eca63a` (Android, working `/data/krux`), test `0879524b0068abca` (stub). Boot image in use: `/tmp/opencode/boot-dev.img` (built from `artifacts/built/ramdisk-stub` + `/tmp/opencode/ko-cam-xz/arch/arm/boot/zImage-dtb`).
+- `fastboot boot` interrupted by a tool-call abort leaves the device in Android — run boot steps detached (`setsid nohup /tmp/opencode/bootonly.sh &`) and never interrupt them.
+- Dump helper: `adb push /tmp/opencode/dumpctl.py /tmp/krux-dump.py` then `adb shell '/data/krux/micropython /tmp/krux-dump.py'`; camd `D` command writes `/data/krux/scan.raw` (luma) and `/data/krux/scan_uv.raw` (chroma).
+- `luma_gain`/`unsharp`/`af`/`focus` are read by camd at startup from `/tmp/krux/`; the `G` socket command sets the luma gain live.
+- The AE's bright mean is the mean of the pixels within 40 levels of the frame's brightest pixel — a few brighter outliers can pin it, which is why the ROI is used.
+- Measured: luma→RGB565→luma costs mean 2.5 / max 5 levels, 51 % of pixels off by >2; the delivered chroma plane is centred on 16 (mode 16, range 9–45).
+- The device's frame is noisy in dim scenes (pixel values jumping 23→27→80→43→24) — the likely remaining cause of dense-code contrast loss, not a downscale fault.
+- Commits: outer repo `90722ba`…`6ce05fe` (see `git log`), `krux` `fc0709ee`…`653d52a9`, micropython `017f22065`…`cd318f145`. Nothing is pushed yet (outer repo is ahead of origin/master by ~134 commits; `krux` ahead of `eugenesan/nexus-port` by ~81).
+- The entropy capture measures Shannon entropy over `img.to_bytes()` and the L/A/B channel spread — so any change to the delivered picture changes the entropy measurement; the digital gain is therefore forced off for it.
+- `docs/compaction-log.md` is modified but uncommitted; `krux` submodule pointer updates must be committed in the submodule first, then in the outer repo (use absolute paths — `cd ..` inside the submodule lands in the wrong repo).
+
+## 2026-11-09 01:48:45 UTC - session compaction (manual)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable in the Krux port: QR scanning (compact/medium/high density, static/animated UR/BBQR) and then entropy collection from camera images, with the project tree as the single source of truth.
+
+## Requirements
+- Project tree is the source of truth; device code must never be newer than the tree.
+- Two deployment targets: `/data/krux` (dev, pushed by `scripts/deploy-firmware.sh`) and `/opt/krux` (bundled in the boot image). Use `/data/krux` exclusively until finalised; do not edit files on the device directly.
+- Temporary camera state (e.g. `af`) must live in `/tmp`, be optional, and be reinitialised when missing.
+- Do not break the entropy capture while tuning QR scanning.
+- Never flash; `fastboot boot` only. Cold boot when the camera pipeline needs a clean session.
+- Never aim/start a camera scan without asking; 10-second cue, ~20 s scan, then tell the user to return.
+- No modem/Wi-Fi/BT/vendor HAL; no symlinks in the Krux tree.
+- Keep the delivered frame modest; 720×960 is current, 1640×1232 is the source.
+- Micropython heap can be enlarged freely (device has 2 GB); firmware launches with `-X heapsize=32M`.
+
+## Decisions
+- `/data/krux` takes precedence over `/opt/krux`; dev boot image built without `--bundle`.
+- Camera tuning state lives in `/tmp/krux/{af,focus,luma_gain,unsharp}`; camd reads it at startup and writes defaults when missing.
+- `af` level 0 = autofocus off; default is 2. `MIN_GAIN=0x0060`, `MAX_GAIN=0x00ff`, `MIN_EXPOSURE=0x0100`, `MAX_EXPOSURE=0x09d6`, `BRIGHT_TARGET=225`, `SATURATED=250`, `SETTLED_TOLERANCE=18`.
+- AE measures the bright pixels of the middle of the frame (`l_bright_mean` over the ROI, native stat).
+- AE rules: saturated → digital gain off first, then exposure ×0.7, then analog gain; too dark → exposure first, then analog gain; digital gain never used to brighten.
+- Auto-exposure follows the scene every 3rd frame and is frozen while AF sweeps.
+- AF sweep deferred: no sweep at page open; requested when unread ≥15 frames, picture settled, max 2 per scan. Tap = full refocus; PWR (== ENTER) exits; `−`/`+` strip and Vol± adjust exposure.
+- Decoder and statistics use the sensor's own luma plane; RGB565 round trip removed (cost up to 5 levels/pixel).
+- Picture stays grey: chroma plane is centred on 16, not 128, so it is not NV12; a YUV conversion turns the picture green.
+- **Field of view is NOT cropped** — proven against the Android camera on the same device/scene; our FOV is the same (phone body covers 87% Android / 84% ours). Kernel reports zero CAMIF geometry errors; camd's downscale reconstructs the preview with correlation 0.979.
+- **The framing problem was aim + distance**, not optics: phone was ~3.5× further away than in the Android reference photo.
+- **The real decode blocker is the illumination gradient together with the screen moiré**; each alone is survivable.
+- The stub ramdisk must be **gzip**, not xz — the stock bootloader silently boots nothing with xz and the device falls back to Android.
+- Plan reordered: exposure ceiling first (baseline otherwise measured through a broken controller); Step 3 becomes 3a remove 2-pixel artefact, 3b flatten illumination, 3c threshold modes.
+
+## Work State
+### Completed
+- Reverted bogus device "restore"; deleted `deploy/working-krux/` and `scripts/deploy-working-krux.sh`.
+- Init stub rebuilt with `/data/krux` precedence; dev image without bundle.
+- Fixed ROI-statistics call bug (native `get_statistics_roi`), `stats.l_bright_mean` missing `()`, `self._ae_exposure` read before assignment; added tracebacks.
+- `camd` rebuilt from source; `deploy-firmware.sh` rebuilds when stale and verifies the interpreter md5.
+- QR scanning works for low/medium density, animated and non-animated.
+- `docs/cam-ae-af-brief.md` written (SoC corrected to MSM8974); review doc `docs/cam-bringup-af_ae_qr-review.md` committed; plan `docs/cam-ae-af-plan.md` written and twice updated.
+- `docs/cam-corpus-findings.md` written and updated three times.
+- Host harness `tools/quirc-replay` built and verified; both local-threshold paths compile (`K_QUIRC_BILINEAR_THRESHOLD`, `K_QUIRC_ADAPTIVE_THRESHOLD`).
+- Tablet display chain `tools/show-qr` built, pixel-exact and self-verifying (`"verified": true`, 6 px/module measured back from the tablet's screenshot).
+- Tools built: `tools/capture-one.py`, `tools/capture-corpus`, `tools/corpus-capture`, `tools/corpus-try`, `tools/frame-try`, `tools/moire-test`, `tools/locate-qr`, `tools/make-qr-targets`, `tools/send-key`, `tools/boot-stub`, `tools/measure-fps`, `tools/measure-period`, `tools/measure-rate`, `tools/preview-vs-source`, `tools/decode-qr`, `tools/decode-frame`, `tools/code-orientation`, `tools/aim-check`, `tools/aim-now`.
+- Paper QR identified as **version 17** (85×85 modules), 6.0 source px/module, 2.63 preview px/module.
+- Sensor's 2-pixel artefact characterised: even/odd bias, 33% of variance on blank paper; notch restores finder detection at full resolution.
+- Moiré/gradient experiment done: only gradient+moiré together break the decode; gradient must fall from 5.8× to ~1.1×.
+- Android reference photos taken; field-of-view question settled; whole chain proven (Android code decodes with our decoder at 809×815 and at 541×545 = 5.1 px/module).
+- First corpus capture: 20 frames of `v20-dense` across the exposure ladder at two gains, exposure writes sticking; finders detected at 8.14 px/module in the good frames.
+
+### Active
+- Second corpus capture: waiting for the phone to be moved ~3.5× closer and aimed at the code (currently 0.68 px/module, code at the right edge).
+
+### Blocked
+- Chroma format unknown (values centred on 16) — colour preview unsafe without a colourful test scene.
+- Memory-wipe kexec handoff hangs at the bootloader; needs a serial console on `ttyHSL0`.
+- Intermittent broken preview (grey bar, odd shapes) seen once; not reproduced.
+
+## Next Move
+1. Ask the user to move the phone ~3.5× closer and centre the code; they can iterate with `./tools/aim-now` (target ≥5 px/module, whole code in frame).
+2. Optionally offer to re-display the code larger on the tablet (filling the screen width instead of 630/1280 px) to gain 1.6× px/module.
+3. Re-run the corpus sweep (`/tmp/sweep.sh` pattern, or `tools/corpus-capture`) once framing is good; capture preview + source per exposure.
+4. Run `tools/decode-frame` / `tools/corpus-try` offline over the corpus: notch (axis + diagonal), flat-field, then threshold modes.
+5. Implement the exposure-ceiling clamp in `camd` (`VMAX-4`, echo applied value back) plus anti-windup.
+6. Fix `K_QUIRC_MAX_BITMAP` 1954 → 3917 (versions 28–40).
+7. Then full-resolution crop-and-decode, percentile AE, AF scheduling, entropy capture.
+
+## Relevant Files
+- `docs/cam-corpus-findings.md`: the consolidated findings — FOV test, paper QR, gradient+moiré result, corpus status.
+- `docs/cam-ae-af-plan.md`: the ordered plan with the revised Step 3 and the two preconditions for a valid capture.
+- `docs/cam-bringup-af_ae_qr-review.md`: the external review being followed.
+- `krux/src/krux/camera.py`: AE (`auto_expose_step`, `_stats`, `_level`, `picture_settled`), `MAX_EXPOSURE` at line 46.
+- `krux/src/krux/pages/qr_capture.py`: the scan loop, AE every 3rd frame, deferred sweep trigger.
+- `cam/camd.c`: daemon — downscale, publish gate, AF sweep, `E`/`V`/`D` socket commands, ISP-IF crop.
+- `krux/firmware/micropython/ports/unix/image_maixpy.c`: `from_nv12` (grey packing + luma plane), `find_qrcodes`, `get_statistics_roi`.
+- `krux/firmware/micropython/ports/unix/k_quirc.h`: `K_QUIRC_MAX_BITMAP 1954` (version-27 ceiling).
+- `krux/firmware/micropython/ports/unix/k_quirc.c`: `K_QUIRC_MAX_IMAGE_DIM 1280` (blocks the 1640×1232 source).
+- `rootfs/build-stub-ramdisk.sh`: now defaults to `COMPRESS=gzip`.
+- `tools/aim-now`, `tools/aim-check`: live aiming feedback.
+- `tools/decode-frame`, `tools/corpus-try`, `tools/moire-test`: offline correction experiments.
+- `tools/show-qr`: verified tablet display.
+- `tools/boot-stub`: reboot-to-stub helper (device returns to Android after any reboot).
+- `tools/send-key`: ENTER = KEY_POWER on `/dev/input/event0`; closes the camera page.
+
+## Important Context
+- Devices: original `0643efdcf0eca63a` (Android, not connected), test `0879524b0068abca` (stub). Tablet: `41036f02470031ff` (GT-N5110, 800×1280, Android 4.4.2, ~188.7 PPI).
+- Boot image rebuilt at `/tmp/boot-dev.img` from `artifacts/built/kernel-stub` + `artifacts/built/ramdisk-stub` (gzip) via `rootfs/make-boot-image.sh`.
+- The camera page in Krux **must be closed** before any capture: while open, the firmware AE writes exposure every 3rd frame and overrides the capture script. Verify in `camd.log`: last line should be `[sensor] E exp=0x.... gain=0x.... (ctl)`.
+- Tablet sleep fix: `settings put global stay_on_while_plugged_in 3`, `screensaver_enabled 0`, `screen_off_timeout 1800000`; wake with power key + corner tap (centre tap closes the gallery).
+- Android camera reference (`/tmp/opencode/android_ref.jpg`) is 2448×3264, code at 7.70 px/module; the control that proves the decoder works.
+- Sensor read-back: `0x0340/0x0341 = 0x04e4` (VMAX 1252), `0x0342/0x0343 = 0x0d70` (HMAX 3440, full-mode value); exposure must be ≤ VMAX−4 = 0x04e0.
+- The tablet shows codes at 9×9 cm to 11×11 cm physically; computer QRs are ~9–11 cm, phone QRs ~4–5 cm.
+- Backgrounds on computers/phones are usually dark/black — a dark surround actually helps quirc's flood fill.
+- Commits this session: outer repo `9315e8d`…`e565c11`; `krux` `653d52a9`; micropython `cd318f145`. Nothing pushed.
+- `docs/compaction-log.md` modified but uncommitted; `krux` submodule pointer updates must be committed in the submodule first, then in the outer repo (use absolute paths).
+- ADB intermittently drops the phone after reboots; `adb kill-server && adb start-server` recovers it.
+- `/tmp/opencode` is wiped by reboots — keep tooling in `tools/`.
+
+## 2026-11-09 17:05:55 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable for QR scanning (computer screens, small phones) and entropy collection, with a fast preview and a high-resolution QR path.
+
+## Requirements
+- Never flash; `fastboot boot` only; cold boot when the camera pipeline needs a clean session.
+- Project tree is the source of truth; device code must never be newer; deploy to `/data/krux`.
+- Temporary camera state in `/tmp` (e.g. `af`, `mode`, `stream`, `bench`, `hwscale`); no symlinks in the Krux tree.
+- Do not break the entropy capture while tuning QR.
+- Never aim/start an interactive camera scan without asking (10 s cue, ~20 s scan, then tell the user to return).
+- No modem/Wi-Fi/BT/vendor HAL; keep the delivered preview modest.
+- Tablet is offline (battery depleted); the second Nexus 5 is the target display. Lights are off during AF/AE testing.
+
+## Decisions
+- **Full-res plan (user's, accepted):** switch to full-res 3280×2464, centre-crop 2160×2160, drop chroma, integer ÷2 to 1080×1080 for preview/entropy, 1:1 sub-crop for quirc.
+- Assistant corrections to the plan: quirc sub-crop must be **1:1** (prefer **1280×1280**, decoder max), rotate the preview, move the publish gate off the chroma, bounce-copy only the crop, `sensor.snapshot` still throttles to 15 fps unless reduced to 33 ms.
+- Shared memory: camd publishes luma to `/tmp/krux/frame` (seqlock); `A` keepalive required or camd goes idle.
+- Uncached ION handled by a cached bounce buffer; build uses `-O2 -ftree-vectorize -mfpu=neon`.
+- AE: `QR_MAX_EXPOSURE 0x04E0`, `DEFAULT_EXPOSURE 0x0400`, lock on decode, code-box ROI, unlock after 15 unread frames.
+- `hwscale` (ISP PIX scaler) off by default — captured sequence does not configure the scaler.
+
+## Work State
+### Completed
+- Binning crop bug fixed: `settings_7` lacked binning; added `0x0383/0x0387 = 0x03` (odd_inc 3) in `cam/camd.c` and `cam/imaging8.c`; full FOV restored.
+- Full-res mode works (3280×2464); binned is 1640×1232. Vendor library has only these two output sizes.
+- Real decode blocker found: **focus** — AF sweep settles at focus step 12 (sharpness ~1.77M); earlier frames at bad focus.
+- AE fixes implemented and verified: exposure ceiling, lock-on-decode, code-box ROI, unlock-on-lost-code; `qr_capture.py` wired.
+- Black background: 8 cm V20 decodes at 0x0400/0x04e0; 4 cm V2 decodes; 4 cm V20 fails (needs full-res).
+- Shared memory + `A` keepalive implemented; `image.from_shared()` / `shared_status()`.
+- Downscale: row-contiguous two-pass + cached bounce buffer + NEON; **230 → 45 ms**, preview **4.3 → ~15 fps**.
+- CPP `EAGAIN` was buffer starvation from slow downscale; resolved by the fix.
+- `tools/show-qr` now supports `--device`, `--screen`, `--background`, `--scene computer`, `--brightness`; no synthetic touches.
+- `tools/scan-on-device.py` drives the app's AE/AF/decode path; timing tools added.
+- Docs updated (`docs/cam-corpus-findings.md`, `docs/cam-ae-af-plan.md`).
+
+### Active
+- User's latest request: **cheap method to detect QR size in the full frame and dynamically crop to 1280×1280 (not necessarily centred, ~10 % margin for hand movement)**, avoiding pre-cropping full-res and giving proper pixel density; user assumes they will move the QR closer if detection fails.
+- Design/implementation of the full-res 2160×2160 pipeline with the four corrections above.
+
+### Blocked
+- Tablet offline (battery depleted) — second Nexus 5 (`0643efdcf0eca63a`, 1080×1920, Photos Go) is the target.
+- ISP PIX hardware scaler: registers not mapped from captured vendor config; `hwscale` yields no frames.
+- Lights off — AF/AE-dependent tests limited.
+
+## Next Move
+1. Answer/design the dynamic QR detection + dynamic 1280×1280 crop (finder-pattern detection on the 1080 preview or the 2160 crop, then a 1:1 crop with 10 % margin).
+2. Implement the full-res plan: centre 2160×2160 crop, drop chroma, integer ÷2 preview/entropy, 1:1 quirc sub-crop; fix the publish gate to use luma.
+3. Measure 30 fps target (crop memcpy ~19 ms + 2×2 ~3 ms + rotate ~2 ms + sub-crop ~2 ms ≈ 26 ms vs 33 ms sensor period).
+4. Re-test 4.5 cm V20 at 21 cm (full-res ≈5.4 px/module).
+
+## Relevant Files
+- `cam/camd.c`: sensor modes, downscale/bounce, shm publish, publish gate, ISP-IF crop, knobs.
+- `krux/src/krux/camera.py`: AE controller, `QR_MAX_EXPOSURE`, lock/unlock, code box, `_stats`.
+- `krux/src/krux/pages/qr_capture.py`: scan loop, AE follow, lock-on-decode, deferred AF sweep.
+- `krux/src/sensor.py`: `snapshot()` shared-memory path, `A` keepalive, 66 ms throttle.
+- `krux/src/image.py`: wrapper `from_shared`, `shared_status`.
+- `krux/firmware/micropython/ports/unix/image_maixpy.c`: `from_shared`, `find_qrcodes`, stats (a/b_stdev fixed 10).
+- `krux/firmware/micropython/ports/unix/k_quirc.h` / `k_quirc_internal.h`: `K_QUIRC_MAX_BITMAP 1954` (V27), `K_QUIRC_MAX_IMAGE_DIM 1280`, `K_QUIRC_MAX_PROCESS_VERSION 40`.
+- `tools/show-qr`: target display (device/screen/scene/brightness).
+- `tools/scan-on-device.py`: app-path scan harness.
+- `tools/capture-one.py`: fixed-exposure capture via control socket.
+- `scripts/cam/build-camd.sh`: camd build flags (NEON/-O2).
+- `docs/cam-corpus-findings.md`: consolidated findings incl. performance section.
+- `docs/cam-ae-af-plan.md`: ordered plan.
+- `/tmp/boot-dev.img`: dev stub boot image (`fastboot boot`).
+
+## Important Context
+- Scanner `0879524b0068abca` (stub); target Nexus 5 `0643efdcf0eca63a` (Android, 1080×1920); tablet `41036f02470031ff` offline.
+- `scan.meta` reports `w=1640 h=1232` (binned) or `3280 2464` (full); focus step 12 is the good focus.
+- Downscale bench: byte-by-byte uncached ION 20 MB/s; memcpy 247 MB/s. Preview 720×960 (`OUT_W/OUT_H`); `sensor.py WIDTH/HEIGHT = 720/960`.
+- Entropy uses luma-derived RGB565; chroma unused (a/b_stdev fixed at 10).
+- Decoder needs ~4–5 px/module; version ceiling V27 (`K_QUIRC_MAX_BITMAP 1954`; 3917 for V28–40).
+- Max distance (4 px/module): `d = 1605/N cm` binned source, `939/N cm` for 720×960 preview; 4.5 cm V20 (113 modules) ≈ 14 cm / 8 cm.
+- Frame fill for 4 px/module at 1200 px: V20 ~35–38 %, V27 ~42–44 %, V40 ~59–62 %.
+- ISP has multiple streams (PIX + RDI); camd currently uses one (`CAMIF_RAW`). ISP-IF crop is horizontal-only; VFE crop+scale (digital zoom) not configured.
+- Commits: outer `63c4333`, `3a46648`, `c88bb3b`, `31cea80`, `950f88a`, `96c51fc`, `b16ab3c`, `2c3d82c`, `19e941f`; `krux` `7870e344`, `2592b329`, `19def53d`; micropython `332201316`. Nothing pushed.
+- Phone intermittently falls back to Android; recover with `tools/boot-stub /tmp/boot-dev.img` or `adb reboot bootloader` + `fastboot -s 0879524b0068abca boot /tmp/boot-dev.img`.
+- Deploy with `ANDROID_SERIAL=0879524b0068abca bash scripts/deploy-firmware.sh` (two devices connected).
+
+## 2026-11-10 03:42:55 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable for QR scanning (screens, small phones) and entropy collection, with a fast preview, a high-resolution QR path, and no kernel hangs.
+
+## Requirements
+- Never flash; `fastboot boot` only; cold boot when the camera pipeline needs a clean session.
+- Project tree is the source of truth; device code must never be newer; deploy to `/data/krux`.
+- Temporary camera state in `/tmp` (e.g. `af`, `mode`, `stream`, `bench`, `hwscale`); no symlinks in the Krux tree.
+- Do not break the entropy capture while tuning QR.
+- Never aim/start an interactive camera scan without asking (10 s cue, ~20 s scan, then tell the user to return).
+- No modem/Wi-Fi/BT/vendor HAL; keep the delivered preview modest.
+- Full-res plan: 3280×2464 → centre 2160×2160, drop chroma, integer ÷2 → 1080×1080 preview/entropy, 1:1 sub-crop for quirc (prefer 1280).
+- Cap processing at QR V20; the real sample is V17.
+- Dynamic QR detection and crop to 1280 (not necessarily centred), ~10% margin.
+- Fix the preview flicker/bands; entropy needs AE/AF controls and an on-screen instructions line.
+- Build everything with the host's `arm-linux-gnueabihf` (hard-float); Debian armel, Linaro/AOSP and ARM GNU toolchains are obsolete.
+
+## Decisions
+- V20 cap is enough (Sparrow sample is V17, 85 modules, 923-byte UR); decodes on host and device.
+- Dynamic crop: locate on the 1080 preview, request a 1:1 crop from the 2160 bounce; new `/tmp/krux/crop` shm + `C x y w h` command.
+- Gate keys off the chroma (sampled from `src_uv`) to drop the ISP's dark raw frames; luma-only gate caused the dark overlay.
+- Full-res pipeline implemented (2160 crop → 2×2 → 1080 preview), but **binned is the default** for stability; full-res is unreliable after warm boots.
+- CPP retry is 3×2 ms: 250 ms starved the ISP (tasklet overflow → `wdog_bark`); zero retry deadlocked the CPP.
+- **Do not `_exit`/restart camd**: this kernel's teardown is broken (`Invalid close`, `csid invalid state`) and the re-init overflows the ISP-IF PIX0/tasklet → `wdog_bark`.
+- Deploy with `DEPLOY_RESTART=0` + cold boot; `ctl.stop/start krux` can wedge the display (`pan_idle`).
+- Kernel NULL check in `msm_cpp.c` (`GET_EVENTPAYLOAD` returns `-ENODATA` on empty) is the correct drain fix; kernel rebuilt with the host toolchain.
+
+## Work State
+### Completed
+- Binning crop fix; full-res mode works.
+- V20 cap (`K_QUIRC_MAX_PROCESS_VERSION 20`, grid 97, bitmap 1177) + `k_quirc_scan_*` returning located-but-undecoded candidates; persistent decoder.
+- Dynamic QR crop: `C` command, `/tmp/krux/crop`, `image.from_crop`, `qr_scan`, AE box from located candidate; validated on device (crop 399×399; sample decodes).
+- Full-res pipeline: 2160 centre crop, 2×2 → 1080 preview, luma gate; daemon ~30–35 fps; stale-frame fix in `sensor.snapshot`.
+- Entropy: mode-aware VTS (skip in full-res), seed at max exposure/gain, ignore AF sweep, AE follow, portrait preview, meter every frame after image; dark 4.4–4.8 bits/px, bright 4.8–5.0.
+- Toolchain record corrected: host `arm-linux-gnueabihf` default; armel/Linaro/AOSP/ARM GNU marked obsolete; explicit `-mfloat-abi=hard` in micropython, camd, imaging, stub init.
+- Kernel CPP drain fix built and verified (`queue eventdata new max is 1`, was 7000+); camera 7.88–8.97 fps, 0 failed.
+- 250 ms EAGAIN block removed (fixed the tasklet overflow → `wdog_bark`).
+- Chroma gate restored (samples `src_uv`, `us < 8` dropped); `[pub] s=32 us=46 valid=1`.
+- Short CPP retry (3×2 ms) fixed the zero-retry deadlock.
+- Preview: single-pass `lcd.display(bg=...)` writes image + background together (replaced two-pass clear+image); fast row-major blit.
+
+### Active
+- Camd `_exit` watchdog removed (built `e84be659`, **not yet deployed/committed**); camd should stay up and a stall leaves the camera dead without crashing the box.
+- Preview still flickers; bands/whole-image blink (~0.7 s) unresolved.
+
+### Blocked
+- Preview flicker/0.7 s blink: likely display commit/`pan_idle` vsync path; needs framebuffer capture during the preview to separate draw vs panel.
+- Kernel/ISP stall: `VFE0 pix0 overflow` + `Tasklet queue overflow` after ~14 min idle; teardown/re-init is broken on this kernel; root cause (ISP clock/VFE) not isolated.
+- Full-res session unreliable after warm boots (`bytesused=0`, dropped frames); needs true power-cycle.
+
+## Next Move
+1. Commit the camd change removing the `_exit` watchdog (`e84be659`).
+2. Deploy it with `DEPLOY_RESTART=0` and cold-boot (`fastboot boot /tmp/boot-dev.img`).
+3. Capture `/dev/graphics/fb0` repeatedly during the QR preview to determine whether the 0.7 s blink is in the framebuffer or only the panel commit.
+4. Investigate the `VFE0 pix0 overflow`/tasklet overflow (idle streaming, ISP/VFE clock/bandwidth) as the remaining kernel-hang root cause.
+5. Re-test full-res after a true power-cycle; confirm the chroma gate and preview on the new camd.
+
+## Relevant Files
+- `cam/camd.c`: sensor modes, 2160 crop, bounce, downscale, gate, CPP retry/drain, crop shm, watchdog.
+- `krux/src/sensor.py`: snapshot, shm new-frame check, reconnect, `crop()`.
+- `krux/src/image.py`: `from_shared`, `from_crop`, `qr_scan`, `shared_geometry/reset`.
+- `krux/src/krux/pages/qr_capture.py`: scan loop, `_retry_crop`, AE box.
+- `krux/src/krux/pages/capture_entropy.py`: entropy controls, meter, AE follow, portrait.
+- `krux/src/krux/camera.py`: AE/VTS/entropy seed, `adjust_exposure`, `refocus`.
+- `krux/src/krux/display.py`: `render_image` one-pass `bg`.
+- `krux/firmware/micropython/ports/unix/lcd_bcm.c`: commit, double-buffer (reverted), fast/single-pass blit.
+- `krux/firmware/micropython/ports/unix/image_maixpy.c`: `from_shared/from_crop/qr_scan`.
+- `krux/firmware/micropython/ports/unix/k_quirc.c` / `k_quirc_internal.h` / `k_quirc_identify.c`: V20 cap, scan API.
+- `linux/drivers/media/platform/msm/camera_v2/pproc/cpp/msm_cpp.c`: `-ENODATA` NULL check.
+- `tools/build-kernel.sh`, `rootfs/make-boot-image.sh`, `rootfs/build-stub-init.sh`: kernel/boot/toolchain.
+- `docs/build-guide.md`, `docs/toolchain.md`: corrected toolchain record.
+- `/tmp/boot-dev.img`: dev stub boot image (new kernel + ramdisk).
+- `scripts/deploy-firmware.sh`: deploy (`DEPLOY_RESTART=0` to avoid the display hang).
+
+## Important Context
+- Scanner `0879524b0068abca`; target Nexus 5 `0643efdcf0eca63a` (1080×1920, Photos Go); tablet offline.
+- Kernel `3.4.113-...-g0cd43625d3c`; firmware `d9048c20`/`1a684f2`; deployed camd `01ef582d`; built camd `e84be659` (not deployed).
+- Preview resolution: **720×960** binned (default), centred on 1080×1920 (180 px side, 480 px top/bottom margins); full-res is 1080×1080.
+- `/proc/cmdline` shows `bootreason=wdog_bark`; read the stub's log with `adb shell 'su -c "cat /proc/last_kmsg"'` (Android root available via `su`).
+- Crash chain: `VFE0 pix0 overflow` → `msm_isp_close_node: Invalid close` → `csid invalid state 1` → `Tasklet queue overflow` → `Watchdog bark`; caused by camd restart/teardown.
+- Kernel build: `bash tools/build-kernel.sh --tree linux --out /tmp/opencode/ko`; boot image: `bash rootfs/make-boot-image.sh artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img /tmp/opencode/ko/arch/arm/boot/zImage-dtb /tmp/boot-dev.img`.
+- `sensor.snapshot()` throttle 66 ms (15 fps); daemon produces ~30–35 fps.
+- Entropy "Good when covered" is expected: the camera noise is the entropy source; the `a/b_stdev=10` floors the variance index.
+- Commits (outer): `a48290d`, `ef64e52`, `819eef7`, `1a684f2`, `6da3ed8`, `df8ee67`, `1aa73ca`, `884c04d`; `linux` `0cd43625d3c`; uncommitted camd edit `e84be659`.
+- The unrelated `docs/compaction-log.md` is modified and intentionally not committed.
+
+## 2026-11-10 09:43:55 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable for QR scanning (no kernel reboots, no stalls) and eliminate the "pesky stripes"/banding artifacts in the preview; the user is away and wants the work done without stopping.
+- The user asked for: (1) kernel stall fix, (2) ISP-config bisection for the stripes, (3) measure whether stripes improved.
+
+## Requirements
+- Never flash; `fastboot boot` only; cold boot when the camera pipeline needs a clean session.
+- Project tree is the source of truth; device code must never be newer; deploy to `/data/krux`.
+- Temporary camera state in `/tmp` (af, mode, stream, bench, hwscale); no symlinks in the Krux tree.
+- Do not break the entropy capture while tuning QR.
+- Never aim/start an interactive camera scan without asking (10 s cue, ~20 s scan, then tell the user to return).
+- No modem/Wi-Fi/BT/vendor HAL; keep the delivered preview modest.
+- Full-res plan: 3280×2464 → centre 2160×2160, drop chroma, integer ÷2 → 1080×1080 preview/entropy, 1:1 sub-crop for quirc.
+- Cap processing at QR V20; the real sample is V17 (923-byte UR).
+- Dynamic QR detection and crop to 1280 (not necessarily centred), ~10% margin.
+- Fix preview flicker/bands; entropy needs AE/AF controls and an on-screen instructions line.
+- Build everything with the host's `arm-linux-gnueabihf` (hard-float).
+- User's three requested tests: (1) full-res frames cropped linearly to fit the screen with all other processing disabled; (2) same in binned mode; (3) compare raw frames to what the framebuffer displays, to see whether artifacts appear in both.
+- User wants the tasks done without stopping; user is away for a while.
+- The user believes the stripes are implementation-triggered and suggested walking back the register writes to the driver/sensor until the image clears or frames stop.
+- New device: the second Nexus 5 was replaced by an LG LGL322DL (Android 10, 720×1440, adb, no root) — serial `LGL322DL71cd2c3`; the Sparrow QR must be shown on it.
+
+## Decisions
+- Do NOT `_exit`/restart camd: on this kernel the teardown is broken (`Invalid close`, `csid invalid state`, `NULL stream`) and the re-init overflows ISP-IF PIX0/tasklet → `wdog_bark`. Reverted the STREAMOFF/STREAMON restart after it caused `No free write masters` → `Request validation failed` → watchdog.
+- Stall watchdog must not depend on `latest_seq`; it now counts consecutive 2 s poll timeouts.
+- Runtime exposure/gain writes must use the sensor's **group hold** (0x0104=1 → registers → 0x0104=0), matching vendor `imx179_settings_3/_7/_6`; bare writes apply mid-readout and produce moving bands.
+- CPP frame-done thread must sleep 1 ms per event (no sleep on success pinned a core at ~100% CPU).
+- Poll/DQBUF error paths must back off 100 ms instead of busy-spinning; same-buffer repeats detected as a stall.
+- The daemon demosaics the raw Bayer itself before downscaling (green samples as luma; green interpolated at R/B sites) instead of relying on the CPP.
+- `ispcfg` bisection knob added at `/data/krux/ispcfg` (how many of the 56 initial ISP uploads to send); `mode`, `stream`, `capture_cfg` now read from persistent `/data/krux/state` via `state_read_persist()` (because `/tmp` is tmpfs and is wiped on reboot).
+- Vendor TWRP init still runs as PID 1 alongside our `krux-init`; it is minimal (ueventd, logd, adbd) and does not touch the camera — the screen dimming is the Krux firmware's own screensaver.
+- The Sparrow QR was pushed to the LG phone (`/sdcard/Download/sparrow.png`) and opened full-screen via Gallery.
+
+## Work State
+### Completed
+- Kernel crash root-caused: camd's stall watchdog `_exit(1)` → supervisor restart → broken teardown → tasklet overflow → `wdog_bark`. Fixed by never exiting (commit `9c2a91a`).
+- CPU spin fixed: `cpp_event_thread` 1 ms backoff + poll/DQBUF backoff + same-buffer stall detection (commit `2320fcf`).
+- Group-hold exposure/gain writes added (`sensor_set_exposure_gain`).
+- Bayer demosaic before the binned downscale (commit `57c0462`); QR now decodes 923 bytes via the 1:1 crop retry (`crop decode 923 bytes`).
+- ISP-config bisection run at counts 56/50/45/40/35/30/25/20/15/10/5 — the band is **identical at every count** (12.0→13.2→16.0→9.0→0.0 by 64-row bins), so it is **not** in any ISP upload.
+- Disabling `cam_capture` also left the band unchanged (so `0x444`/`0x464` geometry overrides are not the cause).
+- 6 source dumps are byte-identical → the band is stable, not a race.
+- With the lens covered the source is **not uniform black** — it has a hard row staircase with the last 80 rows exactly 0.0 (never written) → stale/misaligned buffer content, i.e. the ISP delivers fewer lines than requested.
+- Kernel exclude-input experiment (CPP output ≠ input) made it worse (GET_BUF found no free buffer, 0.5 fps) → reverted; kernel tree clean at `0cd43625d3c`.
+- Persistent knobs (`/data/krux/state`) implemented and built (`fe52d97b`).
+
+### Active
+- Finding why the ISP delivers fewer lines than the 1640×1232 requested (stale rows at the bottom of the source). Next lead: the ISP-IF crop is **horizontal only** (`crop_start_pixel`/`crop_end_pixel`, `msm_ispif.c:442`) — check for a vertical crop / line-count path that was never configured.
+- Verifying the persistent-knob bisection (mode/stream/capture_cfg) across reboots now that `state_read_persist` exists.
+
+### Blocked
+- The camera stalls after ~10–15 min (`CFG: EAGAIN`, one buffer cycling, `no frame after 2s (121)`); only a cold boot recovers it. Root cause traced to the CPP processing **in place** (`out=5 in=5`) collapsing the ISP raw and CPP processed passes onto one buffer; a correct fix needs the ISP shared-buffer/divert accounting reworked.
+- Second Nexus 5 replaced by the LG phone; the Sparrow QR is now displayed there but the camera must be re-aimed and re-tested against it.
+
+## Next Move
+1. Read `linux/drivers/media/platform/msm/camera_v2/ispif/msm_ispif.c` around the crop handling and the ISP-IF CFG/frame-boundary path to find the vertical line count; check `cam/camd.c` `ispif_config()` (only `crop_start_pixel`/`crop_end_pixel` are set) for a missing line/crop field.
+2. Deploy the persistent-knob build (`fe52d97b`) and run the user's matrix, capturing source + framebuffer pairs at the same instant: mode=0/1 × stream=0/1 (CAMIF_RAW vs PIX_VIEWFINDER), plus `rawcrop` (ctl `c`) for the linear 1:1 no-processing view.
+3. Implement the stall fix in the kernel: make the CPP output buffer differ from its input **and** keep the buffer accounting consistent (the earlier exclude attempt failed because no other buffer was free) — e.g. reserve a dedicated output buffer set or fix the ISP shared-buffer divert/put ordering.
+4. After the fixes, re-measure stripes/banding and report.
+
+## Relevant Files
+- `cam/camd.c`: daemon — sensor/ISP/CPP setup, `ispif_config()` (horizontal-only crop), `cpp_send_chromatrix()`, `sensor_set_exposure_gain()` (group hold), `state_read_persist()`, `isp_cfg_count` bisection knob, `rawcrop` diagnostic (ctl `c`), demosaic + downscale, stall/backoff logic.
+- `cam/cam_chromatrix.h`: 266-word vendor CPP message; `num_stripes` derived from `msg[12]` = 5.
+- `cam/cam_config.h`: 56 initial ISP uploads (`cam_initial`) — the bisection target.
+- `cam/cam_capture.h`: vendor capture ISP config (`0x444=0x403f`).
+- `cam/cam_cycle.h` / `cam/cam_cycle_preview.h`: per-frame ISP cycles (capture vs preview geometry).
+- `cam/sensor_live.h`, `cam/imx179_regs.h`: sensor mode/bin (0x0383/0x0387 = 3) and group-hold sequences.
+- `linux/drivers/media/platform/msm/camera_v2/pproc/cpp/msm_cpp.c`: CPP `msm_cpp_cfg()` (GET_BUF/`-EAGAIN`), `msm_cpp_notify_frame_done()` (BUF_DONE, `processed_divert`).
+- `linux/drivers/media/platform/msm/camera_v2/msm_vb2/msm_vb2.c`: `msm_vb2_get_buf()` / `in_freeq` accounting.
+- `linux/drivers/media/platform/msm/camera_v2/isp/msm_buf_mgr.c`: `msm_isp_buf_done()`, `buf_put_count`, `ISP_SHARE_BUF_CLIENT = 2`.
+- `linux/drivers/media/platform/msm/camera_v2/ispif/msm_ispif.c`: ISP-IF crop (`crop_start_pixel`/`crop_end_pixel`, lines 442-443).
+- `rootfs/init-stub.c`: stub init; `service krux /sbin/krux-init`; camd exec args (`... "binned" "cfg" "nocycle" ...`).
+- `krux/src/krux/pages/qr_capture.py`, `krux/src/krux/pages/capture_entropy.py`: scan/entropy loops.
+- `scripts/deploy-firmware.sh`: deploy (`DEPLOY_RESTART=0` to avoid the display hang).
+- `tools/build-kernel.sh`, `rootfs/make-boot-image.sh`: kernel + boot image (`/tmp/boot-dev.img`).
+- `/tmp/opencode/bisect.sh`, `/tmp/opencode/bandtest.sh`, `/tmp/opencode/ctldump.py`: bisection/dump harnesses (device-side `ctldump.py` also at `/tmp/ctldump.py` on the device).
+
+## Important Context
+- Device serials: camera Nexus 5 = `0879524b0068abca` (stub/Krux, root adb); QR-display phone = `LGL322DL71cd2c3` (LG, no root).
+- Current device state: stub booted with kernel `3.4.113-…-g0cd43625d3c`, camd `b928408` (event-log build, ~4.4 fps, no tasklet/bark). The `fe52d97b` build (persistent knobs) is built but NOT yet deployed.
+- Commits: `9c2a91a` (no exit on stall), `082c8d2` (CPP input from returned-buffer ring), `2320fcf` (CPU spin + group hold + ispcfg knob + rawcrop), `57c0462` (Bayer demosaic), `968e01a` (document no restart), `6b03187` (CPP frame-done log). `docs/compaction-log.md` is modified and intentionally uncommitted.
+- `fastboot boot` is flaky — it sometimes lands in Android; retry until `adb devices` shows `recovery`.
+- The band profile in the raw source (rows of 1232, 64-row bins): `12.0` for rows 0–704, `13.2` at 704–768, `16.0` for 768–1088, `9.0` at 1088–1152, `0.0` for 1152–1232.
+- The CPP frame-done log shows `out=5 in=5 divert=0` — the CPP processes **in place**.
+- `ispcfg` bisection already disproved: the ISP initial uploads and `cam_capture` are not the cause of the band.
+- With the lens covered the raw source is Bayer-flat (checkerboard 0.00) but still shows the staircase — i.e. the band is not a Bayer artifact; rows below ~1152 were never written by the ISP.
+- Environment note: `adb shell` on the LG phone works without root; `pkill -f <pattern>` can match the invoking shell's own command line (use a bracketed pattern).
+
+## 2026-11-10 03:40:00 UTC - session compaction (manual)
+
+## Objective
+- The three tasks the user asked for, done without stopping while they were away:
+  (1) the camera **stall** fixed in the kernel, (2) the **ISP-config bisection**,
+  (3) a **measurement** of whether the stripes/bands improved.
+- The camera had to stay reliable for the QR scan (the Sparrow QR is displayed on
+  the LG phone, which the camera is aimed at).
+
+## Root cause of the stall (and of the "bands") — found this session
+- The ISP takes a vb2 buffer for every frame it writes.  **Nothing ever gave it
+  back**: the ISP's shared-buffer accounting (`ISP_SHARE_BUF`, `buf_put_count`)
+  wants two puts per buffer, and the second one never comes — the CPP has a
+  buffer manager of its own (`msm_generic_buf_mgr`) and never touches the ISP's
+  buffers, and the HAL's `ENQUEUE_BUF` ioctl is never issued on this stack.
+- So every frame leaked one buffer.  The pool (8 buffers) drained after a few
+  frames, the ISP stopped getting buffers, the picture froze on a stale frame,
+  the CPP could not get an output buffer either (`CFG: EAGAIN`), and the stream
+  stalled.  Only a cold boot recovered it.
+- The "bands" were a symptom of the same leak: the source the daemon read was a
+  **stale frame** (the last frame before the pool ran dry), so it was a flat,
+  hard-edged staircase with the bottom 80 rows never written.  It was identical
+  in every dump because it was the same frozen frame — not an ISP artifact.
+- Proven with new kernel instrumentation (per-buffer get/put/done counters and a
+  pool dump when the pool runs dry): every buffer had `in_freeq=1` and `put=0`,
+  i.e. checked out and never returned.
+
+## The fix (kernel, `04893de2b9b`)
+- `msm_isp_axi_util.c`: the buffer the ISP has just written is **held until the
+  next frame of the same stream is done** (by then the CPP has read it) and the
+  one held before it is released then.  The buffer is given back on both paths
+  (diverted to the CPP or not).
+- Result: no `no free buffer`, no dropped frames, no stall; 187 fps of frame
+  deliveries (the daemon is not paced to the sensor) instead of 5.
+
+## The ISP-config bisection — repeated on the *fixed* pipeline
+- The first bisection (56/50/45/40/35/30/25/20/15/10/5 uploads) was meaningless:
+  it measured a frozen frame, so every count looked the same.
+- Repeated after the fix: counts 56, 45, 35, 25, 5 → the frames are **byte
+  identical**.  The ISP's initial uploads are still **not** the cause.
+
+## The measurement (the user's three tests)
+- (1) full resolution, linear 1:1 crop, no other processing (`rawcrop`, mode=1):
+  the row profile is smooth; the largest row step is 2.3 (scene edges).
+- (2) the same in binned mode (mode=0): smooth; the only steps are the QR's own
+  edges (16.2 at row 118, −13.8 at row 485).
+- (3) raw frame vs what is displayed: the camera page renders the published
+  preview (the shared region `/tmp/krux/frame`), and the preview and the source
+  show the same structure, both without bands.
+- Before the fix (the stale frame): the flat lower region of the source had a
+  row-to-row step of up to **14.35** and a std of **6.33**.  After: **0.91** and
+  **0.199** — 33× smoother.
+
+## Also found
+- The **full-resolution mode** needs the vendor's **per-frame ISP cycle**
+  (`cam_cycle`, the capture geometry).  Without it the frame has a black band of
+  64 rows and a step of 19.4; with it the frame is smooth.  New knob `cycle`.
+- The **PIX_VIEWFINDER** stream still delivers no frames (`fps=0`): a separate
+  problem, not touched here.
+- The **build script** swallowed the compiler's errors and left the old binary in
+  place, so a broken change looked like a successful build.  Fixed.
+- `tools/send-key` wrote a 64-bit timeval into a 32-bit kernel's input events, so
+  the keys never reached the firmware.  Fixed (the timeval is now two 32-bit
+  words), but the firmware still did not react, so the camera page could not be
+  opened for a framebuffer capture; the shared-memory preview was used instead.
+
+## Commits
+- kernel `04893de2b9b` — give the ISP's frame buffer back to the pool (+ the
+  pool/buffer diagnostics).
+- `51319fc` — the pipeline knobs are read from `/data/krux/state`, so they
+  survive the cold boot a test needs.
+- `b05dabf` — the `cycle` knob, the dump in the raw-crop path, the build-script
+  fix, the send-key fix.
