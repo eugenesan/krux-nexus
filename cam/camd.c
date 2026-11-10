@@ -1471,23 +1471,18 @@ static void cpp_msg_load(void)
 	size_t n;
 
 	/*
-	 * One stripe, not five.
+	 * The vendor's five stripes, unchanged.
 	 *
-	 * The vendor's message carries five stripes drawn for their
-	 * 1280x960 preview.  This mode's frames are 1640x1232, so the
-	 * five rectangles do not tile the frame: they overlap, the last
-	 * one to write wins, and the picture comes back banded -- the
-	 * grey overlay across part of the preview.  A single stripe
-	 * covers the code and the picture is clean: the Sparrow UR code
-	 * decodes from it, where five stripes gave no finder pattern at
-	 * all.
+	 * A single stripe covering the code gives a much cleaner picture
+	 * -- the Sparrow UR code decodes from it -- but the CPP's
+	 * firmware evidently needs the stripes to tile the frame: with
+	 * one, its processing queue fills and never completes, and the
+	 * camera stops delivering frames.  So the five stay until their
+	 * rectangles are rebuilt for this frame size (1640x1232), which
+	 * is where the banded preview comes from.
 	 */
-	memcpy(buf, cam_cpp_msg, 130 * sizeof(unsigned int));
-	memcpy(buf + 130, cam_cpp_msg + 130, 27 * sizeof(unsigned int));
-	buf[157] = cam_cpp_msg[CAM_CPP_MSG_WORDS - 1];
-	buf[12] = 1;		/* one stripe: 0, 0, 1 in the three fields */
-	cpp_msg = buf;
-	cpp_msg_words = 158;
+	cpp_msg = cam_cpp_msg;
+	cpp_msg_words = CAM_CPP_MSG_WORDS;
 
 	f = fopen(path, "rb");
 	if (!f) {
