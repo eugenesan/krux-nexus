@@ -2763,8 +2763,21 @@ static void *client_thread(void *arg)
 				       " (%.2f Mpixel/s)\n", 1.0 / dt,
 				       3280.0 * 2464.0 / dt / 1e6);
 		}
-		printf("[client] GOT A FRAME: index=%u bytesused=%u seq=%u\n",
-		       buf.index, buf.bytesused, buf.sequence);
+		{
+			/*
+			 * One line per frame is a lot of log: the daemon
+			 * can take a hundred frames a second, and the
+			 * log lives on the data partition.  Every hundredth
+			 * frame is enough to see the rate and the buffer
+			 * index; the frame number is in the line.
+			 */
+			static int frame_n;
+
+			if (debug_frames || (++frame_n % 100) == 0)
+				printf("[client] GOT A FRAME: index=%u bytesused=%u seq=%u (frame %d)\n",
+				       buf.index, buf.bytesused, buf.sequence,
+				       frame_n);
+		}
 		if (debug_frames) {
 		{
 			/* Which of our buffers did the ISP actually write
