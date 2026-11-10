@@ -3084,9 +3084,11 @@ static void *client_thread(void *arg)
 					 * with no fractional sampling.  Binned mode
 					 * keeps the generic box average. */
 					uint64_t td0 = now_ns();
+					uint64_t t_dem = 0, t_ds = 0;
 					{
 						static unsigned short *mid;
 						static unsigned char *smooth;
+						static int *sx0_tab, *sx1_tab;
 						const unsigned char *dsrc = src_y;
 						int mx, my, sy, sx;
 						int two = (crop_h == 2 * out_w &&
@@ -3128,6 +3130,7 @@ static void *client_thread(void *arg)
 										(size_t)crop_w * crop_h);
 								if (smooth) {
 									int y, x;
+									uint64_t td = now_ns();
 									for (y = 0; y < crop_h; y++) {
 										const unsigned char *r =
 											src_y + (size_t)y * crop_w;
@@ -3162,6 +3165,7 @@ static void *client_thread(void *arg)
 										}
 									}
 									dsrc = smooth;
+									t_dem = now_ns() - td;
 								}
 							}
 							if (two) {
@@ -3180,26 +3184,58 @@ static void *client_thread(void *arg)
 									}
 								}
 							} else {
-								for (my = 0; my < out_w; my++) {
-									int sy0 = my * crop_h / out_w;
-									int sy1 = (my + 1) * crop_h / out_w;
-									unsigned short *orow =
-										mid + my * out_h;
-									for (sy = sy0; sy < sy1; sy++) {
-										const unsigned char *row =
-											dsrc + (size_t)sy * crop_w;
+								uint64_t td = now_ns();
+								/*
+								 * The horizontal box edges are the
+								 * same for every row, and this CPU
+								 * has no divide instruction: two
+								 * divisions per output pixel was
+								 * 90 ms of the 130 ms this pass
+								 * took, and the whole preview ran
+								 * at 7 fps because of it.  Work
+								 * them out once.
+								 */
+								if (!sx0_tab || !sx1_tab) {
+									if (!sx0_tab)
+										sx0_tab = malloc(
+											(size_t)out_h *
+											sizeof(int));
+									if (!sx1_tab)
+										sx1_tab = malloc(
+											(size_t)out_h *
+											sizeof(int));
+									if (sx0_tab && sx1_tab)
 										for (mx = 0; mx < out_h; mx++) {
-											int sx0 = mx * crop_w / out_h;
-											int sx1 = (mx + 1) * crop_w / out_h;
-											unsigned int a = 0;
-											int n = sx1 - sx0;
-											for (sx = sx0; sx < sx1; sx++)
-												a += row[sx];
-											orow[mx] += (unsigned short)
-												(a / (n ? n : 1));
+											sx0_tab[mx] =
+												mx * crop_w / out_h;
+											sx1_tab[mx] =
+												(mx + 1) * crop_w / out_h;
+										}
+								}
+								if (sx0_tab && sx1_tab) {
+									for (my = 0; my < out_w; my++) {
+										int sy0 = my * crop_h / out_w;
+										int sy1 = (my + 1) * crop_h / out_w;
+										unsigned short *orow =
+											mid + my * out_h;
+										for (sy = sy0; sy < sy1; sy++) {
+											const unsigned char *row =
+												dsrc + (size_t)sy * crop_w;
+											for (mx = 0; mx < out_h; mx++) {
+												int sx0 = sx0_tab[mx];
+												int sx1 = sx1_tab[mx];
+												unsigned int a = 0;
+												int n = sx1 - sx0;
+												for (sx = sx0; sx < sx1; sx++)
+													a += row[sx];
+												orow[mx] +=
+													(unsigned short)
+													(a / (n ? n : 1));
+											}
 										}
 									}
 								}
+								t_ds = now_ns() - td;
 							}
 							for (my = 0; my < out_w; my++) {
 								int sy0 = my * crop_h / out_w;
@@ -3220,6 +3256,15 @@ static void *client_thread(void *arg)
 								}
 							}
 						}
+					}
+					{
+						static int dn;
+						if ((++dn % 50) == 0)
+							printf("[down] demosaic %.1f ms, "
+							       "downscale %.1f ms, "
+							       "total %.1f ms\n",
+							       t_dem / 1e6, t_ds / 1e6,
+							       (now_ns() - td0) / 1e6);
 					}
 					if (bench_mode)
 						printf("[bench] downscale %.1f ms\n",
@@ -4125,6 +4170,14 @@ int main(int argc, char **argv)
 		const char *fc = getenv("CAMD_FULL_CHROMA");
 		const char *vs = getenv("CAMD_VENDOR_SEQ");
 		profile_mode = p ? atoi(p) : 0;
+		/*
+		 * The profile can also be turned on from the data
+		 * partition, which survives the reboot a test needs: the
+		 * environment of the init that starts us is not ours to
+		 * set.
+		 */
+		if (state_read_persist("profile", 0, 0, 2))
+			profile_mode = 1;
 		debug_frames = d ? atoi(d) : 0;
 		bench_mode = b ? atoi(b) : 0;
 		target_fps = f ? atoi(f) : 0;
