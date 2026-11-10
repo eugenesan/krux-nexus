@@ -1484,8 +1484,18 @@ static int cpp_send_chromatrix(void)
 		printf("[cpp] CFG: %s\n", strerror(errno));
 		return -1;
 	}
-	printf("[cpp] chromatrix sent (%d words, status %d)\n",
-	       frame.msg_len, cpp_status);
+	/*
+	 * The chromatrix goes to the CPP for every frame, so this line
+	 * would be printed a hundred times a second and the log lives
+	 * on the data partition.  Print it now and then.
+	 */
+	{
+		static int sent_n;
+
+		if (sent_n++ % 100 == 0)
+			printf("[cpp] chromatrix sent (%d words, status %d)\n",
+			       frame.msg_len, cpp_status);
+	}
 	return 0;
 }
 
