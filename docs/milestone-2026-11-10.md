@@ -81,10 +81,26 @@ page's auto-exposure cannot win against a self-luminous subject.
   but **cannot be used**: the CPP's firmware needs the stripes to tile the
   frame, and with one its processing queue fills and never completes
   (`process queue full. drop frame`), so the camera stops.
-- The stripe rectangle lives in the message **header**, not in the stripe
-  entries: changing the entries' stride or height moved nothing.  The
-  candidates are the header groups at words 43-46 `(159, 310, 488, 1725)`,
-  51-54 `(189, 229, 205, 749)` and 59-62 `(158, 191, 180, 641)`.
+- What the stripe experiments established (each one a
+  `/data/krux/cppmsg.bin` and a cold boot):
+  - The CPP's firmware **requires the stripes to tile the frame**.  One
+    stripe, or five identical ones, fills `process queue full` and the
+    camera stops.  A message that keeps the tiling and only changes the
+    geometry runs clean (`queue full: 0`), which is the signal to watch.
+  - The **scale** lives in the message header: scaling the three groups
+    at words 43-46 `(159, 310, 488, 1725)`, 51-54 `(189, 229, 205, 749)`
+    and 59-62 `(158, 191, 180, 641)` by 1.28 changes the picture's scale
+    (by 0.5 it changes the other way).  Neither removed the overlap.
+  - The stripe **rectangle's points** are the packed 16.16 pairs at each
+    entry's `+6`, `+8` and `+15`; their maximum is 959, the vendor's
+    960-tall preview space.  Scaling those by 1.28 keeps the tiling
+    valid (`queue full: 0`) but breaks the horizontal alignment into a
+    comb -- so the pair's two halves are not both horizontal/vertical in
+    the way they first look, and the *y* half alone is the one that
+    needs the 1232/960 factor.
+  - The next step is therefore: scale **only the vertical half** of
+    `+6/+8/+15` by 1232/960, leave the horizontal half alone, and watch
+    `queue full` stay at 0 and the comb disappear.
 - The message can be overridden without rebuilding:
   `/data/krux/cppmsg.bin`, a raw little-endian array of 32-bit words.  It
   must start with `0x3e646d63` and end with `0xabcdefaa`.
