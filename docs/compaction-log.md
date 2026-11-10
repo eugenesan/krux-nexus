@@ -3201,7 +3201,9 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 
 ### The grey bar: five chroma stripes overlapping
 - The vendor's CPP message carries **five** stripes with **one** shared chroma matrix, drawn for their 1280x960 preview.  Our frames are 1640x1232, so the rectangles overlap, the last one to write wins, and the preview is banded.
-- With a **single** stripe (the message rebuilt at start-up: 158 words, stripe 0, trailer; `20e886d`) the picture is clean and the Sparrow UR code **decodes** from it (`UR:CRYPTO-PSBT/...`), where five stripes gave no finder pattern at all.
+- With a **single** stripe the picture is clean and the Sparrow UR code **decodes** from it (`UR:CRYPTO-PSBT/...`), where five stripes give no finder pattern at all.
+- **But a single stripe cannot be used as it is**: the CPP's firmware evidently needs the stripes to tile the frame.  With one its processing queue fills and never completes -- `process queue full. drop frame`, then `CFG: Invalid argument` for every frame -- and the camera stops delivering frames, even after a cold boot.  Reverted to the five (`e73f9aa`).
+- The stripe rectangle comes from the message **header**, not from the stripe entry: changing the stripe's own stride (`+7`, `+16`) or height (`+0`, `+4`) changed the written region by nothing at all.  The header's candidates are the groups at words 43-46 (159, 310, 488, 1725), 51-54 (189, 229, 205, 749) and 59-62 (158, 191, 180, 641).
 
 ### Two things that were mine, not the camera's
 - My injected taps landed on the entropy page's `-/+ exp` strip, which sets `_ae_manual` and switches the auto-exposure off.  It is cleared when a page starts a session.
