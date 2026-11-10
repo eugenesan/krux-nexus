@@ -20,10 +20,15 @@ CC=${CC:-arm-linux-gnueabihf-gcc}
 
 # -O2 with tree vectorisation and NEON: the box downscale and the
 # unsharp mask are the per-frame hot spots, and the 8974 has NEON.
+# The compiler's warnings are shown, but a failure must fail the
+# build: a stale binary that still runs is worse than no binary.
+TMP="$OUT.new"
+rm -f "$TMP"
 $CC -O2 -ftree-vectorize -mfpu=neon -mfloat-abi=hard -static -s -Wall \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
-    -o "$OUT" cam/camd.c \
-    -lpthread -lrt -lm 2>&1 | grep -E "error|warning: .*(uninitial|overflow)" || true
+    -o "$TMP" cam/camd.c \
+    -lpthread -lrt -lm
+mv "$TMP" "$OUT"
 
 [ -x "$OUT" ] || { echo "!! camd was not built" >&2; exit 1; }
 

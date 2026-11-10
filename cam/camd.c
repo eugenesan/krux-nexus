@@ -970,6 +970,41 @@ static int out_w = OUT_W, out_h = OUT_H;	/* published preview */
 static int crop_w, crop_h;			/* the sensor window */
 static int crop_x, crop_y;
 
+static unsigned char *latest_y = NULL;
+
+/*
+ * Write the published preview and the sensor window to files, so the
+ * picture can be looked at on the host.  The preview is what the
+ * camera page shows; the window is what the sensor sent.
+ */
+static void dump_frames(const unsigned char *src_y)
+{
+	FILE *f;
+
+	f = fopen("/data/krux/scan.raw.tmp", "wb");
+	if (f) {
+		fwrite(latest_y, 1, (size_t)out_w * out_h, f);
+		fclose(f);
+		rename("/data/krux/scan.raw.tmp", "/data/krux/scan.raw");
+	}
+	f = fopen("/data/krux/scan_full.raw.tmp", "wb");
+	if (f) {
+		fwrite(src_y, 1, (size_t)crop_w * crop_h, f);
+		fclose(f);
+		rename("/data/krux/scan_full.raw.tmp",
+		       "/data/krux/scan_full.raw");
+	}
+	{
+		unsigned char mx = 0;
+		int mi;
+
+		for (mi = 0; mi < out_w * out_h; mi++)
+			if (latest_y[mi] > mx)
+				mx = latest_y[mi];
+		printf("[client] dumped the preview and the source\n");
+	}
+}
+
 /*
  * The cached copy of the sensor window.  The ION frame is uncached, and
  * a wide memcpy reads it at ~250 MB/s against ~20 MB/s for byte reads,
@@ -981,7 +1016,6 @@ static int crop_x, crop_y;
 static unsigned char *bounce_buf[2];
 static int bounce_pub = -1;
 static pthread_mutex_t bounce_mutex = PTHREAD_MUTEX_INITIALIZER;
-static unsigned char *latest_y = NULL;
 /* Sampled mean of the latest downscaled frame.  The AF waits for a
  * reasonably bright frame, so a refocus request made while the camera
  * is pointed at a dark wall stays pending until the QR is in view. */
@@ -2899,6 +2933,10 @@ static void *client_thread(void *arg)
 						latest_ready = 1;
 						shm_publish();
 						published = 1;
+						if (dump_now) {
+							dump_now = 0;
+							dump_frames(src_y);
+						}
 					}
 					pthread_mutex_unlock(&frame_mutex);
 					goto proc_done;
@@ -3265,36 +3303,15 @@ static void *client_thread(void *arg)
 
 					if (dump_now) {
 						dump_now = 0;
-						FILE *f = fopen(
-							"/data/krux/scan.raw.tmp",
-							"wb");
-						if (f) {
-							fwrite(latest_y, 1,
-								(size_t)out_w * out_h, f);
-							fclose(f);
-							rename(
-								"/data/krux/scan.raw.tmp",
-								"/data/krux/scan.raw");
-						}
-						f = fopen(
-							"/data/krux/scan_full.raw.tmp",
-							"wb");
-						if (f) {
-							fwrite(src_y, 1,
-								(size_t)crop_w * crop_h,
-								f);
-							fclose(f);
-							rename(
-								"/data/krux/scan_full.raw.tmp",
-								"/data/krux/scan_full.raw");
-						}
+						dump_frames(src_y);
 						{
 							unsigned char mx = 0;
 							int mi;
 							FILE *m;
+
 							for (mi = 0;
-								mi < out_w * out_h;
-								mi++)
+							     mi < out_w * out_h;
+							     mi++)
 								if (latest_y[mi] > mx)
 									mx = latest_y[mi];
 							m = fopen(
@@ -4163,6 +4180,17 @@ int main(int argc, char **argv)
 		replay_config = 0;
 	if (argc > 10 && !strcmp(argv[10], "nocycle"))
 		replay_cycle = 0;
+	/*
+	 * The per-frame cycle is the vendor's capture cycle: it sets
+	 * the SFE's and the CAMIF's geometry for the photograph.  It is
+	 * what the full-resolution mode needs -- the preview's geometry
+	 * does not fit a 3280x2464 frame -- and it is a knob, because
+	 * it is only right for that mode.
+	 */
+	if (state_read_persist("cycle", 0, 0, 1) == 1) {
+		replay_cycle = 1;
+		printf("[mode] the per-frame ISP cycle: on\n");
+	}
 	if (argc > 11)
 		cam_vc = atoi(argv[11]);
 	if (argc > 12)

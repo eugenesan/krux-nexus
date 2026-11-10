@@ -65,8 +65,10 @@ def main():
     code, dev = entry
     print("the key device: %s" % dev)
 
-    # struct input_event: timeval (16 bytes on 64-bit), type, code, value
-    fmt = "llHHi"
+    # struct input_event: timeval (8 bytes on a 32-bit kernel: two
+    # longs), type, code, value.  The kernel here is 32-bit, so the
+    # timeval is two 32-bit words, not the 64-bit one.
+    fmt = "iiHHi"
 
     def ev(type_, value):
         now = time.time()
@@ -77,9 +79,9 @@ def main():
     script = """
 import struct, time, sys
 dev, code = sys.argv[1], int(sys.argv[2])
-fmt = "llHHi"
+fmt = "iiHHi"
 def ev(t, v):
-    now = time.time(); s = int(now); u = int((now-s)*1e6)
+    now = time.time(); s = int(now); u = int((now-s)*1000000)
     return struct.pack(fmt, s, u, t, code, v)
 f = open(dev, "wb")
 f.write(ev(1, 1)); f.flush()      # EV_KEY, value 1 = pressed
