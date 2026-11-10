@@ -1724,7 +1724,30 @@ static int isp_start(void)
 		printf("[isp] CFG_STREAM: %s\n", strerror(errno));
 		return -1;
 	}
-	printf("[isp] stream started\n");
+	printf("[isp] stream started");
+	/*
+	 * Ask the ISP to hand its frames to the CPP.  With this on, the
+	 * ISP records which buffer it wrote each frame into, and the
+	 * kernel points the CPP at that buffer -- the only way the CPP
+	 * can be sure it reads a frame that exists.  Userspace cannot
+	 * work it out: the ISP and the CPP take their buffers from the
+	 * same pool.
+	 */
+	{
+		struct msm_vfe_axi_stream_update_cmd upd;
+		int done = 0;
+
+		memset(&upd, 0, sizeof(upd));
+		upd.stream_handle = scmd.axi_stream_handle;
+		upd.update_type = ENABLE_STREAM_BUF_DIVERT;
+		if (ioctl(isp_fd, VIDIOC_MSM_ISP_UPDATE_STREAM, &upd) < 0)
+			printf(" (buffer divert: %s)", strerror(errno));
+		else
+			printf(" (buffer divert on)");
+		if (ioctl(isp_fd, VIDIOC_MSM_ISP_CONFIG_DONE, &done) < 0)
+			printf(" (config done: %s)", strerror(errno));
+	}
+	printf("\n");
 	if (replay_config)
 		isp_replay(cam_initial,
 			   isp_cfg_count < 0 ? CAM_INITIAL_COUNT
