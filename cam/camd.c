@@ -2440,6 +2440,7 @@ static void *client_thread(void *arg)
 
 	static unsigned last_requests;
 	static int idle;
+	static int no_frame;
 	for (n = 0; ; n++) {
 		struct v4l2_buffer buf;
 		struct pollfd pfd = { .fd = fd, .events = POLLIN };
@@ -2500,19 +2501,24 @@ static void *client_thread(void *arg)
 		    isp_stream_src == CAMIF_RAW)
 			{
 			/*
-			 * Do not sleep between retries.  The capture thread
-			 * must keep dequeuing and requeueing the ISP buffers;
-			 * the old 5 x 50 ms retry blocked it for a quarter of
-			 * a second, the ISP ran out of buffers and dropped
-			 * frames, its tasklet queue overflowed
-			 * ("msm_isp_process_irq: Tasklet queue overflow") and
-			 * the hardware watchdog bit (bootreason=wdog_bark).
-			 *
-			 * A failed config only means the CPP's output buffer
-			 * queue is momentarily empty; skip this frame's
-			 * config and try again on the next frame.
+			 * A short retry, not the old 5 x 50 ms (250 ms):
+			 * that blocked the capture thread long enough to
+			 * starve the ISP buffers, overflow its tasklet queue
+			 * and bite the hardware watchdog (wdog_bark).  But
+			 * zero retry is also wrong: the CPP's output buffer
+			 * for the previous frame is not done yet, and with
+			 * no retry the CPP is never configured again -- a
+			 * deadlock that leaves the stream with no frames.
+			 * 3 x 2 ms is enough for the previous frame to
+			 * complete and short enough not to starve anything.
 			 */
-			cpp_send_chromatrix();
+			int retry;
+			for (retry = 0; retry < 3; retry++) {
+				if (cpp_send_chromatrix() == 0)
+					break;
+				struct timespec ts = { 0, 2 * 1000 * 1000 };
+				nanosleep(&ts, NULL);
+			}
 		}
 		p2 = now_ns();
 
@@ -2524,19 +2530,19 @@ static void *client_thread(void *arg)
 		if (r <= 0) {
 			printf("[client] no frame after 2s\n");
 			/*
-			 * The stream stalled after it had been producing
-			 * frames (the ISP drops them and never recovers in
-			 * place).  A fresh camd does recover, so exit and
-			 * let the init stub's supervisor start one; the
-			 * client reconnects.  Do not do this before the
-			 * first frame: the start-up can take longer than
-			 * the poll timeout, and exiting there would just
-			 * loop.
+			 * The stream stopped delivering frames (the ISP
+			 * stalls and does not recover in place).  A fresh
+			 * camd does, so exit after 10 s and let the init
+			 * stub's supervisor start one; the client
+			 * reconnects.  This must NOT depend on latest_seq:
+			 * a daemon restarted after a stall has seq 0, and
+			 * the old check then left it stuck forever.
 			 */
-			if (latest_seq > 0)
+			if (++no_frame >= 5)
 				_exit(1);
 			continue;
 		}
+		no_frame = 0;
 		p4 = now_ns();
 		{
 			struct v4l2_plane dqplanes[2];
