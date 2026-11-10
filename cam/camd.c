@@ -666,6 +666,44 @@ static int state_read(const char *name, int def, int lo, int hi)
 	return v;
 }
 
+/*
+ * A state file that survives a reboot.
+ *
+ * /tmp is a tmpfs, so a knob set there is gone after a cold boot --
+ * which makes bisecting the camera's pipeline impossible (every test
+ * needs a different setting and a reboot).  These knobs are read from
+ * /data/krux/state first, so they can be set from the host with
+ * "adb shell echo N > /data/krux/state/<name>" and a reboot keeps
+ * them.
+ */
+#define CAMD_PERSIST_DIR "/data/krux/state"
+
+static int state_read_persist(const char *name, int def, int lo, int hi)
+{
+	char path[PATH_MAX];
+	FILE *f;
+	int v = def;
+	int had_file = 0;
+
+	snprintf(path, sizeof(path), "%s/%s", CAMD_PERSIST_DIR, name);
+	f = fopen(path, "r");
+	if (f) {
+		had_file = 1;
+		if (fscanf(f, "%d", &v) != 1)
+			v = def;
+		fclose(f);
+	}
+	if (v < lo || v > hi) {
+		v = def;
+		had_file = 0;
+	}
+	if (had_file)
+		printf("[state] %s = %d (persistent)\n", name, v);
+	else
+		v = state_read(name, def, lo, hi);
+	return v;
+}
+
 static int sensor_program_mode(void)
 {
 	if (sensor_cfg(CFG_POWER_UP, NULL, 0) < 0)
@@ -4074,7 +4112,7 @@ int main(int argc, char **argv)
 	 * the mode can be changed by writing the file and restarting
 	 * the daemon -- no ramdisk rebuild needed.
 	 */
-	if (state_read("mode", 0, 0, 1) == 1) {
+	if (state_read_persist("mode", 0, 0, 1) == 1) {
 		cam = &cam_rear;
 		wh[0] = cam->width;
 		wh[1] = cam->height;
@@ -4108,7 +4146,7 @@ int main(int argc, char **argv)
 	 * the one the stock camera uses, and it may carry the demosaic
 	 * and noise reduction that suppress the screen's moire.
 	 */
-	if (state_read("stream", 0, 0, 1) == 1) {
+	if (state_read_persist("stream", 0, 0, 1) == 1) {
 		isp_stream_src = PIX_VIEWFINDER;
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
 	}
@@ -4117,7 +4155,7 @@ int main(int argc, char **argv)
 	 * It is captured from the ROM's camera stack and may carry the
 	 * noise reduction that suppresses the screen's moire.
 	 */
-	if (state_read("capture_cfg", 0, 0, 1) == 1) {
+	if (state_read_persist("capture_cfg", 0, 0, 1) == 1) {
 		send_capture_config = 1;
 		printf("[mode] ISP capture configuration: sent\n");
 	}
