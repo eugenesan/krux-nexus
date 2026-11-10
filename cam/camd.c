@@ -2824,6 +2824,8 @@ static void *client_thread(void *arg)
 					uint64_t td0 = now_ns();
 					{
 						static unsigned short *mid;
+						static unsigned char *smooth;
+						const unsigned char *dsrc = src_y;
 						int mx, my, sy, sx;
 						int two = (crop_h == 2 * out_w &&
 							   crop_w == 2 * out_h);
@@ -2831,9 +2833,75 @@ static void *client_thread(void *arg)
 							mid = malloc((size_t)out_h *
 								     out_w * 2);
 						if (mid) {
-							if (!two)
+							if (!two) {
 								memset(mid, 0,
 								       (size_t)out_h * out_w * 2);
+								/*
+								 * The daemon reads the ISP's raw
+								 * frame, and its luma is the Bayer
+								 * mosaic (R/G/G/B in each 2x2
+								 * block).  The generic box sampler
+								 * below scales by 1.71x, which does
+								 * not line up with the 2x2 Bayer
+								 * phase: the colour pattern aliases
+								 * into wide bands that move with
+								 * the scene -- the preview's bands.
+								 * The full-res path is immune only
+								 * because it divides by exactly 2.
+								 *
+								 * Demosaic to luma first: the green
+								 * samples are the luma, and at the
+								 * red/blue sites the green is the
+								 * average of the four orthogonal
+								 * green neighbours.  That removes
+								 * the checkerboard without the blur
+								 * a 2x2 average would cost -- the
+								 * finder pass sees more, not fewer,
+								 * corners.  The raw bounce stays
+								 * untouched: the QR retry crops it
+								 * 1:1.
+								 */
+								if (!smooth)
+									smooth = malloc(
+										(size_t)crop_w * crop_h);
+								if (smooth) {
+									int y, x;
+									for (y = 0; y < crop_h; y++) {
+										const unsigned char *r =
+											src_y + (size_t)y * crop_w;
+										unsigned char *o =
+											smooth + (size_t)y * crop_w;
+										for (x = 0; x < crop_w; x++) {
+											if ((y ^ x) & 1) {
+												/* green */
+												o[x] = r[x];
+											} else {
+												unsigned int a = 0;
+												int n = 0;
+												if (x > 0) {
+													a += r[x - 1];
+													n++;
+												}
+												if (x + 1 < crop_w) {
+													a += r[x + 1];
+													n++;
+												}
+												if (y > 0) {
+													a += r[x - crop_w];
+													n++;
+												}
+												if (y + 1 < crop_h) {
+													a += r[x + crop_w];
+													n++;
+												}
+												o[x] = (unsigned char)
+													(a / (n ? n : 1));
+											}
+										}
+									}
+									dsrc = smooth;
+								}
+							}
 							if (two) {
 								for (my = 0; my < out_w; my++) {
 									const unsigned char *r0 =
@@ -2857,7 +2925,7 @@ static void *client_thread(void *arg)
 										mid + my * out_h;
 									for (sy = sy0; sy < sy1; sy++) {
 										const unsigned char *row =
-											src_y + (size_t)sy * crop_w;
+											dsrc + (size_t)sy * crop_w;
 										for (mx = 0; mx < out_h; mx++) {
 											int sx0 = mx * crop_w / out_h;
 											int sx1 = (mx + 1) * crop_w / out_h;
