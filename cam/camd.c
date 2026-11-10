@@ -2528,18 +2528,23 @@ static void *client_thread(void *arg)
 		p3 = now_ns();
 		r = poll(&pfd, 1, 2000);
 		if (r <= 0) {
-			printf("[client] no frame after 2s\n");
 			/*
-			 * The stream stopped delivering frames (the ISP
-			 * stalls and does not recover in place).  A fresh
-			 * camd does, so exit after 10 s and let the init
-			 * stub's supervisor start one; the client
-			 * reconnects.  This must NOT depend on latest_seq:
-			 * a daemon restarted after a stall has seq 0, and
-			 * the old check then left it stuck forever.
+			 * Do NOT exit and let the supervisor restart the
+			 * daemon.  On this kernel the camera teardown is
+			 * broken:
+			 *
+			 *   msm_isp_close_node: Invalid close
+			 *   msm_csid_release: csid invalid state 1
+			 *   msm_vb2_buf_cleanup: NULL stream
+			 *
+			 * and the next daemon's re-init then overflows the
+			 * ISP-IF PIX0 and the ISP tasklet queue, which the
+			 * hardware watchdog turns into a reboot
+			 * (bootreason=wdog_bark).  Staying up leaves the
+			 * camera stalled -- reboot to recover -- but it does
+			 * not crash the box.
 			 */
-			if (++no_frame >= 5)
-				_exit(1);
+			printf("[client] no frame after 2s (%d)\n", ++no_frame);
 			continue;
 		}
 		no_frame = 0;
