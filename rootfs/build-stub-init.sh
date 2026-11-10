@@ -14,14 +14,17 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT=${1:-$HERE/stub/krux-init}
-[ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
-SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
+# The host's hard-float sysroot.  The Debian armel (soft-float)
+# sysroot and the Linaro / ARM GNU toolchains are obsolete; see
+# docs/toolchain.md.
+SYSROOT=${SYSROOT:-/usr/arm-linux-gnueabihf}
 CC=${CC:-arm-linux-gnueabihf-gcc}
 
-[ -d "$SYSROOT" ] || { echo "no armel sysroot at $SYSROOT (see TOOLCHAIN.md)" >&2; exit 1; }
+[ -d "$SYSROOT" ] || { echo "no sysroot at $SYSROOT (see TOOLCHAIN.md)" >&2; exit 1; }
 
 mkdir -p "$(dirname "$OUT")"
 $CC -Os -static -s -Wall \
+    -march=armv7-a -mfpu=neon -mfloat-abi=hard \
     --sysroot="$SYSROOT" \
     -o "$OUT" \
     "$HERE/init-stub.c" -lpthread

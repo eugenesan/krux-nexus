@@ -39,15 +39,14 @@ OUT=${OUT:-$HERE/../../rootfs/micropython-arm32}
 MP_BUILD=${MP_BUILD:-/tmp/opencode/mp-build}
 CC_CROSS=${CC_CROSS:-arm-linux-gnueabihf-}
 CCACHE=${CCACHE:-ccache}
-if [ -z "${SYSROOT:-}" ]; then
-	if [ "$CC_CROSS" = arm-linux-gnueabihf- ] && [ -d /usr/arm-linux-gnueabihf ]; then
-		SYSROOT=/usr/arm-linux-gnueabihf
-	elif [ "$CC_CROSS" = arm-linux-gnueabi- ] && [ -d /usr/arm-linux-gnueabi ]; then
-		SYSROOT=/usr/arm-linux-gnueabi
-	else
-		SYSROOT=/tmp/opencode/armel-sysroot
-	fi
-fi
+# Everything is built with the host's arm-linux-gnueabihf toolchain
+# and its own sysroot.  The Debian soft-float armel sysroot and the
+# Linaro / ARM GNU toolchains are obsolete (see docs/toolchain.md).
+SYSROOT=${SYSROOT:-/usr/arm-linux-gnueabihf}
+[ -d "$SYSROOT" ] || {
+	echo "no arm-linux-gnueabihf sysroot at $SYSROOT" >&2
+	exit 1
+}
 HOST_BUILD=$MP_BUILD/mpy-cross
 TARGET_BUILD=$MP_BUILD/target
 
@@ -112,8 +111,8 @@ make -j"$(nproc)" \
 	MICROPY_PY_CRYPTOLIB_CONSTS=1 \
 	MICROPY_PY_CRYPTOLIB_CTR=1 \
 	USER_C_MODULES="$CUR_STAGE" \
-	CFLAGS_EXTRA="--sysroot=$SYSROOT -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_DEFLATE_COMPRESS=1" \
-	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -lm"
+	CFLAGS_EXTRA="--sysroot=$SYSROOT -mfloat-abi=hard -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_DEFLATE_COMPRESS=1" \
+	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -mfloat-abi=hard -lm"
 
 file "$TARGET_BUILD/micropython"
 if file "$TARGET_BUILD/micropython" | grep -q 'dynamically linked'; then

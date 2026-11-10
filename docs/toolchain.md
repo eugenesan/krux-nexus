@@ -1,6 +1,13 @@
 # Toolchain and host setup
 
-Everything needed to build the rootfs, the NFC port, and eventually the kernel.
+Everything needed to build the rootfs, the NFC port, and the kernel.
+
+> **Current state:** every component — kernel, MicroPython, camd, the
+> init stub — is built with the host's `arm-linux-gnueabihf-gcc`
+> (hard-float) and its `/usr/arm-linux-gnueabihf` sysroot.  The
+> AOSP/Linaro (`arm-linux-androideabi`), ARM GNU (`arm-none-eabi`) and
+> Debian armel (`arm-linux-gnueabi`) toolchains discussed below are
+> **historical**; they were tried for experiments and are obsolete.
 
 ## Packages installed on the host (Ubuntu 26.04.1 LTS)
 
@@ -234,7 +241,14 @@ cross-compiler third, and prints which one it found rather than dying with
 
 ---
 
-## ⚠ CORRECTION — the kernel is built with GCC, prefix `arm-none-eabi-`
+## The ROM's kernel: GCC, prefix `arm-none-eabi-` — not ours
+
+> **Correction (current state):** our kernel is built with the host's
+> `arm-linux-gnueabihf-gcc`, which is `tools/build-kernel.sh`'s
+> default (`TOOLCHAIN=host`).  The `arm-none-eabi-` analysis below is
+> about the *ROM's* kernel; that toolchain was tried here for a few
+> experiments and is **not** what this project builds with.
+> `TOOLCHAIN=arch` is not needed.
 
 The two conclusions above are both wrong, and the reason is instructive: **I
 inferred the toolchain from prebuilt *repo names* instead of reading the device
@@ -389,11 +403,16 @@ the Phase 6 kernel build, and iterating on the Broadcom NFC HAL port.
 
 ---
 
-## The armel sysroot
+## The armel sysroot (OBSOLETE)
 
-The firmware's MicroPython and its init stub are built with the **armel**
-(`arm-linux-gnueabi`) cross toolchain, statically, and against a sysroot
-assembled from Debian's armel cross packages.
+> **Obsolete.**  The firmware and the stub are now built with the host's
+> `arm-linux-gnueabihf` toolchain and its `/usr/arm-linux-gnueabihf`
+> sysroot.  `scripts/build-armel-sysroot.sh` is deprecated; the text
+> below is kept only as history.
+
+The firmware's MicroPython and its init stub *used* to be built with the
+**armel** (`arm-linux-gnueabi`) cross toolchain, statically, and against a
+sysroot assembled from Debian's armel cross packages.
 
 The packages themselves are vendored, unpacked, and ready:
 

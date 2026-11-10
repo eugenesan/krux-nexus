@@ -2,7 +2,10 @@
 # build-armel-sysroot.sh -- assemble the armel cross sysroot from the
 # vendored Debian packages.
 #
-# Not neede if using host toolchain
+# OBSOLETE.  Everything is now built with the host's
+# arm-linux-gnueabihf toolchain and its /usr/arm-linux-gnueabihf
+# sysroot.  This Debian soft-float armel sysroot is kept only for the
+# history in docs/toolchain.md; do not use it for new builds.
 #
 # The sysroot is the headers and the static libc that the armel cross
 # toolchain compiles against.  It is not a build output in the sense of

@@ -66,8 +66,6 @@ else
 fi
 mkdir -p "$(dirname "$OUT")"
 WORK=${WORK:-/tmp/opencode/stub-ramdisk}
-[ ! -d /usr/arm-linux-gnueabi ] || SYSROOT=/usr/arm-linux-gnueabi
-SYSROOT=${SYSROOT:-/tmp/opencode/armel-sysroot}
 
 [ -f "$TWRP_IMG" ] || { echo "no TWRP image at $TWRP_IMG" >&2; exit 1; }
 

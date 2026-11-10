@@ -35,32 +35,30 @@ finished device, use the bundled image below so the firmware is read-only.
 * `adb` and `fastboot` -- to talk to the device.
 * `dtc` -- to look at the device trees (optional).
 
-**The toolchain the kernel is built with** is Arch's
-`arm-none-eabi-gcc` 16.2.0, the one the ROM's own kernels were built
-with.  It is about 2 GB unpacked, so it is not tracked; fetch it with:
+**The toolchain the kernel is built with** is the host's
+`arm-linux-gnueabihf-gcc`, the same one the firmware, camd and the
+stub use.  `tools/build-kernel.sh` selects it by default
+(`TOOLCHAIN=host`); nothing extra needs to be fetched.
 
-```sh
-sh tools/fetch-toolchain.sh /tmp/opencode/tc-arch
-```
+(The ROM's own kernels were built with Arch's `arm-none-eabi-gcc`
+16.2.0.  We tried that toolchain for a few experiments and it stuck in
+these notes for a while; it is **not** what this project builds with
+and `TOOLCHAIN=arch` is not needed.)
 
-and point the kernel build at it with
-`TOOLCHAIN=arch TOOLCHAIN_PATH=/tmp/opencode/tc-arch`.  (On this
-machine it already lives at
-`/home/user/Develop/toolchains/arch-16.2.0`.)
+**The sysroot** is the host's `/usr/arm-linux-gnueabihf` (the
+`arm-linux-gnueabihf` cross compiler's own headers and static libc).
+Nothing needs to be assembled.
 
-**The armel sysroot** (the headers and the static libc the
-firmware is built against) is built from the vendored `.deb`
-packages:
-
-```sh
-sh scripts/build-armel-sysroot.sh /tmp/opencode/armel-sysroot
-```
+The Debian soft-float `armel-sysroot` (`scripts/build-armel-sysroot.sh`)
+and the Linaro / ARM GNU (`arm-none-eabi`) toolchains are **obsolete**.
+They were used for experiments and are kept only for the history in
+`docs/toolchain.md`; every component is built with the host's
+`arm-linux-gnueabihf`.
 
 ## 1. The kernel
 
 ```sh
-TOOLCHAIN=arch TOOLCHAIN_PATH=/tmp/opencode/tc-arch \
-    bash tools/build-kernel.sh --out /tmp/opencode/ko
+bash tools/build-kernel.sh --tree linux --out /tmp/opencode/ko
 ```
 
 That takes about fifteen minutes on four cores (the tree is a CAF
@@ -207,17 +205,8 @@ set -e
 P=/home/user/Develop/src/krux-nexus
 cd $P
 
-# the toolchain
-mkdir -p /tmp/opencode/tc-arch
-sh tools/fetch-toolchain.sh /tmp/opencode/tc-arch
-
-# the sysroot
-[ -d /tmp/opencode/armel-sysroot ] || \
-    sh scripts/build-armel-sysroot.sh /tmp/opencode/armel-sysroot
-
-# the kernel
-TOOLCHAIN=arch TOOLCHAIN_PATH=/tmp/opencode/tc-arch \
-    bash tools/build-kernel.sh --out /tmp/opencode/ko
+# the kernel (host arm-linux-gnueabihf, the default)
+bash tools/build-kernel.sh --tree linux --out /tmp/opencode/ko
 
 # the firmware
 bash scripts/build/build-micropython.sh
@@ -299,7 +288,6 @@ things the space in `/tmp` is for:
 ```
 /tmp/opencode/ko-arch2        the kernel's build tree
 /tmp/opencode/mp-build        the firmware's build tree
-/tmp/opencode/armel-sysroot   the sysroot the firmware is built against
 ```
 
 Keep an eye on the space:
@@ -308,10 +296,8 @@ Keep an eye on the space:
 df -h /tmp
 ```
 
-The **toolchain** is the exception: the unpacked Arch toolchain is
-2 GB, which is more than a tenth of `/tmp`, so it lives on the disk
-at `/home/user/Develop/toolchains/arch-16.2.0` and the build is
-pointed at it with `TOOLCHAIN_PATH`.
+The toolchain is not a `/tmp` concern: every component is built with
+the host's `arm-linux-gnueabihf-gcc`, which is already installed.
 
 (The MicroPython source now lives in the Krux fork; its `build-standard`
 directory is disposable and can be removed or rebuilt at any time.)

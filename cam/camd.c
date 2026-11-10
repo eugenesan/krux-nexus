@@ -1381,11 +1381,62 @@ static int cpp_send_chromatrix(void)
 }
 
 /*
- * The CPP completed-frame queue is drained by a kernel fix, not from
- * here: VIDIOC_MSM_CPP_GET_EVENTPAYLOAD dequeues without a NULL check,
- * so calling it speculatively from userspace faults on an empty queue.
- * See the msm_cpp.c change that returns -ENODATA instead.
+ * Drain the CPP's completed-frame queue.
+ *
+ * The CPP enqueues one processed-frame entry per frame
+ * (msm_cpp_notify_frame_done), and only
+ * VIDIOC_MSM_CPP_GET_EVENTPAYLOAD takes one out.  Nothing did, so the
+ * kernel list grew without bound -- dmesg's "queue eventdata new max
+ * is N" climbing into the thousands -- until the box ran out of memory
+ * and hard-locked, often on the main screen with no camera page open.
+ *
+ * The driver used to dereference a NULL dequeue on an empty queue, so
+ * this could not be done safely from userspace; the kernel now returns
+ * -ENODATA instead (see the msm_cpp.c change).  The CPP's v4l2
+ * frame-done event says a payload is ready, so drain one per event.
  */
+static void *cpp_event_thread(void *arg)
+{
+	struct v4l2_event_subscription sub;
+	(void)arg;
+
+	/* Anything left from an earlier session. */
+	for (;;) {
+		struct msm_camera_v4l2_ioctl_t io;
+		struct msm_cpp_frame_info_t info;
+
+		memset(&io, 0, sizeof(io));
+		memset(&info, 0, sizeof(info));
+		io.len = sizeof(info);
+		io.ioctl_ptr = &info;
+		if (ioctl(cpp_fd, VIDIOC_MSM_CPP_GET_EVENTPAYLOAD, &io) < 0)
+			break;
+	}
+
+	memset(&sub, 0, sizeof(sub));
+	sub.type = CPP_FRAME_DONE_EVENT;
+	if (ioctl(cpp_fd, VIDIOC_SUBSCRIBE_EVENT, &sub) < 0)
+		printf("[cpp] subscribe frame-done: %s\n", strerror(errno));
+
+	for (;;) {
+		struct v4l2_event ev;
+		struct msm_camera_v4l2_ioctl_t io;
+		struct msm_cpp_frame_info_t info;
+
+		if (ioctl(cpp_fd, VIDIOC_DQEVENT, &ev) < 0) {
+			struct timespec ts = { 0, 2 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
+			continue;
+		}
+		memset(&io, 0, sizeof(io));
+		memset(&info, 0, sizeof(info));
+		io.id = ev.id;
+		io.len = sizeof(info);
+		io.ioctl_ptr = &info;
+		ioctl(cpp_fd, VIDIOC_MSM_CPP_GET_EVENTPAYLOAD, &io);
+	}
+	return NULL;
+}
 
 /* Sum of horizontal gradients in the middle of the frame: a simple,
  * robust focus metric for the VCM sweep. */
@@ -2116,6 +2167,11 @@ static void *server_thread(void *arg)
 			 * starts the sensor afterwards.
 			 */
 			isp_start();
+			if (cpp_fd >= 0) {
+				pthread_t cpp_ev;
+				pthread_create(&cpp_ev, NULL, cpp_event_thread,
+					       NULL);
+			}
 			if (cam->kernel_programs_sensor) {
 				static struct msm_camera_i2c_reg_array dummy[1];
 				struct msm_camera_i2c_reg_setting set;

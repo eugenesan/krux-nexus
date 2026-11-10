@@ -6541,7 +6541,13 @@ before. The evidence is the `.comment` section, which records the compiler
 that produced each object, and the version banner, which the kernel carries
 in `CONFIG_LOCALVERSION`.
 
-### The kernels: gcc 16.2.0, and almost certainly Arch's `arm-none-eabi-gcc`
+### The ROM's kernels: gcc 16.2.0, Arch's `arm-none-eabi-gcc`
+
+> **Note (current state):** this section is about the **ROM's** kernel.
+> Our kernel is built with the host's `arm-linux-gnueabihf-gcc`
+> (`tools/build-kernel.sh`'s default, `TOOLCHAIN=host`).  The Arch
+> `arm-none-eabi` toolchain was tried for a few experiments and then
+> left in the build guide by mistake; it is not our default.
 
 ```
 kernel-twrp.img        Linux version 3.4.113-... (acroreiser@thinkstation) (gcc version 16.2.0 (GCC) ) #315

@@ -283,26 +283,20 @@ fi
 #        sh tools/fetch-toolchain.sh
 #
 #    (it unpacks what it has and only downloads what is missing).
-# TOOLCHAIN selects which of the four we use:
-#   host   the host's arm-linux-gnueabi-gcc (default) -- the same toolchain
-#                                                 the firmware's MicroPython is
-#                                                 built with, so ONE toolchain
-#                                                 serves both, and it is the one
-#                                                 that is on the machine.  The
-#                                                 tree forces -msoft-float
-#                                                 itself (arch/arm/Makefile), so
-#                                                 a hosted compiler is fine for
-#                                                 a kernel.
-#   arch   Arch's arm-none-eabi-gcc 16.2.0   -- matches the installed and
-#                                                 ROM-zip kernels; needs
-#                                                 fetch-toolchain.sh to be run
-#   armgnu Arm GNU Toolchain 15.2.Rel1        -- matches the TWRP kernel, the
-#                                                 one that gives a working adb;
-#                                                 fetch-toolchain.sh downloads
-#                                                 it
-#   aosp   the AOSP prebuilt 4.9             -- a bionic userspace toolchain,
-#                                                 which is not what built any of
-#                                                 the reference kernels
+# TOOLCHAIN selects the compiler.
+#
+# **Current state: `host` (the host's arm-linux-gnueabihf-gcc) is the
+# only supported toolchain**; every component -- kernel, MicroPython,
+# camd, stub -- is built with it.  `arch`, `armgnu` and `aosp` are
+# historical experiments and are obsolete; do not use them.
+#
+#   host   the host's arm-linux-gnueabihf-gcc (default) -- the same
+#          toolchain the firmware uses.  The tree forces -msoft-float
+#          itself (arch/arm/Makefile), so a hosted compiler is fine for
+#          a kernel.
+#   arch   Arch's arm-none-eabi-gcc 16.2.0   -- obsolete
+#   armgnu Arm GNU Toolchain 15.2.Rel1        -- obsolete
+#   aosp   the AOSP prebuilt 4.9             -- obsolete
 case "${TOOLCHAIN:-host}" in
   armgnu)
       for c in "$here/../standalone/vendor/toolchain"/arm-gnu-toolchain-*/bin; do
