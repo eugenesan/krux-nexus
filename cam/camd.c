@@ -2520,9 +2520,9 @@ static void *client_thread(void *arg)
 			isp_replay(cam_cycle, CAM_CYCLE_COUNT,
 				   "per-frame cycle");
 		p3 = now_ns();
-		r = poll(&pfd, 1, 5000);
+		r = poll(&pfd, 1, 2000);
 		if (r <= 0) {
-			printf("[client] no frame after 5s\n");
+			printf("[client] no frame after 2s\n");
 			/*
 			 * The stream stalled after it had been producing
 			 * frames (the ISP drops them and never recovers in
@@ -2933,21 +2933,40 @@ static void *client_thread(void *arg)
 					static unsigned max_seen;
 					static int starve;
 					unsigned long s = 0;
-					int k, ns = 0;
+					unsigned long us = 0;
+					int k, ns = 0, un = 0;
 					int publish;
+					int valid = 1;
 					for (k = 0; k < out_w * out_h; k += 97) {
 						s += latest_y[k];
 						ns++;
 					}
 					s /= (ns ? ns : 1);
+					/* The CPP writes the chroma plane; the ISP's
+					 * raw pass leaves it empty.  Sample it -- a
+					 * few bytes straight from ION, not the old
+					 * full downscale -- to tell the processed
+					 * frames from the dark raw copies.  The
+					 * luma-only gate could not, so the starve
+					 * path published a dark frame every fourth:
+					 * the flickering dark overlay. */
+					for (k = 0; k < (int)uv_sz; k += 4096) {
+						us += src_uv[k];
+						un++;
+					}
+					us /= (un ? un : 1);
+					if (us < 8)
+						valid = 0;
 					/* The decision, once every two hundred
-					 * frames: the luma mean, the reference
-					 * and whether the frame is published. */
+					 * frames: the luma mean, the chroma mean,
+					 * the reference and whether the frame is
+					 * published. */
 					{
 						static int dcount;
 						if (++dcount % 200 == 0)
-							printf("[pub] s=%lu max=%u seq=%d\n",
-							       s, max_seen, latest_seq);
+							printf("[pub] s=%lu us=%lu valid=%d max=%u seq=%d\n",
+							       s, us, valid, max_seen,
+							       latest_seq);
 					}
 					/* Adapt quickly when the scene darkens, and never
 					 * suppress more than a few frames in a row: a
@@ -2962,12 +2981,16 @@ static void *client_thread(void *arg)
 					 * stalled until the reference decayed: the
 					 * image appeared to drift and then came back. */
 					max_seen -= max_seen / 32;
-					publish = (s * 8 >= max_seen);
-					if (s > max_seen)
-						max_seen = s;
+					if (!valid) {
+						publish = 0;
+					} else {
+						publish = (s * 8 >= max_seen);
+						if (s > max_seen)
+							max_seen = s;
+					}
 					if (publish) {
 						starve = 0;
-					} else if (++starve >= 4) {
+					} else if (valid && ++starve >= 4) {
 						/* Never let a dark scene starve the
 						 * client: the QR page needs frames to
 						 * poll its buttons and run AF. */
