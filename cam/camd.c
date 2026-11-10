@@ -3899,16 +3899,31 @@ static void *socket_thread(void *arg)
 								/* The scores of the
 								 * running sweep are
 								 * not comparable
-								 * any more.  Drop it
-								 * and start a new
-								 * one, which will be
-								 * measured under the
-								 * new exposure. */
+								 * any more: abandon
+								 * it.  Do NOT ask
+								 * for another one.
+								 *
+								 * The exposure follows
+								 * the scene while the
+								 * user aims, so asking
+								 * for a sweep on every
+								 * change made the two
+								 * chase each other: the
+								 * exposure changed, the
+								 * sweep restarted, the
+								 * sweep moved the lens,
+								 * the exposure changed
+								 * again.  The picture
+								 * blinked and then sat
+								 * in the dark while the
+								 * sweep ran, over and
+								 * over.  A sweep is only
+								 * started when the user
+								 * asks for one. */
 								af_abort = 1;
-								refocus_request = 1;
 								printf("[af] exposure "
 								       "changed, sweep "
-								       "restarted\n");
+								       "abandoned\n");
 							}
 						}
 						cam_exposure = nexp;
