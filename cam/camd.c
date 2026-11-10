@@ -369,6 +369,31 @@ static int sensor_write_regs(const struct imx179_reg *regs, int n)
 	return sensor_write_regs_as(regs, n, MSM_CAMERA_I2C_BYTE_DATA);
 }
 
+/*
+ * Set the exposure and gain the way the vendor does: inside the
+ * sensor's group hold (0x0104), so the values latch at the next frame
+ * boundary.  Written bare they take effect mid-readout, and the frame
+ * gets a moving per-row band -- exactly what appeared whenever the
+ * exposure or gain changed.  The vendor's own settings do
+ * 0x0104=1, the registers, 0x0104=0 (imx179_settings_3/_7/_6).
+ */
+static int sensor_set_exposure_gain(int exp, int gain)
+{
+	struct imx179_reg hold = { 0x0104, 0x01, 0 };
+	struct imx179_reg eg[2] = {
+		{ 0x0202, exp, 0 },
+		{ 0x0204, gain, 0 },
+	};
+	struct imx179_reg rel = { 0x0104, 0x00, 0 };
+	int rc;
+
+	rc = sensor_write_regs_as(&hold, 1, MSM_CAMERA_I2C_BYTE_DATA);
+	if (rc == 0)
+		rc = sensor_write_regs_as(eg, 2, MSM_CAMERA_I2C_WORD_DATA);
+	sensor_write_regs_as(&rel, 1, MSM_CAMERA_I2C_BYTE_DATA);
+	return rc;
+}
+
 /* --- reading the sensor's registers back --------------------------------
  *
  * The kernel's sensor-config ioctl can read a register
@@ -575,6 +600,12 @@ static volatile int af_sweeping;
 static int cam_exposure = -1;
 static int cam_gain = -1;
 static int dump_now;
+/*
+ * Diagnostic mode (ctl 'c'): publish a linear 1:1 crop of the raw
+ * source with no demosaic, downscale or rotation, so the raw frame
+ * can be compared with the processed preview and the framebuffer.
+ */
+static volatile int rawcrop;
 /* 0 = leave the actuator alone; 1 = open+GET_INFO; 2 = +SET_INFO;
  * 3 = +SET_DEFAULT_FOCUS; 4 = +move.  Lets the actuator sequence be
  * bisected from the state file without rebuilding.
@@ -1148,6 +1179,12 @@ static int crop_publish(int px, int py, int pw, int ph)
  * run time.
  */
 static int replay_config = 1;	/* the initial configuration */
+/*
+ * How many of the vendor's initial ISP uploads to send; -1 = all.
+ * This is the bisection knob, and it lives on /data (persistent)
+ * because /tmp is a tmpfs: /data/krux/ispcfg holds the count.
+ */
+static int isp_cfg_count = -1;
 static int full_chroma;		/* full-height CBCR + full-size buffer */
 static int replay_cycle = 1;	/* and the per-frame cycle */
 
@@ -1434,6 +1471,17 @@ static void *cpp_event_thread(void *arg)
 		io.len = sizeof(info);
 		io.ioctl_ptr = &info;
 		ioctl(cpp_fd, VIDIOC_MSM_CPP_GET_EVENTPAYLOAD, &io);
+		/*
+		 * DQEVENT can keep returning events (a fast producer, or
+		 * a spurious repeat) with no sleep on success, which pins
+		 * this thread -- and a whole core -- at ~100%.  The
+		 * drain only has to keep up with the frames, so back off
+		 * a millisecond per event.
+		 */
+		{
+			struct timespec ts = { 0, 1 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
+		}
 	}
 	return NULL;
 }
@@ -1588,7 +1636,9 @@ static int isp_start(void)
 	}
 	printf("[isp] stream started\n");
 	if (replay_config)
-		isp_replay(cam_initial, CAM_INITIAL_COUNT,
+		isp_replay(cam_initial,
+			   isp_cfg_count < 0 ? CAM_INITIAL_COUNT
+					     : isp_cfg_count,
 			   "initial configuration");
 	if (send_capture_config)
 		isp_replay(cam_capture, CAM_CAPTURE_COUNT,
@@ -2442,6 +2492,15 @@ static void *client_thread(void *arg)
 	static int idle;
 	static int no_frame;
 	static int qfail;
+	/*
+	 * The stream has stalled when the same buffer keeps coming back
+	 * without the ISP writing it: the loop then spins at 100% CPU
+	 * (and hammers the CPP), which starves the ISP and turns the
+	 * stall into a hang.  Track the last index and back off.
+	 */
+	static int last_idx = -1;
+	static int same_idx;
+	static int stalled;
 	for (n = 0; ; n++) {
 		struct v4l2_buffer buf;
 		struct pollfd pfd = { .fd = fd, .events = POLLIN };
@@ -2552,6 +2611,21 @@ static void *client_thread(void *arg)
 			       ++no_frame, idle, cfg_ok, qfail);
 			continue;
 		}
+		/*
+		 * A poll error (not POLLIN) means the stream is in an
+		 * error state; DQBUF then fails immediately and the loop
+		 * would busy-spin at 100% CPU, which starves the ISP and
+		 * turns the stall into a hang.  Sleep instead.
+		 */
+		if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+			static int perr;
+			if (perr++ < 5)
+				printf("[client] poll error revents=0x%x\n",
+				       pfd.revents);
+			struct timespec ts = { 0, 100 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
+			continue;
+		}
 		no_frame = 0;
 		p4 = now_ns();
 		{
@@ -2563,10 +2637,25 @@ static void *client_thread(void *arg)
 			buf.m.planes = dqplanes;
 			buf.length = 2;
 			if (ioctl(fd, VIDIOC_DQBUF, &buf) < 0) {
-				printf("[client] DQBUF: %s\n", strerror(errno));
+				static int dqerr;
+				if (dqerr++ < 5)
+					printf("[client] DQBUF: %s\n",
+					       strerror(errno));
+				/* Do not busy-spin: a failing DQBUF
+				 * saturates the CPU and starves the ISP. */
+				struct timespec ts = { 0, 100 * 1000 * 1000 };
+				nanosleep(&ts, NULL);
 				continue;
 			}
 			p5 = now_ns();
+			if (buf.index == last_idx) {
+				if (++same_idx >= 3)
+					stalled = 1;
+			} else {
+				last_idx = buf.index;
+				same_idx = 0;
+				stalled = 0;
+			}
 			cpp_input_index = (buf.index + 1) % (int)cbufs.count;
 			if (debug_frames) {
 				printf("[client] plane0: bytesused=%u length=%u data_offset=%u\n",
@@ -2724,6 +2813,49 @@ static void *client_thread(void *arg)
 						pthread_mutex_unlock(&bounce_mutex);
 						src_y = bounce_buf[bi];
 					}
+				}
+				if (rawcrop) {
+					/*
+					 * Diagnostic: publish a linear 1:1
+					 * crop of the raw source, centred,
+					 * with no demosaic, downscale or
+					 * rotation.  If the artifact is here
+					 * it is in the raw frame; if only in
+					 * the processed preview or the
+					 * framebuffer, it is downstream.
+					 */
+					int ox = (crop_w - out_w) / 2;
+					int oy = (crop_h - out_h) / 2;
+					int w, h, y;
+					if (ox < 0) ox = 0;
+					if (oy < 0) oy = 0;
+					w = crop_w - ox;
+					if (w > out_w) w = out_w;
+					h = crop_h - oy;
+					if (h > out_h) h = out_h;
+					pthread_mutex_lock(&frame_mutex);
+					if (!latest_y) {
+						latest_y = malloc(out_w * out_h);
+						latest_uv = malloc(
+							(out_w / 2) *
+							(out_h / 2) * 2);
+					}
+					if (latest_y) {
+						memset(latest_y, 0,
+						       (size_t)out_w * out_h);
+						for (y = 0; y < h; y++)
+							memcpy(latest_y +
+							       (size_t)y * out_w,
+							       src_y +
+							       (size_t)(oy + y) *
+							       crop_w + ox, w);
+						latest_seq++;
+						latest_ready = 1;
+						shm_publish();
+						published = 1;
+					}
+					pthread_mutex_unlock(&frame_mutex);
+					goto proc_done;
 				}
 				{
 					static int dumped;
@@ -3387,6 +3519,7 @@ static void *client_thread(void *arg)
 				}
 			}
 			}
+proc_done:
 			if (p_y != MAP_FAILED) munmap(p_y, y_sz);
 			if (p_uv != MAP_FAILED) munmap(p_uv, uv_sz);
 		}
@@ -3429,6 +3562,13 @@ static void *client_thread(void *arg)
 				camd_q[camd_q_tail] = buf.index;
 				camd_q_tail = (camd_q_tail + 1) % camd_q_count;
 			}
+		}
+		if (stalled) {
+			static int s_log;
+			if (s_log++ < 5)
+				printf("[client] stalled on one buffer; backing off\n");
+			struct timespec ts = { 0, 100 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
 		}
 		p7 = now_ns();
 
@@ -3649,12 +3789,9 @@ static void *socket_thread(void *arg)
 					 * separate byte writes leaves the gain
 					 * effectively stuck until the maximum
 					 * value, so use 16-bit word writes. */
-					struct imx179_reg r[2] = {
-						{ 0x0202, (p[0] << 8) | p[1], 0 },
-						{ 0x0204, (p[2] << 8) | p[3], 0 },
-					};
-					int erc = sensor_write_regs_as(
-						r, 2, MSM_CAMERA_I2C_WORD_DATA);
+					int erc = sensor_set_exposure_gain(
+						(p[0] << 8) | p[1],
+						(p[2] << 8) | p[3]);
 					if (erc == 0) {
 						int nexp = (p[0] << 8) | p[1];
 						int ngain = (p[2] << 8) | p[3];
@@ -3779,12 +3916,8 @@ static void *ctl_thread(void *arg)
 				if (read(cfd, p, 4) == 4) {
 					int nexp = (p[0] << 8) | p[1];
 					int ngain = (p[2] << 8) | p[3];
-					struct imx179_reg r[2] = {
-						{ 0x0202, nexp, 0 },
-						{ 0x0204, ngain, 0 },
-					};
-					int erc = sensor_write_regs_as(
-						r, 2, MSM_CAMERA_I2C_WORD_DATA);
+					int erc = sensor_set_exposure_gain(
+						nexp, ngain);
 					if (erc == 0) {
 						cam_exposure = nexp;
 						cam_gain = ngain;
@@ -3800,6 +3933,13 @@ static void *ctl_thread(void *arg)
 				 * and the dump needs a frame. */
 				frame_requests++;
 				write(cfd, "OK", 2);
+			} else if (c == 'c') {
+				/* Toggle the raw linear-crop diagnostic. */
+				rawcrop = !rawcrop;
+				frame_requests++;
+				printf("[mode] raw linear crop %s\n",
+				       rawcrop ? "on" : "off");
+				write(cfd, rawcrop ? "1" : "0", 1);
 			} else if (c == 'R') {
 				printf("[af] full refocus request (ctl)\n");
 				refocus_full = 1;
@@ -3877,6 +4017,19 @@ int main(int argc, char **argv)
 		printf("[state] af=%d focus=%d luma_gain=%d unsharp=%d bench=%d\n",
 		       af_level, focus_step, luma_gain, unsharp_amount,
 		       bench_mode);
+	}
+	{
+		FILE *f = fopen("/data/krux/ispcfg", "r");
+		if (f) {
+			int n;
+			if (fscanf(f, "%d", &n) == 1 && n >= 0 &&
+			    n <= CAM_INITIAL_COUNT)
+				isp_cfg_count = n;
+			fclose(f);
+		}
+		printf("[isp] initial configuration: %d of %d uploads\n",
+		       isp_cfg_count < 0 ? CAM_INITIAL_COUNT : isp_cfg_count,
+		       CAM_INITIAL_COUNT);
 	}
 	if (argc > 2) {
 		wh[0] = atoi(argv[1]);
