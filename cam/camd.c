@@ -1451,6 +1451,62 @@ static int camd_q_tail;
 static int camd_q_count;
 
 
+/*
+ * The chromatrix message can be replaced from the data partition: a
+ * file of 32-bit words, most significant byte first as written by the
+ * host.  The vendor's message was captured from their camera stack and
+ * carries their preview geometry (1280x960); this sensor mode's frames
+ * are 1640x1232, and the stripe table has to be brought up to that or
+ * part of the frame is never written.  Having it in a file means the
+ * geometry can be tried without rebuilding the daemon.
+ */
+static unsigned int *cpp_msg = cam_cpp_msg;
+static int cpp_msg_words = CAM_CPP_MSG_WORDS;
+
+static void cpp_msg_load(void)
+{
+	static unsigned int buf[1024];
+	const char *path = "/data/krux/cppmsg.bin";
+	FILE *f;
+	size_t n;
+
+	/*
+	 * One stripe, not five.
+	 *
+	 * The vendor's message carries five stripes drawn for their
+	 * 1280x960 preview.  This mode's frames are 1640x1232, so the
+	 * five rectangles do not tile the frame: they overlap, the last
+	 * one to write wins, and the picture comes back banded -- the
+	 * grey overlay across part of the preview.  A single stripe
+	 * covers the code and the picture is clean: the Sparrow UR code
+	 * decodes from it, where five stripes gave no finder pattern at
+	 * all.
+	 */
+	memcpy(buf, cam_cpp_msg, 130 * sizeof(unsigned int));
+	memcpy(buf + 130, cam_cpp_msg + 130, 27 * sizeof(unsigned int));
+	buf[157] = cam_cpp_msg[CAM_CPP_MSG_WORDS - 1];
+	buf[12] = 1;		/* one stripe: 0, 0, 1 in the three fields */
+	cpp_msg = buf;
+	cpp_msg_words = 158;
+
+	f = fopen(path, "rb");
+	if (!f) {
+		printf("[cpp] frame message: one stripe (%d words)\n",
+		       cpp_msg_words);
+		return;
+	}
+	n = fread(buf, sizeof(unsigned int), sizeof(buf) / sizeof(buf[0]), f);
+	fclose(f);
+	if (n < 40 || buf[0] != 0x3e646d63 || buf[n - 1] != 0xabcdefaa) {
+		printf("[cpp] %s: not a frame message (%u words), ignored\n",
+		       path, (unsigned)n);
+		return;
+	}
+	cpp_msg = buf;
+	cpp_msg_words = (int)n;
+	printf("[cpp] frame message from %s: %d words\n", path, cpp_msg_words);
+}
+
 /* Hand the chromatrix to the CPP.  Returns 0 on success. */
 static int cpp_send_chromatrix(void)
 {
@@ -1467,8 +1523,8 @@ static int cpp_send_chromatrix(void)
 	 * mode (frame_type 1) does not match what the firmware expects for
 	 * this sensor mode. */
 	frame.frame_type = 0;
-	frame.msg_len = CAM_CPP_MSG_WORDS;
-	frame.cpp_cmd_msg = cam_cpp_msg;
+	frame.msg_len = cpp_msg_words;
+	frame.cpp_cmd_msg = cpp_msg;
 	frame.status = &cpp_status;
 	frame.identity = ((uint32_t)session_id << 16) | (uint32_t)0;
 	frame.input_buffer_info.index = (uint32_t)cpp_input_index;
@@ -1779,8 +1835,8 @@ static int isp_start(void)
 			cpp_fd = fd;
 			memset(&frame, 0, sizeof(frame));
 			frame.frame_type = 1;		/* realtime */
-			frame.msg_len = CAM_CPP_MSG_WORDS;
-			frame.cpp_cmd_msg = cam_cpp_msg;
+			frame.msg_len = cpp_msg_words;
+			frame.cpp_cmd_msg = cpp_msg;
 			/* The CPP writes the result of the frame
 			 * through this pointer.  Left NULL the copy
 			 * back fails and the whole ioctl is reported
@@ -4173,6 +4229,7 @@ int main(int argc, char **argv)
 	signal(SIGPIPE, SIG_IGN);
 
 	setvbuf(stdout, NULL, _IONBF, 0);
+	cpp_msg_load();
 	{
 		const char *p = getenv("CAMD_PROFILE");
 		const char *d = getenv("CAMD_DEBUG_FRAMES");
