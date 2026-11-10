@@ -2499,12 +2499,20 @@ static void *client_thread(void *arg)
 		if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
 		    isp_stream_src == CAMIF_RAW)
 			{
-			int retry;
-			for (retry = 0; retry < 5; retry++) {
-				if (cpp_send_chromatrix() == 0) break;
-				struct timespec ts = { 0, 50 * 1000 * 1000 };
-				nanosleep(&ts, NULL);
-			}
+			/*
+			 * Do not sleep between retries.  The capture thread
+			 * must keep dequeuing and requeueing the ISP buffers;
+			 * the old 5 x 50 ms retry blocked it for a quarter of
+			 * a second, the ISP ran out of buffers and dropped
+			 * frames, its tasklet queue overflowed
+			 * ("msm_isp_process_irq: Tasklet queue overflow") and
+			 * the hardware watchdog bit (bootreason=wdog_bark).
+			 *
+			 * A failed config only means the CPP's output buffer
+			 * queue is momentarily empty; skip this frame's
+			 * config and try again on the next frame.
+			 */
+			cpp_send_chromatrix();
 		}
 		p2 = now_ns();
 
