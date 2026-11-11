@@ -403,3 +403,69 @@ Restored to the working state: clean kernel `cf9fd9c2edf`, `camd`
 `queue full: 0`. The instrumented kernel is at `/tmp/opencode/boot-vfe.img`
 and the PIX test daemon at `/tmp/opencode/camd.c.orig` / the build recipe
 in this section, for the next session.
+
+## The vendor's VFE stream request, captured (2026-11-11)
+
+Step 1 of the PIX plan: probe the kernel's stream/input/CFG handlers and
+run the **vendor camera stack on our kernel** (the ROM's Android, the
+boot image from the stock boot partition).  The probe (a printk in
+`msm_isp_request_axi_stream`, `msm_isp_cfg_axi_stream` and
+`msm_isp_cfg_input`) produced, raw, in
+`docs/archive/vfe-request-2026-11-11.txt`:
+
+### The preview stream (the one we want)
+
+```
+CAP_REQ:   fmt=0x3132564e (NV21) src=1 (PIX_VIEWFINDER) y_only=0
+           drop=1 skip=0 burst=0 hfr=0 fbase=0 divert=1
+CAP_PLANE0: w=1280 h=960 stride=1280 lines=960  fmt=0 (Y)      off=0
+CAP_PLANE1: w=1280 h=480 stride=1280 lines=512  fmt=3 (CRCB)   off=0
+CAP_PLANE2: unused
+```
+
+### The still stream (8 MP, via the encoder interface)
+
+```
+CAP_REQ:   fmt=0x3132564e (NV21) src=0 (PIX_ENCODER) y_only=0 drop=0 divert=0
+CAP_PLANE0: w=3264 h=2448 stride=3264 lines=2496 fmt=0
+CAP_PLANE1: w=3264 h=1224 stride=3264 lines=1280 fmt=3
+```
+
+### The CAMIF/input
+
+```
+CAP_INPUT: src=0 clk=260000000 mux=0 pattern=0 camif_input=3
+           lines=2464 pixels=3280 fp=0 lp=3279 fl=0 ll=2463 e0=0 e1=0
+```
+
+`CAP_CFG: num=1 cmd=1` (START) for both streams.
+
+## What it means
+
+1. **The vendor preview runs PIX_VIEWFINDER → CPP.**  `divert=1` on the
+   preview stream hands the ISP's buffer to the CCP.  That is why the
+   CPP message we captured is a **1280x960** message: its input is the
+   processed PIX frame, not the raw.  Our CAMIF_RAW+CPP pipeline fed it
+   the **3280x2464 raw** — a 2.56x mismatch — and that is the band.
+2. Our daemon asked for the stream differently: **NV12** not NV21,
+   **y_only=1** not 0, **drop=0** not 1, the **CBCR** plane format (4)
+   not CRCB (3), the chroma scan lines 480 not 512, and **no divert**
+   for the PIX (the divest block was gated on CAMIF_RAW).
+3. Replicating the vendor's request (`stream=1`) made the VFE accept the
+   stream and **the CPP process the PIX frames** (193 `cpp_notify_frame_done`
+   in ten seconds) — with the NV21/plane geometry the
+   `image master 0 bus overflow` disappeared.
+
+## What remains
+
+The daemon still gets no DQBUF on that stream, even though the CPP is
+processing.  The remaining work is the **output path** (the CPP's output
+buffer → the VFE's vb2 completion: `msm_isp_process_done_buf`,
+`processed_divert`, the buffer-manager/vb2 pairing) and the residual
+`VFE0 pix0 overflow` (5 at start; the SFE `0x444`/`0x638`/the `0x400`
+preview markers are the next comparison).  The daemon must also read the
+CPP's output as the **1280x960** the vendor's message produces, and skip
+the Bayer demosaic (the PIX/CPP output is already luma).
+
+The working state is restored: `camd 3c6eea90`, `stream=0`,
+`capture_cfg=1`, CAMIF_RAW + CPP, frames flowing, `queue full: 0`.

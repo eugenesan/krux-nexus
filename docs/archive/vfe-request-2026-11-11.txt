@@ -1,0 +1,13 @@
+[  130.365057] CAP_REQ: fmt=0x3132564e src=1 y_only=0 drop=1 skip=0 burst=0 hfr=0 fbase=0 divert=1
+[  130.365163] CAP_PLANE0: w=1280 h=960 stride=1280 lines=960 fmt=0 off=0 csid=0 cid=0
+[  130.365217] CAP_PLANE1: w=1280 h=480 stride=1280 lines=512 fmt=3 off=0 csid=0 cid=0
+[  130.365312] CAP_PLANE2: w=0 h=0 stride=0 lines=0 fmt=0 off=0 csid=0 cid=0
+[  130.365443] CAP_REQ: fmt=0x3132564e src=0 y_only=0 drop=0 skip=0 burst=0 hfr=0 fbase=0 divert=0
+[  130.365497] CAP_PLANE0: w=3264 h=2448 stride=3264 lines=2496 fmt=0 off=0 csid=0 cid=0
+[  130.365593] CAP_PLANE1: w=3264 h=1224 stride=3264 lines=1280 fmt=3 off=0 csid=0 cid=0
+[  130.365901] CAP_PLANE2: w=0 h=0 stride=0 lines=0 fmt=0 off=0 csid=0 cid=0
+[  130.376911] CAP_INPUT: src=0 clk=260000000 mux=0 pattern=0 camif_input=3 lines=2464 pixels=3280 fp=0 lp=3279 fl=0 ll=2463 e0=0 e1=0
+[  130.377595] CAP_CFG: num=1 cmd=1
+[  130.377720] CAP_CFG_H: 512
+[  130.552090] CAP_CFG: num=1 cmd=1
+[  130.552165] CAP_CFG_H: 769
