@@ -202,3 +202,49 @@ At full resolution the full-frame path demosaics 8.1 MP and
 downscales it in 150-230 ms per frame; the centre crop's exact 2x2
 path is 15 ms.  The binned mode remains the fast one (34 fps), but its
 five-stripe geometry is the one that still bands.
+
+## The right-hand stripes are on the glass, not in the image
+
+Measured while the QR page was live and the preview showed the stripes:
+
+- the shared frame the firmware reads (`/tmp/krux/frame`), which is what
+  the QR finder/decoder and the entropy statistics use, had a mean of
+  **90 for twenty consecutive seconds** — no brightness swing and no
+  stripes;
+- the framebuffer plane the display module had just written is clean
+  (dumped and inspected at 1:1).
+
+So the stripes are introduced between the framebuffer and the glass.
+The panel is a command-mode DSI panel (`msm_fb_type` = `mipi dsi cmd
+panel`), and on this kernel the MDP3 path **re-points** the DMA rather
+than copying: the panel's memory is rewritten from a framebuffer plane
+while the panel scans it.  That is why the right-hand bands can show a
+newer frame than the rest.  Quirc and the entropy never see them.
+
+### The ping-pong reattempt, and why it was reverted again
+
+The earlier fix (draw into the plane the panel is not showing) had been
+tried and reverted.  It was tried again with two additions — seed the
+off-screen plane from the shown one so the margins are right, and clamp
+to the two planes the framebuffer's 16 MB actually holds rather than
+the three `yres_virtual` claims.  The result:
+
+- the plane switch is real (`/sys/class/graphics/fb0/pan` alternated
+  `0,0` and `0,1920`);
+- one of the two right-hand bands became more transparent, the other
+  stayed;
+- a **~10 s whole-preview brightness swing** appeared, while the camera
+  frame stayed at a constant mean of 90.
+
+It was therefore reverted (`micropython ef4593e60`, `krux ba880b15`).
+The remaining tear is the panel's own memory being updated while it is
+scanned, which userspace cannot gate; a real fix needs a panel-level
+partial update or a video-mode panel, both kernel/display changes and
+not worth risking the working camera for a cosmetic artifact.
+
+### QR status
+
+The QR reads from a computer screen, and from the phone once its
+brightness is lowered.  That is the self-luminous-screen exposure
+limit, not the decoder: the code is located and decoded at full
+resolution, and the PSBT payload is correct.
