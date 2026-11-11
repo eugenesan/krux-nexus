@@ -327,3 +327,79 @@ resolution.  The two ways out are:
    message is accepted, but the daemon reads it as 3280x2464 raw; the
    size/stride mismatch is what the striations are.  A daemon-side
    change, larger than a message edit.
+
+## PIX_VIEWFINDER: the vendor preview path, blocked at the VFE output
+
+The next attempt was the vendor's own preview architecture: feed the CCP
+the ISP's **processed** frame from `PIX_VIEWFINDER` instead of CAMIF_RAW,
+so the captured 1280x960 preview message applies exactly and the CPP (and
+its overlapping strips) is bypassed entirely.
+
+### What was set up
+
+- `stream=1` (PIX_VIEWFINDER), `capture_cfg=0` (the capture config
+  overwrites the preview's `0x638=7` / `0x444=0x403f`), and the daemon
+  built with **`cam_cycle_preview.h`** (the vendor's 7-upload preview
+  cycle, `0x444=0x6020`) instead of the 6-upload capture cycle.
+- The vendor's initial config (`cam_config.h`, 56 uploads, `0x638=7`) is
+  already sent after the stream start.
+- Plane sizes tried: the sensor's 3280x2464, 1280x960, and 1640x1232
+  (the preview SFE value `0x6020` has a `0x20` scale field, 32/64 = half,
+  so 1640x1232 was the best guess).
+- A `CONFIG_DONE` (register update) after the vendor config and after the
+  per-frame preview cycle — no change.
+
+### What the device says
+
+Instrumented kernel (`tools/vfe-instrument.py`, built by
+`scripts/cam/build-vfe-kernel.sh`):
+
+```
+VFE40_DBG: hw_version=0x1001001a        (8974 V2)
+VFE40_DBG: vfe_clk_src=266670000
+VFE40_DBG: camss_csi_vfe_clk=266670000
+ISPIF_DBG: INPUT_SEL vfe=0 intftype=0 csid=0 val=0x0
+```
+
+So the clock, the hardware version and the ISP-IF routing are right.
+`REQUEST_STREAM` succeeds, the stream starts, and then:
+
+- `VFE0 pix0 overflow` 1-4 at the start (the input FIFO);
+- `msm_vfe40_process_error_status: image master 0 bus overflow` — the
+  VFE's output write master (WM0) overflows;
+- **no completed frame** (`GOT A FRAME: 0`, `no frame after 2s`).
+
+There is no `WM_IRQ_MASK` print because a two-plane NV12 stream uses the
+**composite** mask (`cfg_comp_mask`), not the per-WM mask — and that
+composite path is exactly what CAMIF_RAW uses successfully, so it is not
+the fault.
+
+### Where it is blocked
+
+The VFE accepts the input and the stream, but its **output stage** (the
+WM/UB bus) never completes a frame. The remaining suspects, in order:
+
+1. **The SFE scale / output size.** `0x444=0x6020` (preview) vs
+   `0x403f` (capture); the `0x20` looks like a 32/64 half-scale, which
+   would make the preview output 1640x1232. The plane size and the SFE
+   must agree; with 1640x1232 the bus overflow count rose to 136.
+2. **The AXI UB / bus bandwidth** (`msm_vfe40_cfg_axi_ub`,
+   `msm_isp_update_stream_bandwidth`): the "image master 0 bus overflow"
+   is the write master's buffer/bus, and the single-stream bandwidth
+   formula drops the output term.
+3. **The CBCR plane.** The stream is NV12 with two planes and `y_only`
+   only narrows the composite mask; the chroma WM still writes, and the
+   half-height chroma is the known IOMMU/ping-pong sore point
+   (`docs/cam-bringup-vfe.md`, 2026-10-30).
+4. **A single-plane stream.** A one-plane request would take the
+   `cfg_wm_irq_mask` path (Fix D) and avoid the chroma entirely; the
+   CAF's create-stream code picks the plane count from the output
+   format, so this needs a Y-only format request.
+
+### State
+
+Restored to the working state: clean kernel `cf9fd9c2edf`, `camd`
+`3c6eea90`, `stream=0`, `capture_cfg=1`, CAMIF_RAW + CPP, frames flowing,
+`queue full: 0`. The instrumented kernel is at `/tmp/opencode/boot-vfe.img`
+and the PIX test daemon at `/tmp/opencode/camd.c.orig` / the build recipe
+in this section, for the next session.
