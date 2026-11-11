@@ -193,3 +193,49 @@ strip path, not in `lcd_bcm.c`.
 3. Workaround if the geometry is hard: shift the preview window down so
    the first strip's boundary is outside the crop (costs a little
    vertical field of view).
+
+## The vendor message's five strips overlap
+
+`cam_chromatrix.h` is the vendor's 266-word message unchanged.  The
+kernel hands it to the CPP firmware as-is; the kernel patches only the
+frame's input index (from the ISP's divert) and takes the output buffer
+from the buffer pool.  The strip rectangles therefore come from the
+message, not from our full-resolution window.
+
+Each strip is 27 words at `130 + 27*i`.  The destination rectangle is
+the packed pairs at `+21..+26`.  Decoded, the five strips are:
+
+| strip | dst x      | dst y      |
+|-------|------------|------------|
+| 0     | 426 .. 959 | 0 .. 430   |
+| 1     | 430 .. 959 | 0 .. 434   |
+| 2     | 429 .. 959 | 0 .. 429   |
+| 3     | 319 .. 479 | 0 .. 319   |
+| 4     | 341 .. 479 | 0 .. 319   |
+
+They **overlap**: every strip starts at y=0, three cover x 426..959 and
+two cover x 319..479, so the union is x 319..959, y 0..434 — not a
+tiling of the frame.  The header's scale groups (words 43-46, 51-54,
+59-62) map that space onto the output, which is why the picture looks
+complete; the overlap is at the **top** of the source, and the preview's
+rotation and horizontal flip put it on the glass's right edge — the
+band.
+
+The rows outside/inside the overlap are also written by different
+strips, and the output buffer comes from the pool with the previous
+frame still in it, so a strip that is not rewritten shows an older
+frame.  Measured on the raw delivered window with a uniform exposure
+change, the top 10 % and the rest do not track one another (`hi1` top
+188 / middle 100, `hi2` top 19 / middle 106), which is that mix.
+
+### Options
+
+1. **Capture the vendor's full-resolution CPP message.**  The harness
+   that produced `cam_chromatrix.h` exists; capturing in the full-res
+   mode gives the correct rectangles instead of a reconstruction.
+2. **Rebuild the five rectangles** so they tile the output without
+   overlap, using the header scale.  This is the original stripe task,
+   now with the exact numbers above.
+3. **Workaround now:** shift the preview window down (or crop the top
+   of the source) so the overlap is outside the crop.  One state knob,
+   costs a little vertical field of view, fully reversible.
