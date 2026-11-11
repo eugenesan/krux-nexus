@@ -3479,3 +3479,117 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - `/tmp` is tmpfs — device-side helpers such as `/tmp/ctl.py` and `/tmp/inject.py` must be pushed after every reboot.
 - Touch injection works (`/tmp/inject.py tap X Y`); key injection does not. Entropy page path: New Mnemonic (540,445) → Via Camera (540,203) → 12 words (540,280) → Yes (810,1850). Do not tap the `-/+ exp` strip — it sets `_ae_manual` and disables the AE.
 - Uncommitted work in the main repo: `cam/camd.c` (the chroma-gate fix).
+
+## 2026-11-11 01:59:14 UTC - session compaction (auto)
+
+* session: `ses_e3c8c1f29ffeTK6LRQer4sg8qy`
+
+## Objective
+- Continue polishing the `qpy-rsync` PySide6 rsync GUI: icon/control sizing, large-tree performance, inventory display, context menu paths, resizable command preview, verification behavior/cancel, and settings persistence.
+
+## Requirements
+- Use system Python (`/usr/bin/python3`) and offscreen Qt tests; keep the full suite green.
+- Validate GUI on X11 `DISPLAY=:50`; desktop theming (Breeze) must remain applied.
+- Commit changes in small increments.
+- Defer packaging and desktop integration.
+- Tooltips must be multiline by sentence, default color, and attach only to the status bar area.
+- Recent profiles replace saving individual Source/Destination/Backup fields; close prompt only when settings changed since last profile load/save.
+- Profile save/load and status-bar messages must go to the diagnostics/journal.
+- Do not change DE/platform-theme environment variables; Qt/X11 warning cleanup is deferred to the last task.
+- User’s latest requested fixes:
+  1. Swap button/icon must match other buttons in its row.
+  2. Icons for action filters, sync locations, unchanged/collapse/expand are too small.
+  3. Comparing big trees is very slow, dominated by writing every rsync line to the log; disabling logging helps dramatically.
+  4. Every tree object needs a “Copy path” context-menu entry.
+  5. Paths in tooltips and context menus must be absolute (endpoint location + relative path).
+  6. Inventory logs the unchanged count but the tree does not update until the next compare.
+  7. Command preview must be resizable.
+  8. Verifying Actions always triggers a long second dry run even right after compare; suspect hover/command-preview updates make state stale.
+  9. There is no way to cancel Verifying Actions.
+  10. `~/.local/share/qpy-rsync/recent-profile.json` must not exist; recent profile should live in app settings (`~/.local/state/qpy-rsyncstaterc`), not an actual file.
+
+## Decisions
+- Override count derives from active explicit decisions, not click history.
+- Progress parsing canonical in `qpy_rsync.backend.sync_progress`.
+- Inventory mode uses `rsync --list-only`; unchanged objects render as `NO_CHANGE`.
+- Local and SSH execution both allowed.
+- Action pane uses icons only (no action words) to maximize object-name space.
+- Tree row heights standardized via a delegate; all three panes must scroll identically.
+- Keep desktop Qt platform theme; retain prior launcher GL/software-renderer settings and defer warning suppression.
+- Logging fix: batch Journal updates, keep a persistent session-log handle, and stop fsync per line.
+- Verification optimization: when no explicit checkbox decisions changed after compare, reuse the comparison result instead of launching an identical second dry run; modified decisions still use the cancellable validation process.
+- Settings decision: use `~/.local/state/qpy-rsyncstaterc` via `QSettings(..., IniFormat)`; migrate legacy `~/.config/qpy-rsync/qpy-rsync.conf` values once, and migrate/delete the old recent-profile JSON.
+
+## Work State
+
+### Completed
+- Fixed reproducible multi-view segfault by pairing `layoutAboutToBeChanged`/`layoutChanged` in `ChangeTreeModel` and `ComparisonView.set_stale()`.
+- Prior test suite reached 171 passing before latest edits.
+- Added async tokenized `InventoryService` with cache; filter-aware inventory and tests.
+- Fixed crashed compare runs to report errors rather than cancellation.
+- Added Qt 6.10 `beginFilterChange()`/`endFilterChange(Direction.Rows)` proxy invalidation.
+- Added streaming compare/validation output with progress parsing, cancellation, and tests.
+- Verified ~77k change `set_changes` ≈1.06s, action filter toggle ≈0.10–0.25s, path filter ≈0.07–0.13s.
+- Verified all three tree scrollbar maxima match after `expand_all()` (1179/427/427).
+- Latest uncommitted work:
+  - `icons.py`: renders icons on a 64px pixmap from a 16px drawing grid, so 24px requests are crisp.
+  - `CONTROL_SIZE` raised to 40; `CONTROL_ICON_SIZE = 24`; swap, inventory/expand/collapse, action filters, and source/destination location icons all use 24px icons.
+  - Command preview no longer fixed-height; placed in vertical `preview_log_splitter` with the Journal, persisted via `command-preview/splitter`.
+  - Journal logging now buffers lines (`_log_buffer`, `_bulk_logging`, `_log_flush_timer`), uses one persistent `_log_handle`, and flushes without per-line `fsync`; bulk modes flush at operation end.
+  - Compare/validation/sync handlers now begin/end bulk logging.
+  - Context menus show a disabled absolute-path heading and always include “Copy Path”; source/destination/action panes copy pane-appropriate absolute paths.
+  - Tooltips now show absolute source and destination paths, including both for the Action column.
+  - Inventory preserves expanded folders across updates and supports empty changed lists; status suggests expanding folders for nested objects.
+  - Added `full_path(root, path)` helper.
+  - Verification now reuses the fresh comparison when no explicit decisions exist; `STATE verification-reused-comparison` is logged.
+  - `PlanValidationService` supports `on_cancelled`; UI enables/disables Cancel during verification and handles `STATE verification-cancelled`.
+  - Added `app_settings()`/`settings_path()` backed by `~/.local/state/qpy-rsyncstaterc`; one-time migration from legacy `~/.config/qpy-rsync/qpy-rsync.conf`.
+  - Recent profile stored as JSON under QSettings key `profile/recent`; old `profile/recent_path`/`recent-profile.json` migrated and deleted.
+  - Added `tests/conftest.py` redirecting `XDG_STATE_HOME` to a temp directory.
+  - Added tests for icon/control sizes, context-menu absolute copy paths, full-path tooltips, expanded-folder preservation, resizable preview, bulk logging, fast verification, cancellation, and recent-profile settings storage.
+
+### Active
+- Two newly added tests currently fail:
+  - `test_bulk_logging_flushes_once_at_the_end`: initial startup status line already present in Journal; assertion expecting empty text is wrong.
+  - `test_recent_profile_is_stored_in_app_settings`: restored path gains a trailing `/` because endpoint normalization; expected string needs trailing slash or uses `rstrip("/")`.
+- Full suite has not been rerun after latest test additions.
+- GUI checks on `DISPLAY=:50` for new 40px/24px controls, resizable preview, inventory visibility, and Breeze styling are not yet done after these edits.
+
+### Blocked
+- (none)
+
+## Next Move
+1. Fix the two failing tests (bulk-log assertion should compare the delta or clear Journal first; recent-profile assertion should accept normalized trailing slash).
+2. Run `./qpy-rsync-test.sh -q`; fix any regressions.
+3. Commit the UI/performance/inventory/context-menu/preview/verification/settings changes in small logical commits.
+4. Validate on `DISPLAY=:50` with Breeze: control/icon sizes, preview splitter dragging, inventory tree update, full tooltips/context menu, fast Verify, cancel behavior.
+5. Confirm `~/.local/share/qpy-rsync/recent-profile.json` is gone and `~/.local/state/qpy-rsyncstaterc` contains `profile/recent`.
+6. Leave Qt/X11 GL-warning cleanup until last.
+
+## Relevant Files
+- `src/qpy_rsync/gui/main_window.py`: logging batching, control wiring, inventory, verification/cancel, recent-profile settings, command-preview splitter.
+- `src/qpy_rsync/gui/comparison_view.py`: 40px controls/24px icons, absolute context menus, expansion preservation, splitter state.
+- `src/qpy_rsync/gui/change_tree_model.py`: `full_path()`, roots, absolute tooltips.
+- `src/qpy_rsync/gui/icons.py`: 64px icon rendering with 16px grid.
+- `src/qpy_rsync/gui/action_filters.py`: 24px filter icons and 40px height.
+- `src/qpy_rsync/gui/command_preview.py`: resizable multi-line preview.
+- `src/qpy_rsync/storage/settings.py`: state-file QSettings and legacy migration.
+- `src/qpy_rsync/storage/profile_store.py`: `profile_to_json()` / `profile_from_json()`.
+- `src/qpy_rsync/services/plan_validation_service.py`: cancellation support.
+- `src/qpy_rsync/services/compare_service.py`: compare streaming/crash handling.
+- `src/qpy_rsync/services/inventory_service.py`: async inventory worker.
+- `src/qpy_rsync/backend/inventory.py`: filter-aware inventory.
+- `src/qpy_rsync/backend/rsync_command.py`: `build_inventory_spec()` and compare args.
+- `tests/unit/test_main_window_offscreen.py`: main-window integration tests; two currently failing new tests.
+- `tests/unit/test_comparison_view.py`, `tests/unit/test_change_tree_decisions.py`, `tests/unit/test_action_filters.py`: new UI/path/size tests.
+- `tests/conftest.py`: temp `XDG_STATE_HOME`.
+
+## Important Context
+- Last commits before current work: `6f5004e test: cover crashed compare reporting`, `36da4f0 fix: honor profile filters when gathering unchanged objects`, `62f3623 fix: report crashed compare runs as errors, not cancellations`, `884084d ui: align action filter icons with control height`.
+- Current working tree contains uncommitted changes for all ten user-requested fixes.
+- `qpy-rsync-test.sh` sets `QT_FATAL_WARNINGS=1`; never call `window.show()` in offscreen tests or Qt warnings abort pytest.
+- Tests must create `QApplication`, not `QCoreApplication`.
+- Journal batching keeps ordinary `_append_log` immediate for tests; only bulk operations buffer.
+- `~/.local/state/qpy-rsyncstaterc` already exists as a KDE file-dialog state file; app now writes its INI keys into the same file per user requirement.
+- Legacy migration copies old QSettings keys only when the state file has no app-owned prefixes (`profile/`, `comparison/`, `logging/`, `main-window/`, `command-preview/`).
+- `DISPLAY=:50` available for GUI validation; Breeze restored previously with `QT_XCB_GL_INTEGRATION=none`, `QT_QUICK_BACKEND=software`, `QSG_RHI_BACKEND=software`.
