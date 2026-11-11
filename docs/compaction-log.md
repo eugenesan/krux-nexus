@@ -3306,3 +3306,176 @@ Bring up the IMX179 camera on the air-gapped LG Nexus 5 for Krux (QR scanning an
 - Working tree has uncommitted changes from the performance rewrite; last commit `801ead8`.
 - `qpy-rsync-test.sh` wraps `/usr/bin/python3 -m pytest`.
 - Large test tree: 5,720 changed objects, 12 filters, ~77,000 total objects.
+
+## 2026-11-11 00:20:12 UTC - session compaction (auto)
+
+* session: `ses_e3c8c1f29ffeTK6LRQer4sg8qy`
+
+## Objective
+- Continue developing `qpy-rsync`, a PySide6 rsync GUI, focusing on large-comparison performance, streaming output, layout polish, inventory responsiveness, and crash fixes.
+
+## Requirements
+- Use system Python (`/usr/bin/python3`) and offscreen Qt tests; keep the full suite green.
+- Validate the GUI on X11 `DISPLAY=:50`; desktop theming must remain applied.
+- Commit changes in small increments.
+- Defer packaging and desktop integration.
+- Tooltips must be multiline by sentence, default color, and attach only to the status bar area.
+- Recent profiles replace saving individual Source/Destination/Backup fields; close prompt only when settings changed since last profile load/save.
+- Profile save/load and status-bar messages must go to the diagnostics/journal.
+- User explicitly asked to stop changing DE/platform-theme environment variables. Qt/X11 warning cleanup is deferred to the last task because the same warnings also occur on native X11 with hardware acceleration.
+
+## Decisions
+- Override count derives from active explicit decisions, not click history.
+- Progress parsing canonical in `qpy_rsync.backend.sync_progress`.
+- Inventory mode uses `rsync --list-only`; unchanged objects render as `NO_CHANGE`.
+- Local and SSH execution both allowed.
+- Recent profiles at `~/.local/share/qpy-rsync/recent-profile.json`, QSettings key `profile/recent_path`.
+- Close-time dirty check ignores `profile_id` and `name`.
+- Action pane uses icons only (no action words) to maximize object-name space.
+- Tree row heights standardized via a delegate; all three panes must scroll identically.
+- Command preview is a read-only, wrapping, vertically scrollable two-line editor.
+- Keep the desktop Qt platform theme; retain prior launcher GL/software-renderer settings and defer warning suppression.
+
+## Work State
+
+### Completed
+- Fixed the reproducible multi-view segfault: unpaired `layoutChanged` left proxy persistent indexes dangling. `ChangeTreeModel` now emits `layoutAboutToBeChanged` before every subtree `layoutChanged`; `ComparisonView.set_stale()` does the same.
+- Updated icon-only action-column tests; full suite green at 168 passed.
+- Moved Swap into the top controls row between mode selector and Compare; standardized icon-only controls at `CONTROL_SIZE = 30` with 18px icons.
+- Replaced the elided command preview with `CommandPreview` (`QPlainTextEdit`, word wrap, horizontal scrollbar off, two visible lines, vertical scrolling/selectable); removed the trailing layout gap.
+- Streamed compare stdout to the Journal with partial-line buffering; progress lines feed `on_progress` instead of the Journal.
+- Added compare progress bar/label updates and working Cancel handling via `CompareService.on_cancelled`.
+- Added `--info=progress2` to compare specs; parser ignores progress lines instead of reporting them as diagnostics.
+- Added configurable `CompareService.on_progress` / `on_cancelled`; cancelled comparisons no longer show an error dialog.
+- Added async `InventoryService` using `QThreadPool`, request tokens, and one-entry cache; unchanged inventory no longer blocks the UI and reuses cached results.
+- Added filter-aware inventory spec construction (`build_inventory_spec`) so inventory honors profile include/exclude rules.
+- Added `FilterTypeDelegate` dropdown for the filter editor Type column.
+- Streamed plan-validation stdout to the Journal with progress-line filtering.
+- Replaced deprecated proxy filter invalidation with Qt 6.10 `beginFilterChange()` / `endFilterChange(Direction.Rows)` plus fallback.
+- Added tests for inventory async/token behavior, cached main-window inventory, filter dropdown, command preview non-widening/wrapping, compare streaming/cancellation, validation streaming, full-path tooltips, row delegate/scroll settings, and action-filter expansion preservation.
+- Verified large-tree performance: ~77k changes `set_changes` ≈1.06s, action filter toggle ≈0.10–0.25s, path filter ≈0.07–0.13s.
+- Verified all three tree scrollbar maxima match after `expand_all()` (1179/427/427 each in the test window).
+- Verified KDE Breeze styling is restored on `DISPLAY=:50`; Qt/X11 warnings remain and are deferred.
+- Restored launcher/app environment to the pre-experiment state in commit `e3ceccc`.
+
+### Active
+- Uncommitted work since commit `884084d`: compare-crash-vs-cancel distinction in `CompareService`, and profile-aware inventory arguments in `backend/inventory.py` + `backend/rsync_command.py`.
+- Manual filtered-inventory check passed: excluding `*.tmp` makes `inventory_paths()` return only `keep.txt`, and `unchanged_changes()` returns only `keep.txt`.
+- A unit test for filtered inventory has not yet been added, and the full suite has not been rerun since these latest edits.
+
+### Blocked
+- (none)
+
+## Next Move
+1. Add a unit test for filter-aware inventory using temp source/destination trees and an exclude rule for `*.tmp`.
+2. Run `./qpy-rsync-test.sh -q`, verify the full suite stays green, then commit the latest inventory/compare changes.
+3. Recheck command preview wrapping/scrolling and controls on `DISPLAY=:50` with Breeze.
+4. Leave Qt/X11 GL-warning cleanup until last, per user instruction.
+
+## Relevant Files
+- `src/qpy_rsync/services/inventory_service.py`: async tokenized inventory worker and result signals.
+- `src/qpy_rsync/backend/inventory.py`: profile-aware `inventory_paths()` and `unchanged_changes()`.
+- `src/qpy_rsync/backend/rsync_command.py`: `build_inventory_spec()`, compare progress arguments.
+- `src/qpy_rsync/services/compare_service.py`: stdout streaming, progress, cancellation, crash distinction.
+- `src/qpy_rsync/services/plan_validation_service.py`: validation stdout streaming.
+- `src/qpy_rsync/gui/main_window.py`: inventory cache/wiring, command preview, compare progress/cancel handlers, event-filter guard.
+- `src/qpy_rsync/gui/command_preview.py`: wrapping read-only command preview widget.
+- `src/qpy_rsync/gui/comparison_view.py`: uniform row delegate, control sizing, expansion, action-filter refresh.
+- `src/qpy_rsync/gui/change_tree_model.py`: paired layout signals, icon-only actions, tooltips, override cache.
+- `src/qpy_rsync/gui/change_filter_proxy.py`: cached proxy filter and Qt 6.10 invalidation.
+- `src/qpy_rsync/gui/filter_editor.py`: filter Type dropdown delegate.
+- `src/qpy_rsync/gui/action_filters.py`: icon filter bar aligned to `CONTROL_SIZE`.
+- `tests/unit/test_inventory_service.py`: async inventory service tests.
+- `tests/unit/test_main_window_offscreen.py`: segfault regression, async cache, preview, layout tests.
+- `tests/unit/test_compare_service.py`, `tests/unit/test_comparison_view.py`: streaming/cancel and row-delegate tests.
+
+## Important Context
+- Last commit: `884084d ui: align action filter icons with control height`; working tree has uncommitted inventory/compare changes.
+- Segfault root cause was a lone `layoutChanged.emit()`; always pair it with `layoutAboutToBeChanged.emit()`.
+- `qpy-rsync-test.sh` sets `QT_FATAL_WARNINGS=1`; never call `window.show()` in offscreen tests or Qt warnings abort pytest.
+- Tests must create `QApplication`, not `QCoreApplication`, especially when multiple test files run in one session.
+- Compare runs now include `--info=progress2`; progress is parsed separately and excluded from Journal diagnostics.
+- Inventory cache key is `(profile_fingerprint(profile), frozenset(changed paths))`.
+- The launcher currently retains `QT_XCB_GL_INTEGRATION=none`, `QT_QUICK_BACKEND=software`, `QSG_RHI_BACKEND=software`; this preserves Breeze but emits three known Qt warnings. Warning cleanup is deferred.
+- `DISPLAY=:50` is available for GUI validation.
+
+## 2026-11-11 00:34:37 UTC - session compaction (auto)
+
+* session: `ses_e7aba84c4ffewu0RUZojGclCWS`
+
+## Objective
+- Make the Nexus 5 camera reliable and usable for QR scanning and entropy capture, and eliminate the preview stripes/banding.
+
+## Requirements
+- Never flash; `fastboot boot /tmp/boot-dev.img` only. Project tree is the source of truth; device copy is a deploy artifact, never edited.
+- Temporary camera state in `/tmp/krux` (tmpfs); persistent knobs in `/data/krux/state`.
+- Always address the camera device by serial `0879524b0068abca`; device `0643efdcf0eca63a` belongs to another session and must not be touched. QR display phone is LG `LGL322DL71cd2c3`.
+- Do not break the entropy capture while tuning QR. No modem/Wi-Fi/BT/vendor HAL; keep the preview modest.
+- Build everything with the host's `arm-linux-gnueabihf` (hard-float).
+- User's outstanding ask: try the native full-res → CPP → 1280×960 path, and if it works feed it as-is (no scaling/cropping) to preview, QR and entropy with only AE/AF adjustments.
+- For the cleaner geometry test the user asked to skip the rotation initially.
+
+## Decisions
+- The CPP is driven by userspace (`camd`) with the vendor chromatrix message; the kernel patches buffer addresses and now also the input index.
+- The CPP's five stripes must tile the frame: one stripe or five identical ones fill the processing queue and stop the camera (`process queue full`), so the five stay until their rectangles are rebuilt.
+- Full-res mode (3280×2464) needs the vendor per-frame ISP cycle (`cycle=1`); with it the delivered frame is completely clean.
+- The vendor's own sizes (from the saved `dumpsys media.camera`): raw 3280×2464, processed sizes bottoming out at 1280×960. 1640×1232 is not a vendor size.
+- The daemon's input is the CPP's output, not the sensor; the QR retry's resolution is the CPP's output, not the sensor's.
+- A 90° transpose of 1280×960 to 960×1280 is a pure rotation; 960×1280 fits the 1080×1920 panel 1:1 and quirc's `K_QUIRC_MAX_IMAGE_DIM` 1280 exactly.
+
+## Work State
+### Completed
+- Stall fixed in kernel (`04893de2b9b`): the ISP's written buffer is held and returned (final: 2 frames, `MSM_ISP_HOLD_FRAMES 2`), so the pool no longer drains.
+- Blank/blink frames fixed: the ISP records the buffer it wrote (divert) and the CPP reads exactly that index (`93cca9690e9` + `camd` enabling `ENABLE_STREAM_BUF_DIVERT`).
+- Frame rate 7.5 → 34.5 fps: downscale's per-pixel integer divisions replaced by a table and shifts (`ad19b6c`).
+- AE limit cycle fixed (25 % step + smoothed measurement, `2ff5a725`); AF no longer restarts on an exposure change.
+- Display tearing from my double-buffered preview reverted; display now draws only the image, not the margins.
+- Clean rebuild from scratch: interpreter and `camd` reproduced bit-identically (`2e79e259…`, `9e4f42c7…`); device wiped 1.0 GB → 4 MB (240 dumps and old logs), vendor camera dump preserved in `docs/archive/media.camera-2026-10-28.txt`.
+- Milestone recorded in `docs/milestone-2026-11-10.md` with commits, artifact hashes, build commands, device state, and user's four observations.
+- Both views tested; QR page found and decoded the Sparrow UR (`UR:CRYPTO-PSBT/…`), then failed on payload type (`Failed to decode BIP39 from CBOR`) because the phone shows the PSBT UR.
+- Full-res + `cycle=1` verified: the delivered (pre-CPP-demosaic) 2160×2160 dump is a clean, band-free picture.
+- Found and patched the publish freeze: the daemon dropped every frame because it gates on the chroma plane (`us < 8` → `valid = 0`), and this pipeline never has chroma; now `valid = 1` when `isp_stream_src == CAMIF_RAW`. Deployed as `camd 06e2663b`.
+- After that patch with the entropy page open: preview mean 125.1 vs 124.9, **83.3 % of bytes change between two captures** — the preview is live at full res.
+
+### Active
+- Full-res pipeline end-to-end: preview live, but the QR does not yet decode from it (`decoded=0`); the exposure still blows out the phone screen on the entropy page's AE target.
+- Stripes: five chroma stripes still needed; their rectangles come from the message header (groups at words 43–46, 51–54, 59–62 = scale) and the entry points at `+6/+8/+15` (packed 16.16, max 959). Scaling only the vertical half by 1232/960 is the next probe.
+
+### Blocked
+- `camd` changes at full res are unverified beyond liveness; the last deploy (`06e2663b`) is **uncommitted**.
+- The binned mode's bands remain (CPP geometry matches 3280×2464, not 1640×1232).
+
+## Next Move
+1. Commit the `valid`/chroma-gate fix (`camd 06e2663b`).
+2. With the QR page open at full res, fix the exposure so the phone screen is not clipped (AE target/behaviour or phone brightness ~60–140) and check `quirc-replay` on the live shm.
+3. Verify all three endpoints at full res: preview 1080×1080 (or the chosen crop), QR decode, entropy capture; then decide whether to keep full res as the default.
+4. Resume stripe work only if full res is rejected: scale the vertical half of `+6/+8/+15` by 1232/960 and watch `queue full` stay 0.
+
+## Relevant Files
+- `cam/camd.c`: sensor/ISP/CPP setup, `ispif_config()`, `cpp_send_chromatrix()`/`cpp_msg_load()`, demosaic+downscale, publish gate (`valid`, `us`), AE/AF, stall guard, `crop_publish()`.
+- `cam/cam_chromatrix.h`: 266-word vendor CPP message; 5 stripes at `130 + i*27`, trailer `0xabcdefaa`.
+- `docs/milestone-2026-11-10.md`: the recorded return point (commits, hashes, state, observations).
+- `docs/archive/media.camera-2026-10-28.txt`: vendor sizes/characteristics (raw 3280×2464, processed ≥1280×960).
+- `linux/drivers/media/platform/msm/camera_v2/isp/msm_isp_axi_util.c`: buffer hold/release, `msm_isp_last_divert_idx` record.
+- `linux/drivers/media/platform/msm/camera_v2/pproc/cpp/msm_cpp.c`: input-index override, stripe validation, `process queue full`.
+- `linux/include/media/msm_camera.h`: `struct msm_cpp_frame_strip_info` (field semantics).
+- `krux/src/krux/camera.py`: AE (`auto_expose_step`, `_level`, targets), AF, `_ae_manual`/`_ae_auto_lock`.
+- `krux/src/krux/display.py`: `render_image()` — `lcd.display(..., oft, roi, scale=1, flip_x, flip_y)`, no bg fill.
+- `krux/src/krux/pages/qr_capture.py` / `capture_entropy.py`: scan/retry and entropy paths.
+- `krux/firmware/micropython/ports/unix/lcd_bcm.c`: framebuffer/commit path.
+- `krux/firmware/micropython/ports/unix/image_maixpy.c`: seqlock shm reader, `image_from_shared()`.
+- `krux/firmware/micropython/ports/unix/k_quirc_internal.h`: `K_QUIRC_MAX_IMAGE_DIM 1280`.
+- `scripts/cam/build-camd.sh`, `scripts/build/build-micropython.sh`, `tools/build-kernel.sh`, `rootfs/make-boot-image.sh`: builds.
+- `/tmp/opencode/{ctl.py,inject.py,mkmsg2.py,scale_pts.py,scale_all.py,same_stripes.py}`: ctl, touch injection, message variants.
+
+## Important Context
+- Device now runs kernel `gcf9fd9c2edf` clean build, `camd 06e2663b` (uncommitted), interpreter `2e79e259`.
+- State knobs currently: `mode=1` (full 3280×2464), `cycle=1`, `stream=0`, `capture_cfg=1`, `profile=0`.
+- Preview only updates while a page is reading; after a deploy the firmware sits at the menu and the shm looks frozen.
+- The chroma gate: `us` is the mean of the chroma plane; with raw streaming it is always ~0.
+- `/data/krux/cppmsg.bin` (little-endian u32 array, first `0x3e646d63`, last `0xabcdefaa`) overrides the message without a rebuild; it is currently **absent**.
+- The phone's screen is self-luminous: too bright (≥200) clips the sensor at minimum exposure and the AE walks to the bottom; SAE target differs per page (225 bright-level for QR, 128 mean for entropy).
+- `fastboot boot` is flaky and sometimes lands in Android (`g5bd52f720a1`); retry until `adb devices` shows `recovery`.
+- `/tmp` is tmpfs — device-side helpers such as `/tmp/ctl.py` and `/tmp/inject.py` must be pushed after every reboot.
+- Touch injection works (`/tmp/inject.py tap X Y`); key injection does not. Entropy page path: New Mnemonic (540,445) → Via Camera (540,203) → 12 words (540,280) → Yes (810,1850). Do not tap the `-/+ exp` strip — it sets `_ae_manual` and disables the AE.
+- Uncommitted work in the main repo: `cam/camd.c` (the chroma-gate fix).
