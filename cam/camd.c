@@ -3404,7 +3404,23 @@ static void *client_thread(void *arg)
 						un++;
 					}
 					us /= (un ? un : 1);
-					if (us < 8)
+					/*
+					 * The chroma plane is what tells a
+					 * processed frame from the ISP's raw
+					 * copy -- except in this pipeline: the
+					 * ISP streams CAMIF_RAW and the CPP
+					 * passes it through, so there is never
+					 * any chroma and the test rejected
+					 * every frame.  That is why the preview
+					 * froze solid at full resolution while
+					 * the delivered buffer itself kept
+					 * updating.  With the raw stream the
+					 * luma is the frame, whatever it
+					 * contains.
+					 */
+					if (isp_stream_src == CAMIF_RAW)
+						valid = 1;
+					else if (us < 8)
 						valid = 0;
 					/* The decision, once every two hundred
 					 * frames: the luma mean, the chroma mean,
