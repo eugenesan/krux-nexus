@@ -469,3 +469,78 @@ the Bayer demosaic (the PIX/CPP output is already luma).
 
 The working state is restored: `camd 3c6eea90`, `stream=0`,
 `capture_cfg=1`, CAMIF_RAW + CPP, frames flowing, `queue full: 0`.
+
+## The PIX path works (2026-11-11)
+
+The remaining blocker from the request capture -- "the CPP processes the
+PIX frames but no DQBUF arrives" -- was two separate things, and neither
+was the buffer plumbing.
+
+### 1. The CPP output has its own geometry
+
+The daemon's S_FMT and its 8 buffers are sized for the sensor's
+**3280x2464** allocation, but the PIX/CPP output is a **packed 1280x960
+luma block at offset 0**, written with a **1280-byte stride**.  The
+daemon read it with the allocation's 3280-byte stride, so the
+1,228,800-byte picture was re-wrapped across exactly
+`1280*960/3280 = 374` buffer rows: the "band" at the top of the
+`fov=0` 2160x2160 crop (374 buffer rows = 222 crop rows, which is what
+`scan_full.raw` showed).  The content began at byte 499,120 =
+`32*3280 + 560` -- the crop's own offset -- and the reconstructed block
+was a coherent image.  That arithmetic identified the layout without
+any vendor-side capture.
+
+The fix is a `read_stride` (1280 on PIX, `cam->width` on the raw paths),
+a PIX window of 1280x960 at (0,0), and no Bayer demosaic: the output is
+already luma.  Rotated 90 degrees CCW the frame is exactly **960x1280**,
+1:1, with no resampling -- the same portrait size as `fov=1` and the
+decoder's `K_QUIRC_MAX_IMAGE_DIM`.
+
+### 2. The implementation details the vendor request implies
+
+- PIX needs all three CPP gates (the `isp_start` init, the
+  `PRIV_STREAM_ON` firmware load, and the per-frame chromatrix); the
+  earlier `isp_stream_src == CAMIF_RAW` guards were removed.
+- The per-frame register update (`CONFIG_DONE`) was inside the divert
+  block; the PIX path needs it too, both after the initial
+  configuration and after each `isp_replay`.
+- `epoch_line1 = 0` on PIX, as captured from the vendor.
+- The preview message (`cam_chromatrix.h`, 266 words) is the one the
+  vendor's preview sends, and it is written for this 1280x960 input.
+
+### 3. Focus: the AF gate was too high for a dim room
+
+The sweep only ran when the published frame's mean was at least 20.
+The processed PIX path is darker than the raw one (and the finder is
+used in a dim room), so the mean sat at 17-19 and the lens never moved
+from the default step 7 -- the QR looked soft even though the geometry
+was right.  The gate is now 10; the sharpness score is divided by the
+mean, so dim frames compare fairly.  On this scene the sweep chose
+step 24, where the coarse score was 4.5x the other steps.
+
+### Baked as the default
+
+- `stream` defaults to 1 (PIX_VIEWFINDER).
+- PIX forces the full sensor mode: with the binned 1640x1232 input the
+  CPP rejects the message (`msm_cpp_cfg: cannot send frame to
+  hardware`, then its processing queue fills) and the stream wedges
+  until a reboot.  The vendor's request is a full-sensor one.
+- `cycle` defaults to 1 (the per-frame vendor cycle), which is what the
+  full-resolution mode needs.
+
+### Verified on the device
+
+- Full-frame preview: clean, no stripes, no band.
+- QR: `Tools -> Datum Tool -> Via Camera` decodes
+  `UR:crypto-psbt`, binary **447 bytes PSBT**.
+- Entropy: `New Mnemonic -> Via Camera -> 12 words -> Proceed`
+  reports **"Good entropy"**, Shannon **5.2 bits/px** (threshold 3),
+  pixel deviation **38** (threshold 10).
+- Steady state after a clean boot: `pix0 overflow` 0,
+  `process queue full` 0, no `DQBUF` failures.
+
+The working state is the project tree: `camd 99ef6da3`, state
+`stream=1 mode=1 cycle=1 capture_cfg=0`.  The device runs the tree
+kernel `cf9fd9c2edf` (`fastboot boot /tmp/boot-dev.img`); nothing was
+flashed, and the QR display phone (the LG) was read from its screen
+only.
