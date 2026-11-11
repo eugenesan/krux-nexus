@@ -239,3 +239,38 @@ change, the top 10 % and the rest do not track one another (`hi1` top
 3. **Workaround now:** shift the preview window down (or crop the top
    of the source) so the overlap is outside the crop.  One state knob,
    costs a little vertical field of view, fully reversible.
+
+## The vendor's full-res message, captured
+
+The earlier harness tree is gone, but our kernel already has the
+`cpp_dump_frame` hook (`msm_cpp.c`), so the capture was rebuilt from the
+device itself:
+
+1. dump the stock boot partition (`/dev/block/mmcblk0p19`, 23 MB);
+2. `bootimg.py unpack`, replace the kernel with our `zImage-dtb`, pack
+   with the **ROM's ramdisk** and `cpp_dump_frames=3000`;
+3. `fastboot boot` it — the ROM's Android starts on our kernel;
+4. `su -c setenforce 0` (the hook's write is denied while enforcing),
+   `echo 3000 > /sys/module/msm_cpp/parameters/cpp_dump_frames` (the
+   command-line parameter does not reach a built-in module), open the
+   camera and take a photo;
+5. pull `/data/local/tmp/cpp_frm_*.bin` as root.
+
+The photo produced a **455-word** CPP message, distinct from the 266-word
+preview message and accepted by the kernel's checks: `num_stripes` is
+`12`, and `130 + 12*27 + 1 = 455`.  It is the **still capture** config,
+and its strip coordinates are in the **full-resolution** space (up to
+3185 / 2464), unlike the preview message's 960-space.  Saved as
+`docs/archive/cppmsg-still-455.bin` (`8ce04d4b3e9385262b8bac1fbfae66b5`).
+
+Fed to our daemon unchanged (`/data/krux/cppmsg.bin`), it is accepted
+(`chromatrix sent (455 words, status 0)`, `queue full: 0`) but the
+picture is garbage: the still message makes the CPP **process** the
+frame for the still capture, not pass the raw through, and our daemon
+reads the result as raw luma.
+
+What it gives us is the correct **tiling**: twelve strips that cover the
+full-resolution frame without the preview message's five-strip overlap.
+The next experiment is the hybrid: the preview message's header and
+processing with the still message's twelve tiling strips, which should
+keep the raw pass-through and remove the overlap.
