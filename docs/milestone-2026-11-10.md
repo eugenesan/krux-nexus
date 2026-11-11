@@ -248,3 +248,24 @@ The QR reads from a computer screen, and from the phone once its
 brightness is lowered.  That is the self-luminous-screen exposure
 limit, not the decoder: the code is located and decoded at full
 resolution, and the PSBT payload is correct.
+
+## The QR exposure ceiling (dark start)
+
+The QR path capped its exposure at `QR_MAX_EXPOSURE = 0x04E0`, which is
+the **binned** sensor's frame length.  In full resolution the sensor's
+frame is `0x09C8` lines, so the cap left a dark scene at half the
+exposure the sensor could give: the controller walked up to `0x04E0`
+and stopped, and the picture stayed dark.  A bright start only walks
+down, so it looked normal — which is exactly the reported asymmetry.
+
+`_auto_expose()` now chooses the ceiling from the frame the sensor is
+actually producing: `0x09C8` in full resolution, `QR_MAX_EXPOSURE` in
+binned.  Verified on the device by turning the display phone's screen
+off (dark start) and on again:
+
+- dark start: exposure climbs to `0x09C8` (gain `0x00ff`);
+- screen on: exposure walks back down (`0x074F`, `0x06FA`, ... `0x0320`)
+  and the picture settles.
+
+The decoder itself was never at fault: the QR is located and read, and
+a PSBT needs the Datum/PSBT page, not Load Mnemonic.
