@@ -136,3 +136,69 @@ same reason the QR page cannot expose for a screen that is too bright.
   into the tree.
 - No modem, Wi-Fi, BT or vendor HAL; the preview stays modest.
 - The entropy capture must not be broken by camera tuning.
+
+## Full resolution, all three endpoints (2026-11-10, later)
+
+The question was whether the full-resolution mode can feed the preview,
+the QR and the entropy from the CPP's own output, with only the
+exposure and focus adjusted.  It can, and the CPP's output is not what
+we expected.
+
+### The CPP does not scale to 1280x960
+
+A delivered full-resolution buffer is a native, unscaled Bayer frame:
+
+- the 2x2 sites measure 61.9 / 89.9 / 90.1 / 73.7, the RGGB signature
+  (the two green sites alike, red and blue different), and
+- the diagonal neighbour difference (10.0) is far below the orthogonal
+  one (22.4), which only a mosaic 1:1 image shows.
+
+So the CPP is a pass-through at full resolution, not a 1280x960
+scaler.  The vendor's processed-size list is still right about what
+their HAL produces, but our CPP configuration is not their scaling
+one.  "Native full res -> CPP -> 1280x960" therefore does not exist in
+this pipeline; the only native output is the sensor's 3280x2464.
+
+### What was done
+
+- `camd` publishes raw-stream frames instead of rejecting them for a
+  missing chroma plane (`06e2663b`, now committed): the preview is
+  live at full resolution.
+- The QR page's first focus sweep of a scan is now a **full** sweep
+  (`krux 78dc874e`).  The cached sweep refined the step a previous
+  scan had left (21) while the code was at 13, so nothing decoded
+  until a tap forced a full sweep.  With the fix the page decodes the
+  PSBT automatically.
+- The box downscale divided only 2-pixel boxes.  A 3-pixel box was
+  summed and never divided, so the whole-frame ratio (2.56) painted a
+  light grid over the picture.  `box_div()` now handles widths 1-4
+  with shifts and a multiply (`f2a0487`).
+- The window is a state knob: `fov=0` (default) is the 2160x2160
+  centre crop halved to 1080x1080; `fov=1` is the whole frame
+  downscaled once to 960x1280 (1:1 on the panel, exactly
+  `K_QUIRC_MAX_IMAGE_DIM`).
+
+### Verified at full resolution (fov=0, the default)
+
+| endpoint | result |
+|---|---|
+| preview | live 1080x1080, clean raw frame, no stripes or bands |
+| QR | decodes `UR:CRYPTO-PSBT/...`; the page then reports the BIP39 error because a PSBT is not a mnemonic |
+| entropy | capture completes: 5.5 bits/px, deviation index 49 |
+
+### Why the centre crop is the default
+
+The whole-frame preview is 960x1280, so a code that fills a quarter of
+the sensor is only about 350 px wide, roughly 2 px per module for a
+version-40 code.  quirc locates it only intermittently, and when the
+finder pass loses it the 1:1 retry is never asked for.  The 1080x1080
+centre crop keeps the code at about 2.5 px per module in the preview
+and the retry then decodes it.  `fov=1` is there for a code held close
+enough to fill the frame.
+
+### Frame cost
+
+At full resolution the full-frame path demosaics 8.1 MP and
+downscales it in 150-230 ms per frame; the centre crop's exact 2x2
+path is 15 ms.  The binned mode remains the fast one (34 fps), but its
+five-stripe geometry is the one that still bands.
