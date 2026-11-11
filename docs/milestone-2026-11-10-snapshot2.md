@@ -149,3 +149,47 @@ pass cannot read.
   the binned cap left a dark start stuck at half the exposure.
 - The display ping-pong was tried and reverted (`1d8f43b62`,
   `ef4593e60`).
+
+## The stripes are in the camera image, not the display
+
+The diagnostic (`probes/tear.c`) draws a frame-number pattern into the
+same framebuffer with the same `MSMFB_DISPLAY_COMMIT` the firmware uses,
+and pans a detailed scene across it.  Two variants were run:
+
+- the whole 1080x1920 panel, copied with `memcpy` (5.6 ms per frame);
+- exactly the preview's draw: a 1080x1080 image at y=420, flipped in
+  both axes and converted pixel by pixel (3.9-20 ms per frame).
+
+**Neither tore**, at a 20 ms frame interval.  The horizontal "seams"
+first seen were the test pattern's own 384 px grid lines; removing the
+grid removed them.  So the display commit, the geometry, the flip and
+the per-pixel conversion are not the cause.
+
+The tear is in the image the firmware receives.  Capture of the shared
+frame through the same seqlock reader the pages use
+(`image.Image.from_shared()`), while the display phone's brightness
+stepped, gives a column table: the **leftmost 10-20 % of the preview
+image** changes one brightness step **about six frames (≈1.8 s) before
+the rest**.  The geometry maps that band to the source:
+
+- the daemon publishes the rotated preview, `col = source y`;
+- the display flips x, so the glass's right edge is the image's left
+  column, i.e. the **top rows of the sensor window**;
+- the vendor message's first CPP strip covers exactly those rows.
+
+So the right-hand stripes are the **first strip of the CPP output**
+being fed from a different frame (or not rewritten) while the rest of
+the frame is current.  The display is innocent; the work is in the CPP
+strip path, not in `lcd_bcm.c`.
+
+### Next options
+
+1. Confirm in the raw delivered window: dump `src_y` twice across a
+   brightness step and compare the top strip's rows with the rest.
+2. Inspect the message's first strip: `dst_start_y`/`dst_end_y` and the
+   postscale crop, and the kernel's per-frame input index, to see
+   whether the first strip's destination is left unwritten or its input
+   is a previous buffer.
+3. Workaround if the geometry is hard: shift the preview window down so
+   the first strip's boundary is outside the crop (costs a little
+   vertical field of view).
