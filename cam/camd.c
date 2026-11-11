@@ -959,11 +959,11 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define OUT_W 720
 #define OUT_H 960
 /*
- * The full-resolution path uses a square centre crop.  The sensor's
- * 3280x2464 is cropped to 2160x2160 and averaged 2x2 to a 1080x1080
- * preview, so the preview, the entropy and the QR retry all share one
- * integer scaling.  The binned path keeps the whole 3:4 frame at
- * 720x960, as before.
+ * The full-resolution path uses, by default, a square centre crop
+ * (2160x2160 averaged 2x2 to 1080x1080): the QR finder pass needs the
+ * code large in the preview, and the whole frame (960x1280 by the
+ * "fov" state knob at 1) makes it too small to locate reliably.  The
+ * binned path keeps the whole 3:4 frame at 720x960, as before.
  */
 #define FULL_CROP 2160
 static int out_w = OUT_W, out_h = OUT_H;	/* published preview */
@@ -2490,6 +2490,30 @@ static inline void sum3_uv(const unsigned char *p, unsigned *u, unsigned *v)
 	     ((w >> 40) & 0xff);
 }
 
+/*
+ * Divide a summed box by how many pixels it covered.  The box width is
+ * not always two: binned mode scales by 1.71 (boxes of 1 or 2) but the
+ * whole-frame path scales by 2.56 (boxes of 2 or 3), and an undivided
+ * three-pixel box is three times too bright -- a light grid over the
+ * picture.  This CPU has no divide instruction, so the small widths
+ * use shifts and a multiply.
+ */
+static inline unsigned long box_div(unsigned long a, int n)
+{
+	switch (n) {
+	case 1:
+		return a;
+	case 2:
+		return (a + 1) >> 1;
+	case 3:
+		return (a * 0xAAABUL) >> 17;
+	case 4:
+		return (a + 2) >> 2;
+	default:
+		return n > 0 ? a / (unsigned long)n : a;
+	}
+}
+
 static void *client_thread(void *arg)
 {
 	int *wh = (int *)arg;
@@ -3279,18 +3303,9 @@ static void *client_thread(void *arg)
 												int n = sx1 - sx0;
 												for (sx = sx0; sx < sx1; sx++)
 													a += row[sx];
-												/*
-												 * The box is one or
-												 * two pixels wide
-												 * (crop_w/out_h is
-												 * 1.71): divide with
-												 * a shift, not the
-												 * software divide.
-												 */
-												if (n == 2)
-													a = (a + 1) >> 1;
 												orow[mx] +=
-													(unsigned short)a;
+													(unsigned short)
+													box_div(a, n);
 											}
 										}
 									}
@@ -3305,9 +3320,7 @@ static void *client_thread(void *arg)
 									mid + my * out_h;
 								for (mx = 0; mx < out_h; mx++) {
 									unsigned long v =
-										(nr == 2) ?
-										(((unsigned long)orow[mx] + 1) >> 1) :
-										orow[mx];
+										box_div(orow[mx], nr);
 									v *= luma_gain;
 									if (v > 255) v = 255;
 									/* 90 deg CCW:
@@ -4330,12 +4343,29 @@ int main(int argc, char **argv)
 	}
 	/*
 	 * The window the preview and the QR retry are taken from.  Full
-	 * resolution: a square centre crop (2160x2160), halved to
-	 * 1080x1080, so the preview, the entropy and the QR retry share
-	 * one integer scaling.  Binned: the whole 3:4 frame at 720x960,
-	 * as before.
+	 * resolution: by default a square centre crop (2160x2160),
+	 * halved to 1080x1080, so the preview, the entropy and the QR
+	 * retry share one integer scaling; with fov=1 the whole frame,
+	 * downscaled once to 960x1280.  Binned: the whole 3:4 frame at
+	 * 720x960, as before.
 	 */
-	if (!cam->binned) {
+	if (!cam->binned && state_read_persist("fov", 0, 0, 1) == 1) {
+		/*
+		 * The whole frame, not a centre crop: the CPP passes the
+		 * sensor's 3280x2464 raw through unchanged, so this is
+		 * the only geometry with nothing cut away.  It is
+		 * downscaled once, by 2.56, to the largest 3:4 picture
+		 * that fits both endpoints: 960x1280 after the rotation
+		 * is 1:1 on the 1080x1920 panel and exactly the
+		 * decoder's K_QUIRC_MAX_IMAGE_DIM.  The same picture is
+		 * the preview, the QR scan and the entropy source.
+		 */
+		crop_w = cam->width;
+		crop_h = cam->height;
+		crop_x = crop_y = 0;
+		out_w = 960;
+		out_h = 1280;
+	} else if (!cam->binned) {
 		crop_w = crop_h = FULL_CROP;
 		crop_x = (cam->width - crop_w) / 2;
 		crop_y = (cam->height - crop_h) / 2;
