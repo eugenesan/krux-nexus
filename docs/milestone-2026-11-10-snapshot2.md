@@ -274,3 +274,21 @@ full-resolution frame without the preview message's five-strip overlap.
 The next experiment is the hybrid: the preview message's header and
 processing with the still message's twelve tiling strips, which should
 keep the raw pass-through and remove the overlap.
+
+### The still message is not a drop-in
+
+Two tests, both restored afterwards:
+
+- unchanged: accepted (`chromatrix sent (455 words, status 0)`,
+  `queue full: 0`), but the picture is vertical striations — the CPP is
+  processing the still, not passing the raw through;
+- with bit 15 of word 5 cleared (`0x01008002` -> `0x01000002`, the only
+  pass-through-looking difference from the preview header): no change.
+
+So the still message is the vendor's **processed still path**, not a
+full-resolution version of the preview path.  What it gives us is the
+correct **tiling** (twelve strips, full-resolution coordinates) and the
+full-resolution scale groups.  The next step is to rebuild the preview
+message's five strips in its own 960-space using that tiling as the
+reference — the original stripe task, now with a known-good tiling to
+compare against.
