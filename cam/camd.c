@@ -54,7 +54,7 @@
 #include "sensor.h"
 #include "cam_config.h"
 #include "cam_capture.h"
-#include "cam_cycle.h"
+#include "cam_cycle_preview.h"
 #include "cam_chromatrix.h"
 #include "cam_chromatrix_offline.h"
 #include "cam_actuator.h"
@@ -969,6 +969,11 @@ static pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int out_w = OUT_W, out_h = OUT_H;	/* published preview */
 static int crop_w, crop_h;			/* the sensor window */
 static int crop_x, crop_y;
+/* The source row stride.  The raw paths fill a width-wide buffer; the
+ * PIX/CPP path writes a packed 1280x960 luma block at the start of the
+ * (much larger) allocation, so its stride is 1280, not the allocation
+ * width.  Reading it at 3280 is what smeared the picture into a band. */
+static int read_stride;
 
 static unsigned char *latest_y = NULL;
 
@@ -1700,7 +1705,8 @@ static int isp_start(void)
 	icfg.d.pix_cfg.camif_cfg.last_line =
 		cam->binned ? 1231 : cam->height - 1;	/* 1231 / 2463 */
 	icfg.d.pix_cfg.camif_cfg.epoch_line0 = 0;
-	icfg.d.pix_cfg.camif_cfg.epoch_line1 = cam->height;
+	icfg.d.pix_cfg.camif_cfg.epoch_line1 =
+		(isp_stream_src == PIX_VIEWFINDER) ? 0 : cam->height;
 	if (ioctl(isp_fd, VIDIOC_MSM_ISP_INPUT_CFG, &icfg) < 0)
 		printf("[isp] INPUT_CFG: %s\n", strerror(errno));
 	else
@@ -1712,36 +1718,55 @@ static int isp_start(void)
 	scmd.stream_id = 0;
 	scmd.output_format = ISP_PIX_FMT_NV12;
 	scmd.stream_src = isp_stream_src;
+	if (isp_stream_src == PIX_VIEWFINDER)
+		scmd.output_format = 0x3132564e;
 	/* QR and entropy use luma only.  The VFE CBCR WM still writes the
 	 * half-height NV12 chroma plane, but it is not in the completion
 	 * group, so a half-height CBCR done cannot desynchronise the Y/C
 	 * ping-pong bits or flood the tasklet queue. */
 	/* QR and entropy need luma only.  Completing on the Y write master
 	 * avoids waiting on a CBCR plane that may not be configured. */
-	scmd.y_only = 1;
-	scmd.init_frame_drop = 0;
+	scmd.y_only = (isp_stream_src == PIX_VIEWFINDER) ? 0 : 1;
+	scmd.init_frame_drop = (isp_stream_src == PIX_VIEWFINDER) ? 1 : 0;
 	scmd.frame_skip_pattern = NO_SKIP;
-	scmd.plane_cfg[0].output_width = cbufs.width;
-	scmd.plane_cfg[0].output_height = cbufs.height;
-	scmd.plane_cfg[0].output_stride = cbufs.width;
-	scmd.plane_cfg[0].output_scan_lines = cbufs.height;
-	scmd.plane_cfg[0].output_plane_format = Y_PLANE;
-	scmd.plane_cfg[1].output_width = cbufs.width;
-	/*
-	 * NV12 chroma is normally half-height: its buffer is
-	 * width*height/2.  Full luma height without a full-size buffer
-	 * makes the CBCR write master run past the buffer into unmapped
-	 * IOVA.  CAMD_FULL_CHROMA=1 keeps the CBCR plane at full height
-	 * and allocates a width*height chroma buffer, which keeps the Y/C
-	 * write masters paired (no ping-pong mismatch) if the hardware
-	 * really writes a full-height chroma plane.
-	 */
-	scmd.plane_cfg[1].output_height =
-		full_chroma ? cbufs.height : cbufs.height / 2;
-	scmd.plane_cfg[1].output_stride = cbufs.width;
-	scmd.plane_cfg[1].output_scan_lines =
-		full_chroma ? cbufs.height : cbufs.height / 2;
-	scmd.plane_cfg[1].output_plane_format = CBCR_PLANE;
+	{
+		int pw = cbufs.width, ph = cbufs.height;
+		if (isp_stream_src == PIX_VIEWFINDER) { pw = 1280; ph = 960; }
+		scmd.plane_cfg[0].output_width = pw;
+		scmd.plane_cfg[0].output_height = ph;
+		scmd.plane_cfg[0].output_stride = pw;
+		scmd.plane_cfg[0].output_scan_lines = ph;
+		scmd.plane_cfg[0].output_plane_format = Y_PLANE;
+		scmd.plane_cfg[1].output_width = pw;
+		/*
+		 * NV12 chroma is normally half-height: its buffer is
+		 * width*height/2.  Full luma height without a full-size
+		 * buffer makes the CBCR write master run past the buffer
+		 * into unmapped IOVA.  CAMD_FULL_CHROMA=1 keeps the CBCR
+		 * plane at full height and allocates a width*height
+		 * chroma buffer, which keeps the Y/C write masters paired
+		 * (no ping-pong mismatch) if the hardware really writes
+		 * a full-height chroma plane.
+		 *
+		 * The vendor preview's chroma plane is 1280x480 padded
+		 * to 512 scan lines, plane format 3 (CRCB, NV21).  The
+		 * exact geometry is part of the request the vendor HAL
+		 * sends; anything else makes the VFE refuse the stream.
+		 */
+		if (isp_stream_src == PIX_VIEWFINDER) {
+			scmd.plane_cfg[1].output_height = 480;
+			scmd.plane_cfg[1].output_scan_lines = 512;
+			scmd.plane_cfg[1].output_plane_format = 3;
+		} else {
+			scmd.plane_cfg[1].output_height =
+				full_chroma ? ph : ph / 2;
+			scmd.plane_cfg[1].output_scan_lines =
+				full_chroma ? ph : ph / 2;
+			scmd.plane_cfg[1].output_plane_format =
+				CBCR_PLANE;
+		}
+		scmd.plane_cfg[1].output_stride = pw;
+	}
 	if (ioctl(isp_fd, VIDIOC_MSM_ISP_REQUEST_STREAM, &scmd) < 0) {
 		printf("[isp] REQUEST_STREAM: %s\n", strerror(errno));
 		return -1;
@@ -1812,12 +1837,15 @@ static int isp_start(void)
 	 * that is why the PIX0 enable bit (CTRL_0 bit 7) was missing. */
 	if (replay_config)
 		ispif_config();
+	if (isp_stream_src == PIX_VIEWFINDER) {
+		int done = 0;
+		ioctl(isp_fd, VIDIOC_MSM_ISP_CONFIG_DONE, &done);
+	}
 
 	/* The CPP: it sits between the ISP and memory, and the camera2
 	 * HAL hands it the chromatrix as a frame message.  Without it
 	 * the ISP's output never leaves the CPP. */
-	if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
-	    isp_stream_src == CAMIF_RAW) {
+	if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0) {
 		struct msm_camera_v4l2_ioctl_t io;
 		struct msm_cpp_frame_info_t frame;
 		int32_t cpp_status = 0;
@@ -2368,8 +2396,7 @@ static void *server_thread(void *arg)
 			sensor_dump_regs("after programming");
 			break;
 		case PRIV_STREAM_ON:
-			if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
-			    isp_stream_src == CAMIF_RAW)
+			if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0)
 				cpp_load_firmware(cpp_fw_path);
 			/*
 			 * The ISP comes first, the sensor second.
@@ -2746,8 +2773,7 @@ static void *client_thread(void *arg)
 		}
 		p1 = now_ns();
 
-		if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0 &&
-		    isp_stream_src == CAMIF_RAW)
+		if (cpp_fw_path && strcmp(cpp_fw_path, "-") != 0)
 			{
 			/*
 			 * A short retry, not the old 5 x 50 ms (250 ms):
@@ -2773,9 +2799,15 @@ static void *client_thread(void *arg)
 		}
 		p2 = now_ns();
 
-		if (replay_cycle)
+		if (replay_cycle) {
 			isp_replay(cam_cycle, CAM_CYCLE_COUNT,
 				   "per-frame cycle");
+			if (isp_stream_src == PIX_VIEWFINDER) {
+				int done = 0;
+				ioctl(isp_fd, VIDIOC_MSM_ISP_CONFIG_DONE,
+				      &done);
+			}
+		}
 		p3 = now_ns();
 		r = poll(&pfd, 1, 2000);
 		if (r <= 0) {
@@ -3006,7 +3038,8 @@ static void *client_thread(void *arg)
 							memcpy(bounce_buf[bi] +
 							       (size_t)r * crop_w,
 							       src_y +
-							       (size_t)(crop_y + r) * width +
+							       (size_t)(crop_y + r) *
+							       read_stride +
 							       crop_x,
 							       crop_w);
 						pthread_mutex_lock(&bounce_mutex);
@@ -3175,6 +3208,10 @@ static void *client_thread(void *arg)
 							if (!two) {
 								memset(mid, 0,
 								       (size_t)out_h * out_w * 2);
+							}
+							if (!two &&
+							    isp_stream_src !=
+							    PIX_VIEWFINDER) {
 								/*
 								 * The daemon reads the ISP's raw
 								 * frame, and its luma is the Bayer
@@ -3523,7 +3560,16 @@ static void *client_thread(void *arg)
 			/* Autofocus sweep, using the vendor HAL's move
 			 * convention.  Runs once after the stream is up; the
 			 * lens then stays put while scanning. */
-			if (published && latest_mean >= 20) {
+			/*
+			 * The gate is the *scene*, not the QR: the
+			 * finder sits in a dark room and the processed
+			 * PIX path is darker than the raw one, so a
+			 * mean of 20 kept AF from ever running here.
+			 * The score is divided by the mean, so a dim
+			 * frame compares fairly; 10 still rejects a
+			 * black frame.
+			 */
+			if (published && latest_mean >= 10) {
 				static int phase, step, best_step, settle;
 				static int final_settle;
 				static int coarse_best_step, fine_best_step;
@@ -4329,17 +4375,38 @@ int main(int argc, char **argv)
 		cam = &cam_binned;
 	}
 	/*
-	 * The sensor mode is a /tmp state knob, like af/focus/luma_gain:
-	 * 0 = the binned 1640x1232 mode (the default), 1 = the full
-	 * 3280x2464 mode.  It is read here, after the command line, so
-	 * the mode can be changed by writing the file and restarting
-	 * the daemon -- no ramdisk rebuild needed.
+	 * The ISP stream source is a persistent knob: 0 = CAMIF_RAW (the
+	 * raw Bayer, then the CPP), 1 = PIX_VIEWFINDER (the vendor's
+	 * processed preview, through the CPP).  PIX is the default: it
+	 * is the path the stock camera uses, and it is the only one the
+	 * vendor's 266-word preview message is written for.  It has to
+	 * be read before the sensor mode, because PIX needs the full
+	 * sensor frame (with the binned 1640x1232 input the CPP rejects
+	 * the message).
 	 */
-	if (state_read_persist("mode", 0, 0, 1) == 1) {
-		cam = &cam_rear;
-		wh[0] = cam->width;
-		wh[1] = cam->height;
-		printf("[mode] full resolution: %dx%d\n", wh[0], wh[1]);
+	if (state_read_persist("stream", 1, 0, 1) == 1) {
+		isp_stream_src = PIX_VIEWFINDER;
+		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
+	}
+	/*
+	 * The sensor mode is a persistent knob: 0 = the binned 1640x1232
+	 * mode, 1 = the full 3280x2464 mode.  The vendor's preview is a
+	 * full-sensor 1280x960 output; the binned input makes the CPP
+	 * reject its message, so PIX forces the full mode.
+	 */
+	{
+		int full = state_read_persist("mode", 0, 0, 1);
+		if (isp_stream_src == PIX_VIEWFINDER && !full) {
+			full = 1;
+			printf("[mode] PIX_VIEWFINDER needs the full sensor frame\n");
+		}
+		if (full) {
+			cam = &cam_rear;
+			wh[0] = cam->width;
+			wh[1] = cam->height;
+			printf("[mode] full resolution: %dx%d\n",
+			       wh[0], wh[1]);
+		}
 	}
 	/*
 	 * The window the preview and the QR retry are taken from.  Full
@@ -4347,9 +4414,29 @@ int main(int argc, char **argv)
 	 * halved to 1080x1080, so the preview, the entropy and the QR
 	 * retry share one integer scaling; with fov=1 the whole frame,
 	 * downscaled once to 960x1280.  Binned: the whole 3:4 frame at
-	 * 720x960, as before.
+	 * 720x960, as before.  PIX_VIEWFINDER: the vendor preview's
+	 * processed 1280x960, packed at stride 1280.
 	 */
-	if (!cam->binned && state_read_persist("fov", 0, 0, 1) == 1) {
+	if (isp_stream_src == PIX_VIEWFINDER) {
+		/*
+		 * The vendor's own preview request is 1280x960 and the
+		 * CPP's 266-word message is written for exactly that.
+		 * The frame is packed luma at a 1280-byte stride, at
+		 * offset 0 of the output buffer -- which is a 3280x2464
+		 * allocation.  Reading it at the allocation's stride
+		 * spreads the 1,228,800-byte picture over 374 rows and
+		 * shows only the top band; this was the band.
+		 * Rotated 90 degrees CCW it is exactly 960x1280, 1:1
+		 * (no resampling), the same portrait size as fov=1 and
+		 * the decoder's K_QUIRC_MAX_IMAGE_DIM.
+		 */
+		crop_w = 1280;
+		crop_h = 960;
+		crop_x = crop_y = 0;
+		out_w = 960;
+		out_h = 1280;
+		read_stride = 1280;
+	} else if (!cam->binned && state_read_persist("fov", 0, 0, 1) == 1) {
 		/*
 		 * The whole frame, not a centre crop: the CPP passes the
 		 * sensor's 3280x2464 raw through unchanged, so this is
@@ -4365,31 +4452,23 @@ int main(int argc, char **argv)
 		crop_x = crop_y = 0;
 		out_w = 960;
 		out_h = 1280;
+		read_stride = cam->width;
 	} else if (!cam->binned) {
 		crop_w = crop_h = FULL_CROP;
 		crop_x = (cam->width - crop_w) / 2;
 		crop_y = (cam->height - crop_h) / 2;
 		out_w = out_h = FULL_CROP / 2;
+		read_stride = cam->width;
 	} else {
 		crop_w = cam->width;
 		crop_h = cam->height;
 		crop_x = crop_y = 0;
 		out_w = OUT_W;
 		out_h = OUT_H;
+		read_stride = cam->width;
 	}
 	printf("[mode] window %dx%d at (%d,%d) -> preview %dx%d\n",
 	       crop_w, crop_h, crop_x, crop_y, out_w, out_h);
-	/*
-	 * The ISP stream source, also a /tmp knob: 0 = CAMIF_RAW (the raw
-	 * Bayer, then the CPP), 1 = PIX_VIEWFINDER (the ISP's own
-	 * processed output, bypassing the CPP).  The processed path is
-	 * the one the stock camera uses, and it may carry the demosaic
-	 * and noise reduction that suppress the screen's moire.
-	 */
-	if (state_read_persist("stream", 0, 0, 1) == 1) {
-		isp_stream_src = PIX_VIEWFINDER;
-		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
-	}
 	/*
 	 * The vendor's per-capture ISP configuration, another /tmp knob.
 	 * It is captured from the ROM's camera stack and may carry the
@@ -4410,7 +4489,7 @@ int main(int argc, char **argv)
 	 * does not fit a 3280x2464 frame -- and it is a knob, because
 	 * it is only right for that mode.
 	 */
-	if (state_read_persist("cycle", 0, 0, 1) == 1) {
+	if (state_read_persist("cycle", 1, 0, 1) == 1) {
 		replay_cycle = 1;
 		printf("[mode] the per-frame ISP cycle: on\n");
 	}
