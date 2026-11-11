@@ -292,3 +292,38 @@ full-resolution scale groups.  The next step is to rebuild the preview
 message's five strips in its own 960-space using that tiling as the
 reference — the original stripe task, now with a known-good tiling to
 compare against.
+
+### Message-level attempts, and why they stop here
+
+Three hybrids were tried through `/data/krux/cppmsg.bin`, each restored
+afterwards:
+
+| variant | result |
+|---|---|
+| still message, unchanged | processed still output; vertical striations |
+| still word5 bit 15 cleared | same |
+| preview header + still 12 strips | dark, almost nothing written |
+| preview strips + still scale groups | coherent, QR decodes at 1080, but **zoomed** and the bands **remain and flicker** |
+
+The last one is informative: the still's scale groups shift the output
+scale (hence the zoom) but do not change the **strip layout**, so the
+overlap is untouched.  The preview message's five strips are the
+vendor's layout for a **1280x960 input**; our input is the sensor's
+**3280x2464 raw**, 2.56x larger.  No rearrangement of the message can
+make a 960-space strip layout tile a 3280x2464 input correctly.
+
+That points at the **input**, not the message: the vendor's preview
+path feeds the CPP the ISP's **processed 1280x960** frame, and its
+message is exact for that.  Our daemon feeds CAMIF_RAW at full
+resolution.  The two ways out are:
+
+1. **PIX_VIEWFINDER at 1280x960** (the vendor's architecture): the ISP's
+   own processed output into the CPP.  The earlier `stream=1` test
+   delivered no frames and the reason was never found; that is the
+   debug to do.  If it delivers, the vendor message is exact and the
+   overlap disappears by construction.
+2. **The still's processed path**: read the CPP's still output at its
+   own size and stride (the vendor's 8 MP processed image).  The still
+   message is accepted, but the daemon reads it as 3280x2464 raw; the
+   size/stride mismatch is what the striations are.  A daemon-side
+   change, larger than a message edit.
