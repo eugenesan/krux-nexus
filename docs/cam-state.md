@@ -58,6 +58,18 @@ into an overshoot.  The step is capped at +-20% with a 0x30 floor.
 The log line is now `Camera AE p95=... clip=...% exposure=... gain=...
 luma=...`, so a hunting controller can be read directly.
 
+**The entropy ceiling was the frame length.**  The entropy path
+started at and capped the exposure at `0x09D6` -- but that is
+`DEFAULT_VTS`, the frame length itself.  The sensor's longest usable
+exposure is `VTS-4`, so a frame commanded at `0x09D6` comes back
+**dark**; the controller read that as "too dark" while the median
+still held the previous bright value, and walked the whole range (the
+log showed `mean 34` at `0x09D6` and `mean 250` at `0x085c`).  The
+PIX preview's 1280-wide geometry means `full_res` is never true, so
+the entropy path took the `MAX_EXPOSURE` branch.  The start and the
+ceiling are `0x09C8` for both paths and the frame length is raised
+unconditionally.
+
 Two follow-on fixes from testing it:
 
 - **The exposure ceiling in PIX.**  The QR ceiling was chosen from the
