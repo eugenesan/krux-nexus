@@ -47,6 +47,7 @@ history in the git log.
 | [directories.md](directories.md) | the project's layout |
 | [scripts-triage.md](scripts-triage.md) | the tools/ vs scripts/ split and the archive decisions |
 | [krux-runtime-data.md](krux-runtime-data.md) | where the firmware keeps its settings and seeds at run time |
+| [hw-bringup.md](hw-bringup.md) | how the hardware was brought up: the methods, the tools and the lessons |
 | [phase0-findings.md](phase0-findings.md) | the phase 0 measurements taken on the stock phone |
 | [memory-wipe-state.md](memory-wipe-state.md), [memory-wipe-continue.md](memory-wipe-continue.md) | the paused RAM-wipe experiment: where it stands and how to pick it up |
 | [todo.md](todo.md) | the live task list for every area |
