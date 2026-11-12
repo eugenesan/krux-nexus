@@ -59,6 +59,13 @@ Two follow-on fixes from testing it:
   step, and a wider band.  Verified: entropy converges to mean 125 and
   locks; a bright scene descends monotonically; QR converges in 7
   steps to p95 202 and locks.
+- **The dark-scene digital gain is hysteretic.**  In a dark scene at
+  the exposure and analog-gain limits, the follow raised the luma gain
+  whenever the picture was dark.  It comes in 2x steps, so 85 -> 170 ->
+  340 overshot, the over-bright rule dropped it back, and the two
+  chased each other: a 2x flicker in exactly the scene it was for.  It
+  only rises now when twice the current level is still below the
+  target, which is the highest level that does not overshoot.
 
 ## The on-demand stream was tried and reverted (2026-11-12)
 
