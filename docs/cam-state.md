@@ -32,6 +32,25 @@ into an overshoot.  The step is capped at +-20% with a 0x30 floor.
 The log line is now `Camera AE p95=... clip=...% exposure=... gain=...
 luma=...`, so a hunting controller can be read directly.
 
+Two follow-on fixes from testing it:
+
+- **The exposure ceiling in PIX.**  The QR ceiling was chosen from the
+  preview geometry (`width >= 2160` = full sensor frame).  The PIX
+  preview is 1280x960, so the full-sensor PIX path was classified as
+  binned and capped at `0x04e0` -- half the range.  A dark scene was
+  stuck there with the gain at 0xff and never came up (the device log
+  showed p95 27-123 at the cap).  The QR path now raises the frame
+  length to the vendor's 2518 lines (as entropy already did) and uses
+  `0x09c8`; the follow raises the digital luma gain if the picture is
+  still dark with the exposure and analog gain at their limits.
+- **The follow settles and stays settled.**  Once inside the dead band
+  for three measurements it locks the exposure, and only wakes when
+  the scene leaves twice the band for three measurements; a step
+  needs the error on the same side for two measurements.  Entropy's
+  mean is smoothed again (it is the noisy metric); P95 stays raw.
+  This is what stopped the hunting on the entropy page, which calls
+  the follow on every frame.
+
 ## The on-demand stream was tried and reverted (2026-11-12)
 
 The sensor was stopped when nothing had asked for a frame for about
