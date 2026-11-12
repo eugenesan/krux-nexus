@@ -57,7 +57,7 @@ on-demand stream):
 | image | bytes | sha256 |
 |---|---|---|
 | `artifacts/built/boot-dev.img` | 20,203,520 | `d28822745a77e59926535eb12ac57aa7a585357cbaf604517c0358029b42e57c` |
-| `artifacts/built/boot-standard-gzip.img` | 21,766,144 | `a1fce9463c86b3cd87911160fcfd24b35e02575ecc7468089e0945ad2fba47c2` |
+| `artifacts/built/boot-standard-gzip.img` | 21,764,096 | `55e52ff9c091fb0c807f88627183141cd671bbfcc6e9e937126beb1e979f29fc` |
 
 The development image runs the firmware from `/data/krux`; the
 standard image carries a read-only copy of it (`opt/krux`), verified to
