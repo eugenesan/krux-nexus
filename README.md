@@ -4,12 +4,17 @@ Goal: replace Android's userspace with a small BusyBox/MicroPython root that run
 Krux, keeping the **stock CAF kernel** for as long as possible, and eventually
 compiling out the radios from the kernel.
 
-**Status (2026-10-28):** the Kernel, MicroPython and Krux image run on the
-Nexus 5; SeedKeeper NFC is working end to end on the second test phone,
-including saving to the card. The remaining work is the camera, then a
-read-only production image and final air-gap hardening. See
-`docs/continue-prompt.md` for the current hand-off and `docs/project-log.md`
-for the history.
+**Status (2026-11-11):** the camera works: the vendor's processed preview
+path (PIX_VIEWFINDER → CPP) runs clean — no stripes — and the QR decoder
+and the camera-entropy capture both work through it.  SeedKeeper NFC works
+end to end on the second test phone, including saving to the card.  What
+is left is packaging (the three delivery modes), the SeedKeeper menu
+redistribution, and final air-gap hardening.
+
+**Start here:** [`docs/README.md`](docs/README.md) is the index; the current
+camera state is [`docs/cam-state.md`](docs/cam-state.md) and the packaging
+plan is [`docs/packaging-plan.md`](docs/packaging-plan.md).  The session
+history is in the git log, not in the tree.
 
 Design principle, applied in order:
 
@@ -253,11 +258,11 @@ during development:
 ```sh
 bash scripts/build/build-micropython.sh
 bash rootfs/build-stub-ramdisk.sh --bundle
-RAMDISK=rootfs/stock/ramdisk-bundled \
+RAMDISK=artifacts/built/ramdisk-bundled \
     bash rootfs/make-boot-image.sh \
     artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     /tmp/opencode/ko/arch/arm/boot/zImage-dtb \
-    rootfs/stock/boot-bundled.img
+    artifacts/built/boot-bundled.img
 ```
 
 Mutable settings and the log still go to `/data/krux`; the firmware and its

@@ -1,1118 +1,552 @@
-# STATE — the camera, in one page
+# Camera state (2026-11-11)
 
-## Current state (2026-11-05, evening)
+**This is the camera's current state.**  It supersedes the earlier
+snapshots: the camera runs the vendor's processed preview path
+(PIX_VIEWFINDER through the CPP), the preview has no stripes, and both
+the QR decoder and the camera-entropy capture work through it.  The
+history of how it got here is below, in the sections that were written
+at the time; the section "The PIX path works (2026-11-11)" at the end
+is the current one.
 
-The camera works. Dense QR codes decode, repeatedly, on both devices.
-The blockers that were open during the day are closed:
+This document was `milestone-2026-11-10-snapshot2.md`; it took the name
+of `cam-state.md` so that there is exactly one canonical camera document.
+The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
-| Blocker | Cause | Fix |
+## The commits
+
+| tree | commit | what it is |
 |---|---|---|
-| The autofocus did nothing | `/data/krux/af` was lost with a `/data` wipe, and camd's *code* default for the AF level is 0 = autofocus off. The actuator was never opened, so the lens never moved — while the sweep code still reported scores for a stationary lens | The tuning state lives in `/tmp/krux` now, is reinitialised when a file is missing, and the default is `af=2` |
-| "Camera not found" at boot, camera unusable for the session | The `Camera` object was built with the context and its warm-up waited for a frame the pipeline had not produced yet; the mode was never set, so no later page could bring the camera up | The sensor comes up in `initialize_run()`, when the pipeline is warm and the user is pointing at something |
-| The AE only ran on the first scan | It was kept that way because the loop stepped the exposure *down* whenever the frame clipped — and a QR on a white sheet always clips | Clipping no longer drives the loop (the mean does); the AE runs on every scan, and stops early when exposure and gain have both run out |
-| Every `deploy-firmware.sh` push was ignored | `init-stub.c` preferred the bundled `/opt/krux` over `/data/krux` | `/data/krux` wins; the development image is built without `--bundle` |
-| `camd` did not match `cam/camd.c` | The revert of the 293-word CPP experiment restored the source but not the binary | `deploy-firmware.sh` rebuilds camd whenever the source is newer |
-| The kexec RAM-wipe experiment was reachable from `machine.reset()` | It leaked onto master | Off master; the experiment is on `airgap/memory-wipe` in this repo, in `krux` and in `krux/firmware/micropython`; the kernel side was already on `linux:airgap/memory-wipe` |
+| `krux-nexus` (main) | the commit that adds this file | the docs and the submodule pointers |
+| `linux` | `cf9fd9c2edf` | the camera_v2 fixes (buffer hold, divert, input index) |
+| `krux` | `676cceff` | the Krux port: the QR exposure ceiling |
+| `krux/firmware/micropython` | `ef4593e60` | the unix port: the display, after the ping-pong revert |
 
-### The table
+To come back here:
 
-| Area | State |
-|---|---|
-| Build | Hard-float `arm-linux-gnueabihf` + ccache, out of tree in `/tmp/opencode/mp-build`; the build script verifies the VFP ABI |
-| camd capture | CAMIF_RAW + CPP, **offline** (`frame_type=0`) with native ION buffers (`native_buff=1`, fd per frame) |
-| CPP message | 266 words (1280x960). The 293-word vendor message is clamped by the driver and must not be used |
-| Frame consistency | Only frames with a populated chroma plane are published (the ISP also completes raw frames into the same queue) |
-| Tearing | Fixed: `latest_y` is rewritten under the frame mutex |
-| Preview | Portrait 720x960, rotated in camd, unsharp mask, correct aspect (no crop) |
-| Exposure | VMAX raised to the vendor 0x09d6; a bounded, **mean-driven** AE with a small clipping trim. Re-measured for every scan |
-| QR decode | Static/animated UR and BBQR decode; quirc supports versions up to 40. The full-res snapshot path is disabled because it blocked the single-client socket |
-| Autofocus | Working: `damping_step=1` fixes the stall; a full sweep plus a fine window finds the peak (steps 6-9 at arm's length), and a cached sweep follows it. The tap on the preview runs a full sweep |
-| Camera state | `/tmp/krux/{af,focus,luma_gain,unsharp}` — volatile, reinitialised from the defaults when missing. Nothing in `/data/krux` is required |
-| Boot image | The development image carries no `/opt/krux`: the firmware is only on `/data/krux`. A bundled image is 15.95 MB (7.1 MB headroom) |
-| Entropy | Statistics path unchanged; keep the delivered frame at 640-720 px for frame rate |
-| PIX_VIEWFINDER | Still not delivering completed frames; not needed for QR |
+```
+cd /home/user/Develop/src/krux-nexus
+git checkout <the commit that adds this file>
+git submodule update --init --recursive
+```
 
-### The keys in the camera
+The submodule checkouts are recorded in that commit: `linux`
+`cf9fd9c2edf`, `krux` `676cceff`, and inside it `krux/firmware/micropython`
+`ef4593e60`.
 
-| Key | Action |
-|---|---|
-| Power (which is also Krux's ENTER on this port) | leave the camera |
-| Tap on the preview | refocus where you tap, the way a phone camera does |
-| Tap the `-` / `+` strip at the bottom | exposure down / up |
-| Volume up / down | exposure up / down |
+## The artifacts, and how they are built
 
-### The entropy capture is kept away from the QR tuning
-
-The entropy is measured on the **delivered picture**: `img.to_bytes()`
-over the whole frame for Shannon's entropy, and the spread of the three
-colour channels (`l_stdev`, `a_stdev`, `b_stdev`) for the variance
-index.  So anything that reshapes the picture changes the measurement.
-
-| what | effect on the entropy | rule |
+| artifact | built by | md5 |
 |---|---|---|
-| the sensor's exposure and gain | changes the signal-to-noise ratio of the picture | the auto-exposure converges it, as it always did |
-| the **digital gain** on the luma plane (`luma_gain`) | multiplies the luma, and with it the chroma the pixels are built from | **off for the entropy capture** |
-| the unsharp mask (`unsharp`) | sharpens the luma | off (0) |
-| the chroma plane | not touched by either of the above | the CPP writes it; the ISP's raw copies are dropped because they have no chroma |
+| `cam/camd` | `bash scripts/cam/build-camd.sh cam/camd` | `3c6eea90ad5b77264f1c380b3f7959f8` |
+| `rootfs/micropython-arm32` | `bash scripts/build/build-micropython.sh` | `ab9e221f867f798d0fdd8db40724d3cc` |
+| the kernel | `bash tools/build-kernel.sh --tree linux --out /tmp/opencode/ko` | zImage-dtb `6b5853ad8ab3bac41e871de9948752b2` |
+| the boot image | `bash rootfs/make-boot-image.sh artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img /tmp/opencode/ko/arch/arm/boot/zImage-dtb /tmp/boot-dev.img` | `a6d9d68805775d1f7c41323115669aa4` |
 
-The rule is enforced in `Camera._auto_expose()`: in `ENTROPY_MODE` the
-digital gain is forced to 1 and never escalated, and the exposure lock
-that a QR scan's manual adjustment leaves behind is ignored, so the
-entropy does not depend on what a QR scan did before it.
+The kernel source is the authority: `linux` is clean at `cf9fd9c2edf`
+and the device reports
+`3.4.113-🇺🇦-g3f7bed3f2d6-09404-gcf9fd9c2edf`.  The kernel image itself is
+not bit-reproducible (the build embeds a timestamp), so the md5 above
+identifies this build, not every build of the same source.
 
-### Captured vendor data (kernel hooks, tools in `tools/`)
+Deploy: `ANDROID_SERIAL=0879524b0068abca bash scripts/deploy-firmware.sh`
+(pushes `camd`, the interpreter, the Python and restarts the firmware).
+Never flash: `fastboot boot /tmp/boot-dev.img` only.
 
-- `cpp_frm_NNN.bin` — per-frame `msm_cpp_frame_info_t` + command words;
-  `tools/parse_cpp_dump.py --summary|--diff`.
-- `actuator_info.bin` — DW9714 table: 45 steps, 9 codes/step, 10-bit DAC,
-  initial code 169, init regs 0x00ec/0x00a1/0x00f2/0x00dc;
-  `tools/parse_actuator_dump.py`.
-- `actuator_seq.log` — HAL call order and parameters.
+## The device's state
 
-### Open items
+```
+/data/krux/state/mode          1     full resolution, 3280x2464
+/data/krux/state/cycle         1     the vendor's per-frame ISP cycle
+/data/krux/state/stream        0     CAMIF_RAW: the ISP's raw into the CPP
+/data/krux/state/capture_cfg   1     the vendor's capture ISP configuration
+/data/krux/state/fov           0     2160x2160 centre crop -> 1080x1080
+/data/krux/state/profile       0     the daemon's per-phase timing
+```
 
-1. `SET_INFO` and real lens moves stall the capture stream; bisect with
-   `/data/krux/af` (0-4) and the `actuator init:` kernel log.
-2. Focus calibration needs a lit scene (step values at the working
-   distance).
-3. Dense QR/UR/entropy end-to-end validation.
+With those, the daemon prints
+`[mode] window 2160x2160 at (560,152) -> preview 1080x1080`.
 
-## Earlier state (2026-10-30) — kept for history
+Health after this session: `process queue full: 0`, `no frame after: 0`,
+no drops or stalls in the daemon log.  The daemon is `3c6eea90`, the
+interpreter `ab9e221f`, both the built artifacts above.
 
-The camera path now works end-to-end at the module level, but it is
-**not yet repeatably stable under sustained camera load**.  The
-validated capture path is `CAMIF_RAW + CPP`; `PIX_VIEWFINDER` remains
-optional and blocked.
+## What was verified
 
-| Area | State |
+All three endpoints, on this build:
+
+| endpoint | result |
 |---|---|
-| `camd` capture | Working: CAMIF_RAW + CPP v1.2.0, 320×240 NV12 over `/data/krux/camd.sock` |
-| MicroPython snapshot | Working: `KCF1` header/sequence handling, 320×240 frames, ~15 fps client throttle |
-| Image module | Working: `from_nv12`, QR decode, luma statistics, clipping counts; buffers are GC-managed |
-| Entropy helper | Working: `shannon.entropy_img16b()` module |
-| QR decode path | Runs without error; a real printed/displayed QR has not yet been exercised |
-| Entropy page | Statistics work; the full mid-gray/no-clip AE policy is not active |
-| Runtime startup | Wired in `rootfs/init-stub.c`; boot image/ramdisk must be rebuilt to use it |
-| Exposure control | `W`/`E`/`V` in the camd source; the validated fast runtime binary does not have them yet |
-| Kernel CPP fix | Cherry-picked onto `airgap/master-cleanup` as `cdcc09b3682`; rebuilt kernel/boot image boots |
-| Y-only completion | `y_only` stream flag + CAMIF error-IRQ mask: 30 s stream with 0 ping-pong, 0 tasklet overflow |
-| Stability | 10 min: 50,798 camd frames, max 63 °C, 0 ping-pong, 0 tasklet, no watchdog; 1,000 snapshots: GC loss 2,304 bytes, stable |
-| PIX_VIEWFINDER | Not delivering completed frames; full-res preview config/cycle captured; optional |
+| preview | live 1080x1080; two captures 1 s apart differ in **82.3 %** of their bytes, means 116.5 / 117.3 |
+| QR | decodes the full `UR:CRYPTO-PSBT/...`; confirmed via **Tools -> Datum Tool -> Via Camera** once the code filled the frame, and from a computer screen and the display phone at low brightness |
+| entropy | capture completes: **5.3 bits/px, pixels deviation index 51** |
 
-### What is known to work
+Also verified on this build:
 
-- `camd-fast` unpaced: 512 frames in 20 s (~25.6 fps), 31 ms
-  downscale, no CPP stall in that run.
-- CPP timeout fix cherry-picked onto `airgap/master-cleanup`
-  (`cdcc09b3682`); rebuilt boot image boots and passes a short
-  smoke test (5 frames of 320×240, 199 camd frames, no CPP panic).
-- `y_only` VFE completion + CAMIF error-IRQ mask: 30 s stream with
-  0 ping-pong, 0 tasklet overflow, 2468 camd frames, no watchdog.
-- 10-minute stream: 50,798 camd frames, max 63 °C, no watchdog.
-- 1,000 snapshots: GC loss 2,304 bytes (stable), 0 ping-pong/tasklet.
-- Smoke test: 10 frames of 320×240 (short smoke after the long run: 3).
-- Entropy statistics: `l_mean`, `l_stdev`, `l_min`, `l_max`,
-  `clipped_low`, `clipped_high`.
-- `shannon.entropy_img16b()` returns a value on the device.
-- QR decode path runs on the captured frames.
+- **Dark-start auto-exposure.** With the display phone's screen off, the
+  QR page's exposure climbed to `0x09C8` (gain `0x00FF`); with the screen
+  on it walked back down (`0x074F`, `0x06FA`, ... `0x0320`) and settled.
+- **Focus.** The first sweep of a scan is a full one and finds the code
+  (step 13 in the earlier QR test, step 3 on the Datum page); the code
+  decodes without a tap.
+- **Buffer health.** No queue-full drops and no frame stalls in the
+  daemon log.
 
-### What remains
+## What is still wrong: the right-hand preview stripes
 
-- Rebuild the stub ramdisk/boot image and verify `camd` starts from
-  init, before the Krux app.
-- Test with a real QR code (static and animated UR) and the full Krux
-  UI, then the entropy page.
-- Make the camera boot+run cycle repeatable: one clean boot per camera
-  run, no reuse after a failed run.
-- Build a stable control-capable camd (or a stable paced build) and
-  enable the QR/entropy AE policy.
-- Re-run the 10-minute / 1,000-snapshot stability test.
-- Only then decide whether PIX_VIEWFINDER is needed for 20 fps or
-  simplification.
+The preview shows two vertical bands at the right edge.  They are
+**not in the camera image**:
 
-See `docs/cam-integration.md` for the wiring, `docs/cam-frame-path.md`
-for the frame-rate work, and `docs/cam-bringup-vfe.md` for the optional
-PIX investigation.
+- the shared frame the QR decoder and the entropy read held a constant
+  mean (90) for twenty seconds, with no stripes and no brightness
+  change;
+- the framebuffer plane the display module had just written is clean
+  at 1:1.
 
-## Historical investigation (2026-10-20/21)
+They are introduced between the framebuffer and the glass.  The panel is
+a command-mode DSI panel (`msm_fb_type` = `mipi dsi cmd panel`), and the
+MDP3 path re-points the DMA rather than copying: the panel's memory is
+rewritten from a framebuffer plane while the panel scans it, so the
+right-hand bands can show a newer frame than the rest.
 
-The notes below are the earlier bring-up history.  They are kept for
-the measurements and the reasoning, not as the current state.
+Drawing into the other framebuffer plane (the "ping-pong") was tried
+twice.  The second attempt also seeded the off-screen plane and clamped
+to the two planes the framebuffer really holds.  It did not remove the
+tear, and it added a ~10 s whole-preview brightness swing while the
+camera frame stayed constant, so it was reverted (`ef4593e60`).  A real
+fix is a display-level partial update (write only the 1080x1080 image,
+~3.5 MB) or a video-mode panel; both are kernel/display changes and are
+deliberately not part of this snapshot.
 
-## Where it stops
+The QR and the entropy never see any of it.
 
-| stage | state |
+## The CPP does not scale to 1280x960
+
+A delivered full-resolution buffer is a native, unscaled Bayer frame:
+the 2x2 sites measure 61.9 / 89.9 / 90.1 / 73.7 (the RGGB signature) and
+the diagonal neighbour difference (10.0) is far below the orthogonal one
+(22.4).  The CPP is a pass-through of the sensor's 3280x2464, not the
+vendor's 1280x960 scaler.  The daemon therefore does the one resample:
+by default the centre 2160x2160, halved exactly to 1080x1080.  Setting
+`fov=1` uses the whole frame, downscaled once to 960x1280, but a dense
+code is then only ~2 px/module in the preview and the finder pass loses
+it, so `fov=0` is the default.
+
+## The display phone
+
+The LG `LGL322DL71cd2c3` shows the Sparrow UR from
+`/sdcard/Download/sparrow.png` in the Gallery, `svc power stayon true`,
+brightness 120.  The phone must be close enough for the code to fill a
+good part of the frame: this is a dense (version-40-ish) code, and at
+arm's length it is only ~200 px wide in the preview, which the finder
+pass cannot read.
+
+## Changes since the first snapshot
+
+- The preview publishes raw-stream frames instead of rejecting them for
+  a missing chroma plane (`32c2508`); that was why the full-resolution
+  preview froze.
+- The QR page's first focus sweep of a scan is full, not cached
+  (`78dc874e`); the cached sweep refined a previous scan's step and the
+  code never came into focus.
+- The box downscale divides 3-pixel boxes too (`f2a0487`); the
+  whole-frame path needed it and produced a light grid without it.
+- The full-resolution window is a state knob, `fov` (`f2a0487`).
+- The QR exposure ceiling follows the sensor's frame length (`676cceff`);
+  the binned cap left a dark start stuck at half the exposure.
+- The display ping-pong was tried and reverted (`1d8f43b62`,
+  `ef4593e60`).
+
+## The stripes are in the camera image, not the display
+
+The diagnostic (`probes/tear.c`) draws a frame-number pattern into the
+same framebuffer with the same `MSMFB_DISPLAY_COMMIT` the firmware uses,
+and pans a detailed scene across it.  Two variants were run:
+
+- the whole 1080x1920 panel, copied with `memcpy` (5.6 ms per frame);
+- exactly the preview's draw: a 1080x1080 image at y=420, flipped in
+  both axes and converted pixel by pixel (3.9-20 ms per frame).
+
+**Neither tore**, at a 20 ms frame interval.  The horizontal "seams"
+first seen were the test pattern's own 384 px grid lines; removing the
+grid removed them.  So the display commit, the geometry, the flip and
+the per-pixel conversion are not the cause.
+
+The tear is in the image the firmware receives.  Capture of the shared
+frame through the same seqlock reader the pages use
+(`image.Image.from_shared()`), while the display phone's brightness
+stepped, gives a column table: the **leftmost 10-20 % of the preview
+image** changes one brightness step **about six frames (≈1.8 s) before
+the rest**.  The geometry maps that band to the source:
+
+- the daemon publishes the rotated preview, `col = source y`;
+- the display flips x, so the glass's right edge is the image's left
+  column, i.e. the **top rows of the sensor window**;
+- the vendor message's first CPP strip covers exactly those rows.
+
+So the right-hand stripes are the **first strip of the CPP output**
+being fed from a different frame (or not rewritten) while the rest of
+the frame is current.  The display is innocent; the work is in the CPP
+strip path, not in `lcd_bcm.c`.
+
+### Next options
+
+1. Confirm in the raw delivered window: dump `src_y` twice across a
+   brightness step and compare the top strip's rows with the rest.
+2. Inspect the message's first strip: `dst_start_y`/`dst_end_y` and the
+   postscale crop, and the kernel's per-frame input index, to see
+   whether the first strip's destination is left unwritten or its input
+   is a previous buffer.
+3. Workaround if the geometry is hard: shift the preview window down so
+   the first strip's boundary is outside the crop (costs a little
+   vertical field of view).
+
+## The vendor message's five strips overlap
+
+`cam_chromatrix.h` is the vendor's 266-word message unchanged.  The
+kernel hands it to the CPP firmware as-is; the kernel patches only the
+frame's input index (from the ISP's divert) and takes the output buffer
+from the buffer pool.  The strip rectangles therefore come from the
+message, not from our full-resolution window.
+
+Each strip is 27 words at `130 + 27*i`.  The destination rectangle is
+the packed pairs at `+21..+26`.  Decoded, the five strips are:
+
+| strip | dst x      | dst y      |
+|-------|------------|------------|
+| 0     | 426 .. 959 | 0 .. 430   |
+| 1     | 430 .. 959 | 0 .. 434   |
+| 2     | 429 .. 959 | 0 .. 429   |
+| 3     | 319 .. 479 | 0 .. 319   |
+| 4     | 341 .. 479 | 0 .. 319   |
+
+They **overlap**: every strip starts at y=0, three cover x 426..959 and
+two cover x 319..479, so the union is x 319..959, y 0..434 — not a
+tiling of the frame.  The header's scale groups (words 43-46, 51-54,
+59-62) map that space onto the output, which is why the picture looks
+complete; the overlap is at the **top** of the source, and the preview's
+rotation and horizontal flip put it on the glass's right edge — the
+band.
+
+The rows outside/inside the overlap are also written by different
+strips, and the output buffer comes from the pool with the previous
+frame still in it, so a strip that is not rewritten shows an older
+frame.  Measured on the raw delivered window with a uniform exposure
+change, the top 10 % and the rest do not track one another (`hi1` top
+188 / middle 100, `hi2` top 19 / middle 106), which is that mix.
+
+### Options
+
+1. **Capture the vendor's full-resolution CPP message.**  The harness
+   that produced `cam_chromatrix.h` exists; capturing in the full-res
+   mode gives the correct rectangles instead of a reconstruction.
+2. **Rebuild the five rectangles** so they tile the output without
+   overlap, using the header scale.  This is the original stripe task,
+   now with the exact numbers above.
+3. **Workaround now:** shift the preview window down (or crop the top
+   of the source) so the overlap is outside the crop.  One state knob,
+   costs a little vertical field of view, fully reversible.
+
+## The vendor's full-res message, captured
+
+The earlier harness tree is gone, but our kernel already has the
+`cpp_dump_frame` hook (`msm_cpp.c`), so the capture was rebuilt from the
+device itself:
+
+1. dump the stock boot partition (`/dev/block/mmcblk0p19`, 23 MB);
+2. `bootimg.py unpack`, replace the kernel with our `zImage-dtb`, pack
+   with the **ROM's ramdisk** and `cpp_dump_frames=3000`;
+3. `fastboot boot` it — the ROM's Android starts on our kernel;
+4. `su -c setenforce 0` (the hook's write is denied while enforcing),
+   `echo 3000 > /sys/module/msm_cpp/parameters/cpp_dump_frames` (the
+   command-line parameter does not reach a built-in module), open the
+   camera and take a photo;
+5. pull `/data/local/tmp/cpp_frm_*.bin` as root.
+
+The photo produced a **455-word** CPP message, distinct from the 266-word
+preview message and accepted by the kernel's checks: `num_stripes` is
+`12`, and `130 + 12*27 + 1 = 455`.  It is the **still capture** config,
+and its strip coordinates are in the **full-resolution** space (up to
+3185 / 2464), unlike the preview message's 960-space.  Saved as
+`docs/archive/cppmsg-still-455.bin` (`8ce04d4b3e9385262b8bac1fbfae66b5`).
+
+Fed to our daemon unchanged (`/data/krux/cppmsg.bin`), it is accepted
+(`chromatrix sent (455 words, status 0)`, `queue full: 0`) but the
+picture is garbage: the still message makes the CPP **process** the
+frame for the still capture, not pass the raw through, and our daemon
+reads the result as raw luma.
+
+What it gives us is the correct **tiling**: twelve strips that cover the
+full-resolution frame without the preview message's five-strip overlap.
+The next experiment is the hybrid: the preview message's header and
+processing with the still message's twelve tiling strips, which should
+keep the raw pass-through and remove the overlap.
+
+### The still message is not a drop-in
+
+Two tests, both restored afterwards:
+
+- unchanged: accepted (`chromatrix sent (455 words, status 0)`,
+  `queue full: 0`), but the picture is vertical striations — the CPP is
+  processing the still, not passing the raw through;
+- with bit 15 of word 5 cleared (`0x01008002` -> `0x01000002`, the only
+  pass-through-looking difference from the preview header): no change.
+
+So the still message is the vendor's **processed still path**, not a
+full-resolution version of the preview path.  What it gives us is the
+correct **tiling** (twelve strips, full-resolution coordinates) and the
+full-resolution scale groups.  The next step is to rebuild the preview
+message's five strips in its own 960-space using that tiling as the
+reference — the original stripe task, now with a known-good tiling to
+compare against.
+
+### Message-level attempts, and why they stop here
+
+Three hybrids were tried through `/data/krux/cppmsg.bin`, each restored
+afterwards:
+
+| variant | result |
 |---|---|
-| the sensor streams | **OK** -- 11,808 packets, no ECC, no CRC errors |
-| the PHY delivers them | **OK** -- the power configuration reads 0x3f |
-| the CSID receives them | **OK** -- but **none of them is mapped** |
-| the ISP-IF routes VC 0 to PIX0 | **OK** -- the vendor's own values |
-| the CAMIF is enabled, with the vendor's geometry | **OK** -- 3280x2464 |
-| the ISP's source state and configuration | **OK** -- the vendor's values |
-| the CPP takes the chromatrix | **OK** -- 266 words, **accepted: status 0** |
-| the CPP's buffer queue | **OK** -- four buffers, the right identity |
-| a frame arrives | **YES** -- "GOT A FRAME: index=2" |
-| **the frame has pixels** | **NO** -- `bytesused=0`, all four buffers are zero |
+| still message, unchanged | processed still output; vertical striations |
+| still word5 bit 15 cleared | same |
+| preview header + still 12 strips | dark, almost nothing written |
+| preview strips + still scale groups | coherent, QR decodes at 1080, but **zoomed** and the bands **remain and flicker** |
 
-## The three things that were broken, and are fixed
+The last one is informative: the still's scale groups shift the output
+scale (hence the zoom) but do not change the **strip layout**, so the
+overlap is untouched.  The preview message's five strips are the
+vendor's layout for a **1280x960 input**; our input is the sensor's
+**3280x2464 raw**, 2.56x larger.  No rearrangement of the message can
+make a 960-space strip layout tile a 3280x2464 input correctly.
 
-1. **The ION heap masks** (`cam/ion.h`).  `heap_id_mask` is
-   a mask of heap **ids**, not of heap types; `0x00010000` is
-   `ION_CP_WB_HEAP_ID`, a **8660-only** heap that this 8974 does not
-   have, so every buffer allocation failed with `ENOENT`.  The
-   system heap is id 30 (`1 << 30`).
-2. **The kernel oopsed** when the CPP firmware could not be loaded
-   (`cpp_load_fw()` dereferenced a NULL firmware).  Fixed in our
-   tree.
-3. **The CPP firmware was never loaded**, so the chromatrix was
-   rejected ("invalid fw version 00000000") and the kernel oopsed.
-   It has to be **version 1.2.0** (`130 + 27*5 + 1 = 266` = the
-   chromatrix's word count) and it has to be in `/lib/firmware` under
-   its bare name.
+That points at the **input**, not the message: the vendor's preview
+path feeds the CPP the ISP's **processed 1280x960** frame, and its
+message is exact for that.  Our daemon feeds CAMIF_RAW at full
+resolution.  The two ways out are:
 
-With those three fixed, the chromatrix **is** accepted and a frame
-**does** arrive.  It is empty.
+1. **PIX_VIEWFINDER at 1280x960** (the vendor's architecture): the ISP's
+   own processed output into the CPP.  The earlier `stream=1` test
+   delivered no frames and the reason was never found; that is the
+   debug to do.  If it delivers, the vendor message is exact and the
+   overlap disappears by construction.
+2. **The still's processed path**: read the CPP's still output at its
+   own size and stride (the vendor's 8 MP processed image).  The still
+   message is accepted, but the daemon reads it as 3280x2464 raw; the
+   size/stride mismatch is what the striations are.  A daemon-side
+   change, larger than a message edit.
 
-## The finding that reframes the work
+## PIX_VIEWFINDER: the vendor preview path, blocked at the VFE output
 
-The ROM's **own** camera app, running under **our** kernel with the
-**vendor's** HAL:
+The next attempt was the vendor's own preview architecture: feed the CCP
+the ISP's **processed** frame from `PIX_VIEWFINDER` instead of CAMIF_RAW,
+so the captured 1280x960 preview message applies exactly and the CPP (and
+its overlapping strips) is bypassed entirely.
 
-```
-CSID0 LUT: vc0 0x0000122b vc1 0x00000000, cfg0 0x00000023 cfg1 0x00000013
-CSID0 irq status 0x000002dd, packets 2363548, unmapped long 0x00000000,
-                mapped long 0x00000000, short 0x0000011a, ecc 0, crc 0
-```
+### What was set up
 
-**2,363,548 packets, none of them mapped, and exactly the same 282
-"short" packets as our imaging server sees.**  So the fault is in
-**our kernel**, and the imaging server is as good as the vendor's
-HAL.
+- `stream=1` (PIX_VIEWFINDER), `capture_cfg=0` (the capture config
+  overwrites the preview's `0x638=7` / `0x444=0x403f`), and the daemon
+  built with **`cam_cycle_preview.h`** (the vendor's 7-upload preview
+  cycle, `0x444=0x6020`) instead of the 6-upload capture cycle.
+- The vendor's initial config (`cam_config.h`, 56 uploads, `0x638=7`) is
+  already sent after the stream start.
+- Plane sizes tried: the sensor's 3280x2464, 1280x960, and 1640x1232
+  (the preview SFE value `0x6020` has a `0x20` scale field, 32/64 = half,
+  so 1640x1232 was the best guess).
+- A `CONFIG_DONE` (register update) after the vendor config and after the
+  per-frame preview cycle — no change.
 
-**And the packets are on the wrong virtual channel.**  The captured
-long packet headers say so:
+### What the device says
 
-```
-unmapped long 0x2b010405   data type 0x2b, VC 1, 1029 words
-mapped   long 0x1201040a   data type 0x12, VC 1, 1034 words
-```
-
-Both data types arrive on **VC 1**, while the CSID's LUT -- as the
-vendor's HAL programs it -- maps **VC 0**.  So the packets are not
-mapped at all, and the CAMIF has nothing to work with.
-
-(The device tree is not the reason: the CSID node in the ROM's DTB
-carries no virtual channel or data type -- those come from the
-HAL's ioctl -- and the sensor's register write-back after our
-programming is identical to the vendor's.)
-
-## The next measurement
-
-The same numbers, **in the ROM's kernel**, where the camera works:
-the CSID's LUT and counters, and the VFE's registers.  The
-difference between the two is the bug.  The ROM's kernel is
-`ge4e483b4ef6`, which is not in our tree, so the comparison has to
-be made on the device:
+Instrumented kernel (`tools/vfe-instrument.py`, built by
+`scripts/cam/build-vfe-kernel.sh`):
 
 ```
-adb reboot bootloader
-fastboot boot <the ROM's boot.img>          # the ROM's kernel + Android
-adb shell su -c 'dd if=/dev/mem bs=4 skip=... '   # the CSID's registers
+VFE40_DBG: hw_version=0x1001001a        (8974 V2)
+VFE40_DBG: vfe_clk_src=266670000
+VFE40_DBG: camss_csi_vfe_clk=266670000
+ISPIF_DBG: INPUT_SEL vfe=0 intftype=0 csid=0 val=0x0
 ```
 
-The CSID's base is `0xfda08000` (from the device tree) and its
-counters are at the offsets the driver prints.
+So the clock, the hardware version and the ISP-IF routing are right.
+`REQUEST_STREAM` succeeds, the stream starts, and then:
 
-Until that comparison is made, the camera stays where it is: the
-whole chain is configured correctly and the pixels do not arrive.
+- `VFE0 pix0 overflow` 1-4 at the start (the input FIFO);
+- `msm_vfe40_process_error_status: image master 0 bus overflow` — the
+  VFE's output write master (WM0) overflows;
+- **no completed frame** (`GOT A FRAME: 0`, `no frame after 2s`).
 
----
+There is no `WM_IRQ_MASK` print because a two-plane NV12 stream uses the
+**composite** mask (`cfg_comp_mask`), not the per-WM mask — and that
+composite path is exactly what CAMIF_RAW uses successfully, so it is not
+the fault.
 
-# STATE — 2026-10-21 (the touch/keys session)
+### Where it is blocked
 
+The VFE accepts the input and the stream, but its **output stage** (the
+WM/UB bus) never completes a frame. The remaining suspects, in order:
 
-## Camera (the main thread)
+1. **The SFE scale / output size.** `0x444=0x6020` (preview) vs
+   `0x403f` (capture); the `0x20` looks like a 32/64 half-scale, which
+   would make the preview output 1640x1232. The plane size and the SFE
+   must agree; with 1640x1232 the bus overflow count rose to 136.
+2. **The AXI UB / bus bandwidth** (`msm_vfe40_cfg_axi_ub`,
+   `msm_isp_update_stream_bandwidth`): the "image master 0 bus overflow"
+   is the write master's buffer/bus, and the single-stream bandwidth
+   formula drops the output term.
+3. **The CBCR plane.** The stream is NV12 with two planes and `y_only`
+   only narrows the composite mask; the chroma WM still writes, and the
+   half-height chroma is the known IOMMU/ping-pong sore point
+   (`docs/cam-bringup-vfe.md`, 2026-10-30).
+4. **A single-plane stream.** A one-plane request would take the
+   `cfg_wm_irq_mask` path (Fix D) and avoid the chroma entirely; the
+   CAF's create-stream code picks the plane count from the output
+   format, so this needs a Y-only format request.
 
-Everything below is **measured**, not assumed:
+### State
 
-```
-sensor streams              OK   11,808 packets, 0 ECC, 0 CRC errors
-PHY delivers them           OK   power cfg 0x3f
-CSID accepts and maps them  OK   LUT vc0 0x122b, cfg0 0x23, cfg1 0x13
-                                  (now byte-for-byte the vendor's own)
-ISP-IF routes VC 0 -> PIX0  OK   CTRL_0 0xc0, CID_MASK0 0x02, INTF_CMD 0xfffffffd
-CAMIF enable                OK   camif_update 1 (ENABLE_CAMIF)
-CAMIF geometry              OK   0x300 = 2464x3280, 0x304 = 0..3279, 0x308 = 0..2463
-                                  (exactly the vendor's values, captured)
-ISP source state / config done  OK   SET_SRC_STATE ok, CONFIG_DONE ok
-CPP takes the chromatrix    OK   len 140 == expected 140, 266 words sent,
-                                  **accepted: status 0**, queued to the hardware
-CPP buffer queue            OK   ENQUEUE_STREAM_BUFF_INFO, 4 buffers, identity
-                                  0x10000 (session 1, stream 0)
-CAMIF rejects the frame     OK   no violation any more (the cid was the cause)
-a frame arrives             YES  "GOT A FRAME: index=2"  <- 2026-10-20
-the frame has pixels        NO   bytesused 0, all four buffers all zero
-```
+Restored to the working state: clean kernel `cf9fd9c2edf`, `camd`
+`3c6eea90`, `stream=0`, `capture_cfg=1`, CAMIF_RAW + CPP, frames flowing,
+`queue full: 0`. The instrumented kernel is at `/tmp/opencode/boot-vfe.img`
+and the PIX test daemon at `/tmp/opencode/camd.c.orig` / the build recipe
+in this section, for the next session.
 
-### What made the frame arrive (2026-10-20)
+## The vendor's VFE stream request, captured (2026-11-11)
 
-Two things, both found by *running the vendor's camera under our
-kernel* and letting our kernel log what it does:
+Step 1 of the PIX plan: probe the kernel's stream/input/CFG handlers and
+run the **vendor camera stack on our kernel** (the ROM's Android, the
+boot image from the stock boot partition).  The probe (a printk in
+`msm_isp_request_axi_stream`, `msm_isp_cfg_axi_stream` and
+`msm_isp_cfg_input`) produced, raw, in
+`docs/archive/vfe-request-2026-11-11.txt`:
 
-1. **The chromatrix has to be sent once per frame.**  The kernel logs
-   the vendor HAL's ioctls; the HAL sends `VIDIOC_MSM_CPP_CFG` (the
-   chromatrix) **once per frame** (256 times for 256 frames), not once
-   at configuration time -- the kernel patches the frame's current
-   buffer addresses into the message when it accepts it, and the
-   buffers rotate.  Our imaging server now sends it per frame
-   (`cpp_send_chromatrix()` in `imaging8.c`).
-
-2. **The CSID's data type was wrong.**  The vendor's own CSID
-   configuration, read out of the chip's registers while the ROM's
-   camera ran:
-
-   ```
-   CSID0 LUT: vc0 0x0000122b vc1 0x00000000 vc2 0x00000000 vc3 0x00000000,
-              cfg0 0x00000023 cfg1 0x00000013
-   ```
-
-   The CSID's LUT holds one byte per channel: the routed channel 0
-   carries data type **0x2b** with decode format **2**, and channel 1
-   carries 0x12 with decode format 1 (the CFG register is
-   `(decode_format << 4) | 3`, which is why cfg0 is 0x23).  We had
-   0x12 on channel 0: the packets then stayed unmapped (the CSID's
-   "captured unmapped long packet header" read 0x2b010405 -- the data
-   type the sensor really sends) and no pixel ever reached the ISP.
-   Our CSID configuration is now byte-for-byte the vendor's.
-
-### The last gap: the frame is empty
-
-The ISP delivers a buffer (`GOT A FRAME: index=2`) but it holds no
-pixels: `bytesused=0`, and all four of our buffers are all zero.
-So the frame-done interrupt fires while the data never lands in the
-buffer.  What has been ruled out:
-
-* the buffers map fine (no `buf has null/error ION handle`, no
-  `cannot map address` in the log) -- the ISP's buffer manager
-  imports our ION fds with `ion_import_dma_buf`, which is right;
-* the per-frame register replay is not the cause (the frame is still
-  empty with `nocycle`);
-* the CPP takes the chromatrix and the chromatrix is accepted;
-* the CSID's configuration is now byte-for-byte the vendor's, so the
-  packets are mapped and reach the CAMIF;
-* the CAMIF's geometry and its CAMIF_INPUT are the vendor's
-  (0x2e8 = 3, 0x300 = 2464x3280, 0x304 = 0..3279, 0x308 = 0..2463).
-
-What has *not* been compared yet: the vendor's **ISP register
-configuration** against ours, register by register.  The kernel now
-dumps the VFE's registers on every interrupt (the first three and
-then every hundredth), so the two can be compared.  The first
-comparison is not conclusive because the two dumps are of *different
-states*:
-
-* ours is the raw path (CAMIF_RAW): the CAMIF block (0x2c4-0x320) is
-  live, and the CAMIF's own registers read 0x2e8 = 3, 0x300 =
-  0x09a00cd0, 0x304 = 0x00000ccf, 0x308 = 0x0000099f, 0x314 =
-  0xffffffff -- all the vendor's values;
-* the vendor's dump was the *preview* (PIX_VIEWFINDER) state: its
-  CAMIF block reads all zero, and it has a set of registers
-  (0x174-0x1fc) that ours does not.
-
-So the next comparison needs the vendor's *raw* state: the ROM's
-camera app has to take a picture, not just preview.  (The screen has
-to be on for the app to preview at all -- `input keyevent 224` wakes
-it; that is the same reason the NFC framework is quiet with the
-screen off.)
-
-The registers that differ in the common part are the buffer address
-registers (0x070, 0x074, 0x080, 0x084, 0x094, 0x098, 0x0a4, 0x0a8 --
-different buffers, expected), the interrupt mask (0x030: 0x04020c00
-against our 0x00000002) and 0x040/0x04c (0x00000c03/0x0000000c against
-our 0x00000003/0x00000003) -- those two are the interesting ones.
-
-### The vendor's camera, captured
-
-The kernel logs every ISP and CPP ioctl, so running the ROM's camera
-app under our kernel gives the vendor's exact sequence:
+### The preview stream (the one we want)
 
 ```
-per frame:  ISP UPDATE_STREAM (0xc01056cd)
-            ISP ENQUEUE_BUF   (0xc05056c2) x5
-            ISP VFE_REG_CFG   (0xc00c56c0) x7..8   <- the register cycle
-            CPP CFG           (0xc01056c0)          <- the chromatrix
-            CPP DQEVENT       (0x80805659 = VIDIOC_DQEVENT)
-            CPP GET_EVENTPAYLOAD (0xc01056c1)
-            ISP ENQUEUE_BUF   (0xc05056c2)
-            ISP CONFIG_DONE   (0xc00456ce)
-            ISP UPDATE_STREAM (0xc01056cd)
+CAP_REQ:   fmt=0x3132564e (NV21) src=1 (PIX_VIEWFINDER) y_only=0
+           drop=1 skip=0 burst=0 hfr=0 fbase=0 divert=1
+CAP_PLANE0: w=1280 h=960 stride=1280 lines=960  fmt=0 (Y)      off=0
+CAP_PLANE1: w=1280 h=480 stride=1280 lines=512  fmt=3 (CRCB)   off=0
+CAP_PLANE2: unused
 ```
 
-`0x80805659` is `VIDIOC_DQEVENT` (`_IOR('V', 89, struct v4l2_event)`),
-not a private ioctl.
-
-### The CPP path (solved 2026-10-20)
-
-The chromatrix ioctl is `VIDIOC_MSM_CPP_CFG` (0xc01056c0) and it now
-**works**.  Four things had to be right, and each of them is a trap:
-
-1. **The ioctl numbers are the camera_v2 ones, not the camera_v1 ones.**
-   The camera_v2 driver includes `<media/msmb_pproc.h>`, where the CPP's
-   ioctls are numbered from `BASE_VIDIOC_PRIVATE`:
-
-   | ioctl | nr |
-   |---|---|
-   | `VIDIOC_MSM_CPP_CFG` | +0 |
-   | `VIDIOC_MSM_CPP_GET_EVENTPAYLOAD` | +1 |
-   | `VIDIOC_MSM_CPP_LOAD_FIRMWARE` | +3 |
-   | `VIDIOC_MSM_CPP_ENQUEUE_STREAM_BUFF_INFO` | +6 |
-   | `VIDIOC_MSM_CPP_DEQUEUE_STREAM_BUFF_INFO` | +7 |
-   | `VIDIOC_MSM_CPP_APPEND_STREAM_BUFF_INFO` | **+17** |
-
-   `include/media/msm_camera.h` (the camera_v1 header) has a *different*
-   numbering: its `+1` is GET_EVENTPAYLOAD and it has no APPEND at all.
-   Using the camera_v1 numbers sends the "append" to GET_EVENTPAYLOAD,
-   which dereferences a NULL and **panics the kernel**
-   (`msm_cpp_subdev_ioctl+0xe30`, NULL at 0x34).  The ispif.h in
-   `cam/` now carries the camera_v2 numbers.
-
-2. **The buffer queue is created by ENQUEUE, not APPEND.**  APPEND only
-   adds buffers to a queue entry that already exists; ENQUEUE creates
-   the entry (and then adds the buffers).  With APPEND the CPP says
-   `error buffer queue entry for sess:0 strm:0 not found`.
-
-3. **The identity carries the session and the stream**: the CPP looks
-   the queue up by `(identity >> 16) & 0xffff` (session) and
-   `identity & 0xffff` (stream).  The identity is in *our* frame struct
-   (it is copied from user space), so it has to be set -- the camera2
-   HAL uses `(session_id << 16) | stream_id`.  Left zero, the CPP looks
-   for session 0 and finds nothing.
-
-4. **`frame.status` must point at an int32.**  The CPP writes the result
-   of the frame through it; left NULL the copy back fails and the whole
-   ioctl is reported as an error *even though the chromatrix was
-   accepted*.
-
-Also: the kernel copies `num_buffs` **buffer_info** structures, so the
-array has to be that long.  With one entry and `num_buffs = 4` the
-kernel reads three structures of stack garbage, which shows up as
-`error buffer index already queued` and `ION import failed`.
-
-The frame struct (`msm_cpp_frame_info_t`) is byte-exact against
-`include/media/msmb_pproc.h` -- `struct timeval` is two longs on
-32-bit ARM, and `struct ion_handle *` is a pointer.
-
-### The remaining gap
-
-The chromatrix is accepted and queued to the CPP's hardware, but the
-frame never completes: the CPP's timer expires (`fatal: cpp_timer
-expired for identity=0x10000`) and the CAMIF reports a violation.
-
-Two kernel bugs are visible in that path, both worth fixing in *our*
-kernel:
-
-* `cpp_load_fw` (the firmware reload after the timer expiry) calls a
-  NULL `io_w` (`msm_camera_io_w+0x0`) and oopses.  The reload path
-  needs a NULL check.
-* the CAMIF's violation (status 0x1) is back, now that the source
-  state is live.
-
-The camera2 HAL's order is worth re-checking: it may send
-SET_SRC_STATE/CONFIG_DONE *before* the CPP's chromatrix, and it may
-also set the CPP's clock (`VIDIOC_MSM_CPP_SET_CLOCK`) and the strip
-count, so that the frame's timing matches the sensor's real pixel rate
-(266.67 MHz against 3280x2464 -- see the note below).
-
-
-Measured constants (do not re-derive):
-- MIPI data type **0x12** (the header's type byte) — swept over 0x12..0x37;
-  only 0x12 maps the packets.
-- virtual channel **0** (the vendor's ISP-IF routing says `cid0 0`).
-- the vendor's ISP-IF routing: vfe_intf 0, intftype 0 (PIX0), 1 cid, cid 0,
-  csid 0, **crop disabled** (0..0).
-- the vendor's CAMIF config: pix_clk **260 MHz**, pixels_per_line 3280,
-  lines_per_frame 2464, first_px 0, **last_px 3279**, first_line 0,
-  **last_line 2463**, camif_input **3**.
-- the ISP is the **vfe40** (/dev/v4l-subdev13); subdev14 is the 8960's
-  vfe32 and driving it takes the device down.
-
-The two ioctls the camera2 HAL sends and we did not: SET_SRC_STATE (the
-pixel source is live) and CONFIG_DONE (the configuration is complete).
-Both are now sent and accepted.
-
-The CAMIF's geometry is now the vendor's exactly and the violation is
-gone for the clock values tried (the divider only produces 266.67 MHz).
-
-The **CPP** used to be the last piece; it now takes the chromatrix (see
-above).  What is left is the frame itself:
-
-The CAMIF still rejects the frame.  Its geometry is now exactly the
-vendor's (0x300 = 2464x3280, 0x304 = 0..3279, 0x308 = 0..2463) and the
-vendor asks for a 260 MHz pixel clock -- but the divider gives 266.67 MHz
-(the vendor would get the same).  The CAMIF checks the frame timing
-against that clock, so the **sensor's real pixel rate has to be
-266.67 MHz**, which does not match 3280x2464 at any sane frame rate.
-Next: find the frame rate the vendor's sensor mode actually runs at
-(the 92-entry page sequence sets the sensor's PLL) and match the CAMIF's
-clock to it; then the ISP's frame delivery (the VB2/SFE path) is the
-last piece.
-
-## Device access — one device, two threads
-
-The camera thread and the MicroPython/Krux thread both need the single
-Nexus 5, and they need it in *different* states: the camera thread needs
-it in fastboot and then in TWRP with **our** kernel, the MicroPython
-thread needs it in the ROM's Android with root.  A `fastboot boot` kills
-the adb connection the MicroPython work depends on, and the camera
-run's reboot (the failure path) kills an in-flight MicroPython run.
-
-**So: one thread owns the device at a time, the other waits.**  The
-camera's boot+run cycle is atomic (about 3-5 minutes): `adb reboot
-bootloader` -> `fastboot boot` -> wait for adb -> run `imaging9` ->
-collect the output and the kernel log.  The MicroPython work happens
-between camera cycles, on the ROM's Android.
-
-The kernel log of a crashed camera run is read from the ROM's Android
-afterwards: `su -c "cat /proc/last_kmsg"` holds the previous boot's
-log, which is where the oopses above came from.
-
-
-## MicroPython / Krux (background)
-
-**MicroPython 1.28.0, static arm32, running inside TWRP** ✓
-(`kruxport/micropython-arm32` ✓, built by
-`scripts/build/build-micropython.sh` ✓):
-```
-$ adb shell /data/local/tmp/micropython -c "import sys; print(sys.implementation)"
-MicroPython (name='micropython', version=(1, 28, 0, ''), ...)
-```
-Buildroot cannot do this: `BR2_PACKAGE_MICROPYTHON` depends on
-`!BR2_STATIC_LIBS` ✓, and TWRP's libc is bionic ✓ so a dynamic binary
-would not run there ✓.  The hand build needs the host tools (mpy-cross)
-built with the *host* compiler ✓ (otherwise the port tries to run an
-arm32 mpy-cross ✓) and the armel sysroot ✓.
-
-The port's scope and the Linux replacements are in
-`kruxport/README.md` ✓.
-
-### `machine.I2C` — done and verified on the hardware (2026-10-20)
-
-Krux's firmware talks to its peripherals over MaixPy's `machine.I2C`
-(`krux/src/krux/i2c.py`: `from machine import I2C`, then
-`I2C(I2C.I2C0, freq=400000, scl=..., sda=...)`).  MicroPython's unix
-port has no I2C at all, and the generic class in
-`extmod/machine_i2c.c` is not usable here: it wants a port-side HAL
-(`mp_machine_i2c_p_t`) and MaixPy's API differs anyway (`mem_size`
-rather than `addrsize`, the bus chosen by the `I2C.I2C0` class
-constant, `writeto` taking the bytes rather than a list).
-
-So the port has its own class:
-`kruxport/machine_i2c_linux.c` ✓, applied to the tree by
-`kruxport/apply-port.sh` ✓ (called from
-`build-micropython.sh` ✓) as `ports/unix/machine_i2c_linux.c` ✓, and
-added to the `machine` module through the port's
-`MICROPY_PY_MACHINE_EXTRA_GLOBALS` hook ✓ (in `ports/unix/modmachine.c`
-✓, which `extmod/modmachine.c` includes).
-
-It talks to `/dev/i2c-N` with the i2c-dev ioctls.  Two things about
-that are worth knowing:
-
-* **the i2c-dev ABI has to be spelled out**: the cross build's sysroot
-  has no kernel headers, so `struct i2c_msg`, `struct
-  i2c_rdwr_ioctl_data`, `I2C_SLAVE_FORCE` (0x0706), `I2C_RDWR` (0x0707)
-  and `I2C_M_RD` (0x0001) are in the file.  On 32-bit ARM `struct
-  i2c_msg` is 12 bytes (the pointer needs 4-byte alignment).
-* **I2C_SLAVE_FORCE, not I2C_SLAVE**: i2c-dev refuses `I2C_SLAVE` for
-  an address a kernel driver has claimed (-EBUSY), and on the
-  hammerhead every peripheral of interest is claimed.
-
-Verified on the device (the ROM's Android, as root):
+### The still stream (8 MP, via the encoder interface)
 
 ```
-$ adb shell su -c "/data/local/tmp/micropython -c \"
-from machine import I2C
-b = I2C(I2C.I2C2)            # bus 84
-print(b.readfrom(0x36, 1).hex())\""
-d7
+CAP_REQ:   fmt=0x3132564e (NV21) src=0 (PIX_ENCODER) y_only=0 drop=0 divert=0
+CAP_PLANE0: w=3264 h=2448 stride=3264 lines=2496 fmt=0
+CAP_PLANE1: w=3264 h=1224 stride=3264 lines=1280 fmt=3
 ```
 
-which matches a C probe of the same bus and address (the max17048 fuel
-gauge).  The class constants are the hammerhead's three buses: I2C0 =
-0 (the NFC's bus), I2C1 = 2, I2C2 = 84.
-
-Three API traps in MicroPython 1.28, all hit and fixed:
-
-* `STATIC` is **gone** (it was removed after 1.19); plain `static`.
-* `mp_obj_malloc` takes **two** arguments now:
-  `mp_obj_malloc(machine_i2c_obj_t, type)`.
-* the frozen `asyncio` module already owns the qstrs **`n`** and
-  **`len`** (they are its local variables), so the port's arguments
-  must not use them -- `MP_QSTR_n` in the port's source makes the
-  generated qstr enum have a duplicate enumerator and the *frozen
-  content* fails to compile.  The port uses `nbytes`.
-
-The NFC chip (bcm2079x) is **not** reachable over I2C from userspace
-while the vendor driver holds it: the chip NACKs
-(`ENOTCONN` from the QUP driver).  The vendor's own path is the
-`/dev/bcm2079x` misc device with its six ioctls -- see
-`nfc/TRANSPORT.md`, which has the full contract (framing
-measured on the hardware, the power/wake ioctls, and the AOSP HAL
-source to port).  That is the way to the NFC, not raw I2C.
-
-- `rootfs/buildroot.fragment`: MicroPython 1.28.0 + micropython-lib
-  added; unix-ffi off (it needs libffi, whose autoreconf fails here);
-  `BR2_RELRO_NONE=y` (BR2_RELRO_FULL selects BR2_PIC_PIE, and a PIE /init
-  hangs the bootloader on this kernel); `BR2_STATIC_LIBS=y` (TWRP is bionic,
-  so the runtime must be static).
-- `rootfs/build.sh`: the buildroot path was wrong
-  (`rootfs/../../rootfs/buildroot` -> `buildroot`).
-- the build extracts into TMPDIR -> set to `rootfs/build/tmp`
-  (on the disk, not the tmpfs).
-- the host gcc's "fixinc" step (host-gcc-final) fails intermittently;
-  delete build/build/host-gcc-final-* and build/build/gcc-* and retry.
-- the stale `build/host` tools (configured for the old `b/rootfs` path) had
-  to be deleted together with the `build/build/host-*` stamps.
-- **Runtime model**: we cannot replace the boot init ramdisk, so MicroPython
-  runs *inside TWRP* (piggyback on TWRP's init). A static arm32 binary
-  pushed to /data and run there.
-
-The port's scope (from the Krux sources): the firmware is **MaixPy**
-(a MicroPython fork) and the Python side is `src/krux/*.py`; the MaixPy
-modules to replace with Linux ones are `board`, `machine` (I2C, WDT), `lcd`
-(/dev/graphics/fb0), `Maix`.GPIO + `fpioa_manager` (the buttons and the
-LED), `sensor` (V4L2) and `flash`. The NFC protocol is in Python
-(`seedkeeper.py` does `import nfc`; the phone side is an ISO-DEP reader
-over the BCM20793 on I2C bus 0 at 0x77).
-
-### The NFC transport — the chip answers, standalone (2026-10-20)
-
-The port's own C module `_nfc` (`kruxport/nfc_bcm2079x.c`,
-compiled into the unix port by `apply-port.sh`) opens
-`/dev/bcm2079x`, drives the power and wake lines, and reads and writes
-whole packets.  **Verified on the device, in TWRP, with no vendor HAL
-at all**:
+### The CAMIF/input
 
 ```
-$ adb shell 'cd /data/local/tmp && ./micropython nfc_test.py'
-opened /dev/bcm2079x -> fd 3
-power cycled
-packet after power on: 10 60 00 02 00 01
-wrote 4 bytes (GET_BUILD_INFO)
-reply: 10 4f 04 24 00 44 65 63 20 32 32 20 32 30 31 32 31 34 3a 35 33 3a 35 30
-        01 05 0d 46 05 1b 79 20 07 32 30 37 39 31 42 35
+CAP_INPUT: src=0 clk=260000000 mux=0 pattern=0 camif_input=3
+           lines=2464 pixels=3280 fp=0 lp=3279 fl=0 ll=2463 e0=0 e1=0
 ```
 
-So **the chip's firmware is in its NVM**: it answers GET_BUILD_INFO
-right after a power cycle, with no `.ncd` download.  The port therefore
-does **not** need the DM/PRM patch-download state machine -- that is
-the biggest piece of the NFC port, and it is not needed.  (The blobs
-are kept in `nfc/blobs/` as a fallback.)
-
-### The vendor's bring-up, captured byte for byte
-
-Our kernel's `drivers/nfc/bcm2079x.c` now logs every packet that goes
-to and from the chip (one line per packet).  Running the ROM's NFC
-framework under our kernel gives the vendor's whole conversation, and
-the port can replay it:
-
-```
-chip -> 10 60 00 02 00 01          Core Reset notification
-->    10 2f 04 00                  GET_BUILD_INFO   -> "Dec 22 2012 14:53:50" "20791B5"
-->    10 2f 2d 00                  GET_PATCH_VERSION
-->    10 20 00 01 01               CORE_RESET (reason 1) -> 10 40 00 03 00 10 01
-->    10 20 01 00                  CORE_INIT -> 10 40 01 18 00 03 0e 03 01 07 00 01 02
-                                       03 81 84 83 0a 00 01 ff 3d 00 2e 00 15 0d 46
-->    10 20 02 39 01 b9 36 ...     SET_CONFIG: the LPTD config (the .conf's LPTD_CFG)
-->    10 20 02 66 0c cb 01 01 a5 . SET_CONFIG: NFA_DM_START_UP_CFG + PREINIT_DSP_CFG
-->    10 20 02 06 01 b7 03 02 00 01   SET_CONFIG: the poll configuration
-->    10 21 00 07 02 04 03 02 05 03 03   DISCOVER (GID_RF, OID 0) -> 10 41 00 01 00
-->    10 20 02 0e 02 51 08 01 fe ff ff ff ff ff ff 58 01 70   SET_CONFIG (0x51)
-->    10 20 03 02 01 52            CORE_SET_CLK  -> 10 40 03 05 00 01 52 01 01
-->    10 2f 0c 01 00                PROP 0x0c
-->    10 21 01 16 00 04 01 03 ...   RF 0x01 (the routing)
-->    10 20 02 04 01 19 01 01      SET_CONFIG (0x19)
-->    10 20 02 04 01 80 01 01      SET_CONFIG (0x80)
-->    10 20 02 10 05 30 01 04 31 01 00 32 01 20 38 01 00 50 01 00  (5 poll params)
-->    10 20 02 05 01 00 02 f4 01   SET_CONFIG (param 0x00)
-->    10 21 03 0f 07 00 01 01 01 02 01 80 01 06 01 74 01 77 01   RF 0x03
-->    10 21 06 01 00                RF 0x06
-```
-
-The module that replays it is `kruxport/kruxport/nfc.py`
-(the `nfc` module Krux imports); it needs to be installed as `nfc.py`
-on the device (or frozen into the firmware).
-
-**Still missing**: the *discovery notification* and the *ISO-DEP
-activation* -- they need a card in the field.  The phone has to be
-held with a tag on its back while the ROM's NFC framework runs under
-the logging kernel, so that the bytes of the tag notification and the
-activation can be read off the log.
-
-#### The ISO-DEP exchange, captured (2026-10-20)
-
-With a card on the back of the phone, the ROM's NFC stack (the Krux
-mobile app) did a complete transaction, and the kernel logged every
-byte of it:
-
-```
-RX 10 61 06 02 01 00                  a tag was discovered (ISO-DEP)
-TX 10 21 04 03 01 04 02               ACTIVATE (GID_RF, OID 4)
-RX 10 41 04 01 00                     the activation: status 0
-RX 10 61 05 21 01 02 04 00 ff 01 ...   the activation notification (OID 5)
-TX 10 00 00 0d 00 a4 04 00 07 d2 76 00 00 85 01 01 00   <- the SeedKeeper SELECT
-RX 10 60 06 03 01 00 01
-RX 10 00 00 02 6a 82                  <- the card's answer: SW 6A82
-TX 10 21 03 03 01 80 01               DEACTIVATE (GID_RF, OID 3)
-```
-
-So the data plane is plain: an APDU goes out as an **MT_DATA** packet
-(`10 00 00 <len> <apdu>`) and the answer comes back the same way, with
-the status word as the last two bytes.  The SELECT is the abbreviated
-SeedKeeper AID `D2760000850101`; the card that was tested is not a
-SeedKeeper, hence the `6A82`.
-
-#### The port's own transport (2026-10-20)
-
-`kruxport/kruxport/nfc.py` is the `nfc` module Krux
-imports.  It replays the vendor's bring-up **byte for byte** -- the
-payloads are generated from the captured trace, because two of them
-were wrong when they were typed by hand (the LPTD one was three bytes
-short, the routing one was missing its first byte; the chip accepted
-both and then never polled).
-
-What the port does now, all of it verified on the device:
-
-* power cycle the chip and read the Core Reset notification ✓
-* GET_BUILD_INFO, GET_PATCH_VERSION ✓ (the chip is `Dec 22 2012 ...
-  20791B5`)
-* CORE_RESET, CORE_INIT ✓
-* the LPTD, start-up, antenna, poll, RF and protocol configurations ✓
-  (all the responses come back with status 0)
-* the two proprietary commands, the clock and the routing ✓
-* the chip now answers with the same notifications the vendor's does
-  (`10 61 07 01 00` twice) ✓
-
-The one thing that was missing was the **wake line**: the chip stays
-asleep (and silent) until it is asserted, and it has to be asserted
-*before* the configuration, not after.  On Android the framework does
-that when the screen comes on, which is why the chip is quiet with the
-screen off.  With the wake asserted the port's chip behaves exactly
-like the vendor's.
-
-**Still open**: the chip does not report a tag with the card in the
-position we have been using -- and neither does the vendor's own
-stack, so it is the card's position, not the port.  The port's
-discovery/activation/data plane is written but not yet seen to work
-with a card.
-
-#### The port talks to a real card (2026-10-20)
-
-Three things had to be right, and each one cost a cycle:
-
-1. **The routing and the protocol numbers are sent twice.**  The
-   vendor's stack sends them, then deactivates the discovery, then
-   sends them *again* -- and the chip only finds a tag after that.
-   The trace of the ROM's own stack shows the tag's activation
-   notification right after those two commands, and nowhere else.
-   Skipping the second round: the chip never polls.
-
-2. **The wake line has to be asserted before the configuration**, and
-   not just before the polling.  With it deasserted the chip stays
-   asleep and answers nothing at all.  (On Android the framework
-   does this when the screen comes on -- which is why the chip is
-   quiet with the screen off.  In TWRP the port does it itself.)
-
-3. **`time.sleep()` takes seconds, not milliseconds.**  A settle time
-   written as `SETTLE_MS = 300` was a five-minute pause, and every
-   test looked like a hang.
-
-With those fixed, the port -- on its own, in TWRP, with no vendor HAL
-and no Android framework -- found a card, activated it and exchanged
-an APDU with it:
-
-```
-=== attempt 4 ===
-=== the card is there and activated ===
-=== the card answered: data= sw=6a82
-```
-
-`6a82` is the same answer the ROM's own stack got from that card: it
-is not a SeedKeeper, so the abbreviated AID `D2760000850101` is not
-there.
-
-The chip's poll is not reliable: a card that is in the field is seen
-in some cycles and not in others (three cycles went by before the
-fourth one found it), so `connect()` repeats the whole cycle until
-its timeout runs out.
-
-**The last fix, and it is the one that made it work every time**: the
-discovery must not be restarted too often.  Asking the chip to
-discover again every 300 ms *interrupts* the poll it is in the middle
-of; with one discovery per second the card is found on the first
-try.  The port's API is now exactly the one Krux's `seedkeeper.py`
-expects:
-
-```python
-t = nfc.transport()
-t.connect(40000)                  # -> connected: True
-data, sw1, sw2 = t.transmit(apdu)  # -> data= , sw=6a82
-t.close()
-```
-
-Two lessons worth keeping:
-
-* the vendor's *own* trace is the reference: with the kernel logging
-  every packet that goes through the `bcm2079x` driver, the ROM's
-  NFC framework can be watched doing its work, and the port can be
-  written against what it says;
-* the card's position matters and the framework's own stack is the
-  way to find it -- the NFC Reader app (com.github.muellerma.nfcreader)
-  is installed on the device for that.
-
-### The Krux firmware on the port (2026-10-20)
-
-The firmware is **`/home/user/Develop/src/krux-sighash/krux`** (the
-branch `unified-sighash_seedkeeper`; its `src/krux` is identical to
-the krux-hammerhead tree's).  Its `vendor/embit` submodule is the
-*sighash fork* of embit, which on MicroPython expects a native
-`secp256k1` module -- the port supplies one.
-
-What the port has so far, all verified on the device:
-
-| piece | file | note |
-|---|---|---|
-| the display | `kruxport/lcd_bcm.c` | the framebuffer (`/dev/graphics/fb0`, 1080x1920, **stride 4352**), the 8x16 VGA font (from the kernel's own console font), the rotation/mirror/BGR in software, the colours in MaixPy's RGB565, and the channel offsets taken from the kernel (`FBIOGET_VSCREENINFO`) so they cannot be got wrong |
-| the input devices | `kruxport/evdev_bcm.c` | `/dev/input/event1` (the touch) and the phone's keys; the events are read with a timeout so the firmware's loop does not block |
-| the NFC chip | `kruxport/nfc_bcm2079x.c` + `kruxport/kruxport/nfc.py` | the transport, verified against a card |
-| the I2C bus | `kruxport/machine_i2c_linux.c` | `machine.I2C`, MaixPy's API |
-| the board | `kruxport/kruxport/board.py` | the hammerhead's config (the font, the touch, the pins) |
-| the power | `kruxport/kruxport/pmu.py` | the battery, the USB and the backlight, over the power supply class and the backlight's sysfs |
-| the touch and the buttons | `kruxport/kruxport/touch.py`, `buttons.py` | the firmware's own API, over evdev (the phone's keys instead of GPIO buttons) |
-| the watchdog | `kruxport/kruxport/wdt.py` | nothing is armed (on Linux, closing the watchdog reboots the device) |
-| the auto shutdown | `kruxport/kruxport/auto_shutdown.py` | the firmware's own, with the hardware timer replaced by the clock |
-| the light | `kruxport/kruxport/light.py` | there is no LED to switch |
-| the camera | `kruxport/kruxport/sensor.py` | a stand-in until the V4L2 camera path works |
-
-The firmware now boots: it draws its splash, reads the settings,
-checks the pin and reaches the **login page**.  The last thing it
-wanted was MaixPy's `qrcode` module (the login page shows a QR code),
-which the port still has to provide.
-
-Four MicroPython limits the port has to work around, all found the
-hard way:
-
-* the C stack limit of the unix port is 40 KB and the firmware's
-  import chain is deeper than that: the port raises it to 500 KB
-  (`ports/unix/main.c`).
-* MicroPython has no extended slices (`b[::-1]`): embit's pure-Python
-  secp256k1 is patched (`kruxport/kruxport/secp256k1.py`).
-* MicroPython's *dotted relative* import (`from .util.py_ripemd160
-  import ...`) recurses: the three of them in embit are made absolute.
-* MicroPython's `hashlib` has no `ripemd160` and no `new()`: embit
-  falls back to its pure-Python implementation, and the port adds the
-  cipher mode constants the firmware's settings name
-  (`extmod/modcryptolib.c`, `MICROPY_PY_CRYPTOLIB_CONSTS`).
-
-Two things are known broken and are not worked around yet:
-
-* the classes the port adds to the `machine` module (the timer, the
-  PWM, the watchdog) **segfault** MicroPython when they are
-  constructed -- the `machine.I2C` class in another file is fine, so
-  it is something in `machine_hw_linux.c`.  The firmware needs the
-  timer (its auto shutdown) and the PWM (the backlight), so for now
-  the port replaces the two firmware files that use them.
-* the rootfs build: buildroot's musl toolchain was never built here
-  (the "target-final only" build skips it), so the fragment uses the
-  glibc toolchain that is present.  The rootfs only ships busybox and
-  the hand-built static MicroPython, so the libc in it matters little.
-
-## Space
-
-/tmp is a tmpfs (RAM). Keep only what is in use: the kernel objects
-(719 MB, rebuilt constantly -> /tmp/opencode/ko-cap) and the small
-scratch. The rootfs build lives on the disk (rootfs/build).
-
----
-
-# 2026-10-21 — three fixes, and the finding that the fault is in the kernel
-
-## What was fixed
-
-**1. The ION heap masks were wrong (`cam/ion.h`).**
-
-```
-ION_MASK_SYSTEM   0x00010000    <-- bit 16
-ION_MASK_ADSP     0x00000004
-ION_MASK_IOMMU    0x00000020
-ION_MASK_QSECOM   0x00000080
-```
-
-`heap_id_mask` is a mask of heap **ids**, not of heap types.  The
-system heap is **id 30** (`ION_SYSTEM_HEAP_ID` in
-`include/linux/msm_ion.h`), so its mask is `1 << 30` = `0x40000000`.
-Bit 16 is `ION_CP_WB_HEAP_ID` -- a **8660-only** heap -- and this
-8974 does not have it, so every allocation failed with `ENOENT`:
-
-```
-[ion] ION_IOC_ALLOC (mask 0x10000): No such device
-[client] dma-buf allocation failed
-```
-
-The heaps this kernel *does* register (from the device tree) are
-**8, 22, 25, 27, 28 and 30**.  The camera's buffers work with the
-system heap (30) and with the IOMMU heap (25); heap 8 (the CP MM
-reserve) is too small for a 3280x2464 frame.
-
-**2. The kernel oopsed when the CPP firmware could not be loaded.**
-
-`msm_cpp_cfg()` -> `cpp_load_fw()` dereferenced the firmware
-without checking it:
-
-```c
-rc = request_firmware(&fw, fw_name_bin, dev);
-if (rc) { dev_err(...); }        /* and then: */
-if (NULL != fw) ptr_bin = (uint32_t *)fw->data;
-...
-msm_cpp_write(fw->size, cpp_dev->base);   /* <-- fw is NULL here */
-```
-
-The call trace was `msm_camera_io_w+0x0`.  Our tree now checks the
-firmware and gives up with a message instead (a genuine upstreamable
-bug fix).
-
-**3. The CPP firmware has to be in the kernel's firmware-loader
-path, and it has to be version 1.2.0.**
-
-The imaging server stages the blob in `/lib/firmware` and asks the
-kernel to load it by name (`VIDIOC_MSM_CPP_LOAD_FIRMWARE`); the
-kernel's `request_firmware()` looks for that name under
-`/lib/firmware`, so the name has to be the bare file name.
-
-The version is not a free choice: the kernel checks the message
-against the firmware's stripe base,
-
-```c
-num_stripes = ((msg[12] >> 20) & 0x3FF) + ((msg[12] >> 10) & 0x3FF) + (msg[12] & 0x3FF);
-if ((stripe_base + num_stripes*27 + 1) != new_frame->msg_len) ...
-```
-
-and the captured chromatrix has **5** stripes and **266** words:
-
-```
-130 + 27*5 + 1 = 266      <-- STRIPE_BASE_FW_1_2_0, i.e. firmware 1.2.0
-140 + 27*5 + 1 = 276      <-- 1.4.0
-464 + 27*5 + 1 = 600      <-- 1.6.0
-```
-
-So `cam/fw/cpp_firmware_v1_2_0.fw` is the one, and
-without it the kernel says `invalid fw version 00000000` and then
-`Invalid frame message`.
-
-With the firmware loaded, the chromatrix is **accepted** (status 0)
-and a frame arrives ("GOT A FRAME: index=2") -- still with
-`bytesused=0`.
-
-## The data type: the packets are on virtual channel 1
-
-The CSID's LUT is indexed by the virtual channel, and the captured
-long packet headers say which channel the packets are on:
-
-```
-unmapped long 0x2b010405   -> data type 0x2b, VC 1, 1029 words
-mapped   long 0x1201040a   -> data type 0x12, VC 1, 1034 words
-```
-
-**Both data types arrive on VC 1.**  The vendor's HAL programs the
-LUT with **VC 0 = 0x2b** and leaves VC 1 empty:
-
-```
-CSID0 LUT: vc0 0x0000122b vc1 0x00000000 vc2 0x00000000 vc3 0x00000000,
-           cfg0 0x00000023 cfg1 0x00000013
-```
-
-so the packets are not mapped at all.  What the two configurations
-do:
-
-| the LUT | the packets | the CAMIF |
-|---|---|---|
-| VC0 = 0x2b, VC1 = 0x12 (what we had) | nothing mapped | error status **0xd0** (MIPI status fatal A+B) |
-| VC0 = 0x12, VC1 = 0x12 | the 0x12 packets mapped | error status **0x0** -- the CAMIF is happy, but the frame is still empty |
-
-Routing the ISP-IF at VC 1 (and mapping VC 1 = 0x2b) **crashes the
-kernel** -- do not try it without a way back.
-
-## The finding that matters: the vendor's camera has the same fault
-
-The ROM's own camera app, running under **our** kernel, with the
-**vendor's** HAL:
-
-```
-CSID0 LUT: vc0 0x0000122b vc1 0x00000000, cfg0 0x00000023 cfg1 0x00000013
-CSID0 irq status 0x000002dd, packets 2363548, unmapped long 0x00000000,
-                mapped long 0x00000000, short 0x0000011a, ecc 0, crc 0
-```
-
-**2,363,548 packets, none of them mapped, and exactly the same 282
-"short" packets as our imaging server sees.**  The camera app starts,
-the HAL configures the ISP and the CPP, the sensor streams -- and
-nothing is mapped.
-
-**So the fault is in our kernel, not in our imaging server.**  The
-"282 short packets" is a constant in both, so it is not related to
-the streaming at all.
-
-How the vendor's camera was driven, without a human:
-
-```
-adb shell input keyevent 224                 # wake the screen
-adb shell monkey -p com.google.android.GoogleCamera -c android.intent.category.LAUNCHER 1
-adb shell input keyevent 115                 # the volume key is the shutter
-adb shell am force-stop com.google.android.GoogleCamera   # the close prints the state
-```
-
-The CSID's state is printed when the camera is **closed**, so the
-`force-stop` is what makes the numbers appear.
-
-## Where the next step is
-
-The one measurement that is still missing is the same one in the
-**ROM's kernel** (where the camera works): the CSID's configuration
-and the VFE's registers, taken the same way.  The candidates are
-
-* the CSID's **VC mapping** -- the packets are on VC 1 and the LUT
-  maps VC 0; something in the ROM's kernel (or its device tree)
-  makes them land on VC 0;
-* the CSID's **stream mux** and the "packet size";
-* the **ISP-IF's routing** (which cid the VFE takes).
-
-Our VFE register dump (for the comparison) is in the kernel log
-when the frame ends: `DEBUG: VFE regs:`.
-
-## 2026-10-28 — Stage 1 kernel build and V4L2 measurement
-
-Kernel built from `linux` at `airgap/master-cleanup` (`95f4b0f38ce`) with the
-camera profile, using the host ARM toolchain (`arm-linux-gnueabihf-gcc`), output
-`/tmp/opencode/ko-cam`, image `artifacts/built/boot-cam.img`.  `CONFIG_DEVTMPFS`
-was temporarily enabled (`=y`) for the build; restored to `=n` afterwards, so a
-camera build must re-apply `sed -i 's/^CONFIG_DEVTMPFS=n/CONFIG_DEVTMPFS=y/'`.
-
-Verified in `/tmp/opencode/ko-cam/.config`:
-
-- `CONFIG_MSMB_CAMERA=y`, `CONFIG_IMX179=y`, `CONFIG_MSM_CSID=y`,
-  `CONFIG_DEVTMPFS=y`, `CONFIG_NFC_BCM2079X=y`.
-
-Boot verification (TWRP, uid 0, `/proc/version` contains `95f4b0f38ce`):
-
-- `/dev/video0`, `/dev/video1`, `/dev/v4l-subdev3`, `/dev/v4l-subdev11`,
-  `/dev/v4l-subdev13` all present (devtmpfs is working).
-
-Measurement (binned IMX179 mode, 1640×1232, `PIX_VIEWFINDER`, no CPP,
-`use_vendor_sensor_seq=0` so the mode table + binned settings land
-`0x034c..0x034f = 1640/1232`):
-
-- Sensor streams and is programmed correctly (register read-back matches).
-- `STREAMON` succeeds, but no `DQBUF` ever completes; the client prints
-  `no frame after 5s`.
-- Kernel log: repeated `msm_ispif_read_irq_status: VFE0 pix0 overflow.`
-  (~710 lines per 8 s run), then `msm_isp_close_node: halt timeout` and
-  `msm_vb2_buf_cleanup: NULL stream` on teardown.
-- No `planes[0].bytesused` measurement was possible because no buffer was
-  dequeued; the frame is not merely empty, the VFE never completes a buffer.
-
-Interpretation: the ISP-IF is delivering pixels (the overflow is an input-side
-FIFO overrun in `msm_ispif`, i.e. data is arriving faster than the VFE40
-consumes it), but the VFE does not drain them into the queued buffers.  That
-is a kernel/VFE clock or configuration difference, not a userspace buffer
-problem: the buffers are allocated on heap 30, imported, enqueued and
-streamed, and the same code path that previously produced `GOT A FRAME`
-under the raw `CAMIF_RAW` path now cannot even complete a processed frame.
-
-Chosen path: **Path A (native V4L2 + `camd`)**.  Phase A is not fully closed
-(the processed `PIX_VIEWFINDER` path is still blocked by VFE overflow), but
-the `CAMIF_RAW` path delivers non-empty frames and is the path used by `camd`.
-
-### 2026-10-29 — Stage 3 smoke test passed
-
-`cam/camd.c` (daemon, derived from `imaging8.c`) runs on the device, captures
-QVGA frames (centre-crop 1600×1200, 5×5 box-average to 320×240), and serves
-them over TCP port 8765.  `krux/src/sensor.py` connects to camd and implements
-the MaixPy-compatible API.  `krux/src/image.py` provides `width()`/`height()`.
-
-Smoke test (10 iterations): all 10 frames are 320×240, `get_id()` returns
-`0x179`, no `SensorError`, no oops in dmesg.
-
-### 2026-10-29 — Stage 3 status
-
-**Completed:**
-- camd daemon: captures QVGA frames, serves over Unix socket (not TCP).
-- sensor.py: MaixPy-compatible client of camd.
-- _image native module: Image, width, height, to_bytes, from_nv12, get_statistics, find_qrcodes (quirc integrated).
-- image.py wrapper: re-exports _image.Image with MaixPy-compatible stubs.
-- lcd_bcm.c: lcd_display() accepts _image.Image (RGB565→32-bit).
-- Smoke test: 10 frames 320×240, get_id() → 0x179, no SensorError.
-- 100-frame stability: passed (mem_free stable).
-- to_bytes(): 153,600 bytes (320×240×2 RGB565).
-- get_statistics(): computes l_mean, l_stdev from Y channel (stdev fixed).
-- find_qrcodes(): integrated with quirc (returns [] on blank).
-- Unix socket: no TCP listener (air-gap compliant).
-- CPP streaming: fixed with retry + 50ms delay (0 EAGAIN errors).
-
-**Remaining for full acceptance:**
-- QR decode on actual QR codes (needs bright lighting; image is dark, l_mean≈1-2).
-- Scene-dependent entropy (l_stdev varies but image is dark).
-- 50 reset/run/close cycles (not yet tested).
-- 30-min long-run stability.
-- Air-gap verification (boot air-gap kernel, check no new interface/socket/module).
-- Auto-exposure: add __write_reg support in camd for dynamic exposure/gain.
-- Deploy script: push cpp_firmware (done) and camd (done).
-
-### 2026-10-28 — Stage 2 native POC measurement
-
-Instrumented kernel (`/tmp/opencode/ko-camdbg`, CAMDBG prints in
-`msm_isp_process_done_buf` and `msm_isp_buf_done`) was booted and the binned
-`PIX_VIEWFINDER` path was run.  `dmesg | grep CAMDBG` returned **zero lines**:
-neither `process_done_buf` nor `buf_done` is ever called.  Combined with the
-`VFE0 pix0 overflow` flood, the failing stage for the *processed* path is:
-**frame-done interrupt never reaches the buffer-completion path** (stream
-start/update or WM IRQ mask), so no buffer is completed and
-`planes[0].bytesused` cannot be measured.
-
-The `CAMIF_RAW` path (CPP firmware v1.2.0, binned mode) was then run per
-`cam-plan.md` §A3.  It **succeeds**: `GOT A FRAME: index=2`, the dequeued
-buffer holds ~900 k non-zero bytes, and `/data/local/tmp/frame0.nv12` (2 020 480
-bytes) was saved and pulled to `/tmp/opencode/frame0.nv12`.  No kernel oops and
-no `camif error status 0xd0` in the log.
-
-Stage 2 acceptance is therefore met on the raw path.  The processed
-`PIX_VIEWFINDER` path remains blocked by the VFE overflow and is deferred; the
-raw/CPP path is the one to carry into Stage 3.
-
-> **Path note:** this document predates the source consolidation. The port
-> modules are now in `krux/src/` and `micropython/ports/unix/`; `kruxport/`
-> no longer exists.
-
-## 2026-11-05 — stability and idle power
-
-The camera is usable again after finding four separate issues:
-
-- **CPP debug dump.** The camera kernel's `cpp_dump_frames` module
-  parameter defaults to 64 and writes the first 64 CPP frames to
-  `/data/local/tmp` on every stream start.  It drops ISP frames, keeps
-  the CPU busy and can leave the pipeline with empty buffers.  The
-  init-stub/Python write happens before the parameter is writable; the
-  reliable place is camd immediately after `VIDIOC_STREAMON`.
-- **AE re-ran on every camera page.** The one-shot AE converged to a
-  different exposure on each page (the first page's max exposure
-  decoded; the second page's lower exposure clipped the QR).  It now
-  runs only on the first camera page; later pages keep that exposure.
-  Vol+/− still takes manual control.
-- **Per-frame idle skip.** Skipping the whole ISP/CPP cycle when no
-  frame requests arrive desynchronised the buffers and produced
-  corrupted preview frames.  camd now keeps the cycle running but slows
-  it to ~6 fps and skips only the downscale/AF when idle.
-- **Menu commit rate.** The LCD quiet-period commit thread ran every
-  50 ms even for a static menu.  It is now 200 ms (5 fps); the camera
-  preview and QR pages still commit explicitly at their own rate.
-
-The AF now does a full sweep on the first scan after boot and a local
-±5-step fine sweep around the last good focus on later scans, falling
-back to a full sweep when the local best is weak or at the window edge.
+`CAP_CFG: num=1 cmd=1` (START) for both streams.
+
+## What it means
+
+1. **The vendor preview runs PIX_VIEWFINDER → CPP.**  `divert=1` on the
+   preview stream hands the ISP's buffer to the CCP.  That is why the
+   CPP message we captured is a **1280x960** message: its input is the
+   processed PIX frame, not the raw.  Our CAMIF_RAW+CPP pipeline fed it
+   the **3280x2464 raw** — a 2.56x mismatch — and that is the band.
+2. Our daemon asked for the stream differently: **NV12** not NV21,
+   **y_only=1** not 0, **drop=0** not 1, the **CBCR** plane format (4)
+   not CRCB (3), the chroma scan lines 480 not 512, and **no divert**
+   for the PIX (the divest block was gated on CAMIF_RAW).
+3. Replicating the vendor's request (`stream=1`) made the VFE accept the
+   stream and **the CPP process the PIX frames** (193 `cpp_notify_frame_done`
+   in ten seconds) — with the NV21/plane geometry the
+   `image master 0 bus overflow` disappeared.
+
+## What remains
+
+The daemon still gets no DQBUF on that stream, even though the CPP is
+processing.  The remaining work is the **output path** (the CPP's output
+buffer → the VFE's vb2 completion: `msm_isp_process_done_buf`,
+`processed_divert`, the buffer-manager/vb2 pairing) and the residual
+`VFE0 pix0 overflow` (5 at start; the SFE `0x444`/`0x638`/the `0x400`
+preview markers are the next comparison).  The daemon must also read the
+CPP's output as the **1280x960** the vendor's message produces, and skip
+the Bayer demosaic (the PIX/CPP output is already luma).
+
+The working state is restored: `camd 3c6eea90`, `stream=0`,
+`capture_cfg=1`, CAMIF_RAW + CPP, frames flowing, `queue full: 0`.
+
+## The PIX path works (2026-11-11)
+
+The remaining blocker from the request capture -- "the CPP processes the
+PIX frames but no DQBUF arrives" -- was two separate things, and neither
+was the buffer plumbing.
+
+### 1. The CPP output has its own geometry
+
+The daemon's S_FMT and its 8 buffers are sized for the sensor's
+**3280x2464** allocation, but the PIX/CPP output is a **packed 1280x960
+luma block at offset 0**, written with a **1280-byte stride**.  The
+daemon read it with the allocation's 3280-byte stride, so the
+1,228,800-byte picture was re-wrapped across exactly
+`1280*960/3280 = 374` buffer rows: the "band" at the top of the
+`fov=0` 2160x2160 crop (374 buffer rows = 222 crop rows, which is what
+`scan_full.raw` showed).  The content began at byte 499,120 =
+`32*3280 + 560` -- the crop's own offset -- and the reconstructed block
+was a coherent image.  That arithmetic identified the layout without
+any vendor-side capture.
+
+The fix is a `read_stride` (1280 on PIX, `cam->width` on the raw paths),
+a PIX window of 1280x960 at (0,0), and no Bayer demosaic: the output is
+already luma.  Rotated 90 degrees CCW the frame is exactly **960x1280**,
+1:1, with no resampling -- the same portrait size as `fov=1` and the
+decoder's `K_QUIRC_MAX_IMAGE_DIM`.
+
+### 2. The implementation details the vendor request implies
+
+- PIX needs all three CPP gates (the `isp_start` init, the
+  `PRIV_STREAM_ON` firmware load, and the per-frame chromatrix); the
+  earlier `isp_stream_src == CAMIF_RAW` guards were removed.
+- The per-frame register update (`CONFIG_DONE`) was inside the divert
+  block; the PIX path needs it too, both after the initial
+  configuration and after each `isp_replay`.
+- `epoch_line1 = 0` on PIX, as captured from the vendor.
+- The preview message (`cam_chromatrix.h`, 266 words) is the one the
+  vendor's preview sends, and it is written for this 1280x960 input.
+
+### 3. Focus: the AF gate was too high for a dim room
+
+The sweep only ran when the published frame's mean was at least 20.
+The processed PIX path is darker than the raw one (and the finder is
+used in a dim room), so the mean sat at 17-19 and the lens never moved
+from the default step 7 -- the QR looked soft even though the geometry
+was right.  The gate is now 10; the sharpness score is divided by the
+mean, so dim frames compare fairly.  On this scene the sweep chose
+step 24, where the coarse score was 4.5x the other steps.
+
+### Baked as the default
+
+- `stream` defaults to 1 (PIX_VIEWFINDER).
+- PIX forces the full sensor mode: with the binned 1640x1232 input the
+  CPP rejects the message (`msm_cpp_cfg: cannot send frame to
+  hardware`, then its processing queue fills) and the stream wedges
+  until a reboot.  The vendor's request is a full-sensor one.
+- `cycle` defaults to 1 (the per-frame vendor cycle), which is what the
+  full-resolution mode needs.
+
+### Verified on the device
+
+- Full-frame preview: clean, no stripes, no band.
+- QR: `Tools -> Datum Tool -> Via Camera` decodes
+  `UR:crypto-psbt`, binary **447 bytes PSBT**.
+- Entropy: `New Mnemonic -> Via Camera -> 12 words -> Proceed`
+  reports **"Good entropy"**, Shannon **5.2 bits/px** (threshold 3),
+  pixel deviation **38** (threshold 10).
+- Steady state after a clean boot: `pix0 overflow` 0,
+  `process queue full` 0, no `DQBUF` failures.
+
+The working state is the project tree: `camd 99ef6da3`, state
+`stream=1 mode=1 cycle=1 capture_cfg=0`.  The device runs the tree
+kernel `cf9fd9c2edf` (`fastboot boot /tmp/boot-dev.img`); nothing was
+flashed, and the QR display phone (the LG) was read from its screen
+only.

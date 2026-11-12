@@ -39,3 +39,9 @@ sync*.*
 # local agent state
 .opencode/
 rootfs/stub/krux-init
+
+# machine-written session logs: the history lives in the git log, not in
+# the tree, so that a reader does not have to wade through 16,000 lines
+# of it to find the current state
+docs/archive/project-log.md
+docs/archive/compaction-log.md

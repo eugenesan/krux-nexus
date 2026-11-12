@@ -34,7 +34,7 @@
 - [ ] 50 reset/run/close cycles and 30-min stability on the chosen path
 - [x] Decide whether PIX is needed for 20 fps/10 fps animated UR; CAMIF_RAW+CPP at ~15 fps is the chosen path for now
 
-### Stage 4 acceptance (docs/cam-bringup-stage4.md)
+### Stage 4 acceptance (docs/archive/cam-bringup-stage4.md)
 - [ ] QR decode on real QR code (use a lit LCD/printed code; fixed vendor exposure for now)
 - [ ] Scene-dependent entropy (l_stdev varies with scene)
 - [ ] 50 reset/run/close cycles (no crash, no camif error)
@@ -127,5 +127,5 @@
 
 - [ ] Update docs/cam-state.md with final Stage 4 results
 - [ ] Update docs/cam-plan.md with final camera decisions
-- [ ] Update docs/project-log.md with completion entry
+- [ ] Update docs/cam-state.md with completion entry (the project log is the git history now)
 - [ ] Final review of all docs for accuracy

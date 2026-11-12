@@ -3,8 +3,9 @@
 Everything below was measured on the device, not inferred. Where a claim rests
 on a source tree rather than on hardware, it says so.
 
-Full chronological detail, including every wrong turn, is in
-[`airgap-standalone.log.md`](airgap-standalone.log.md) (69 entries).
+Full chronological detail, including every wrong turn, was kept in
+`airgap-standalone.log.md` (69 entries); that file is not in the tree any
+more, and the git history has it.
 
 ---
 
