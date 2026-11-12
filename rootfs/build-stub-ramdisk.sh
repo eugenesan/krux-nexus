@@ -31,13 +31,19 @@
 # replaced when --force is given.
 #
 # Usage:
-#   ./build-stub-ramdisk.sh [--force] [--bundle] [TWRP.img]
+#   ./build-stub-ramdisk.sh [--force] [--bundle] [--standard] [TWRP.img]
 #
 # --bundle copies MicroPython, Krux and embit into /opt/krux in the
 # ramdisk, so the boot image carries a read-only firmware instead of
-# loading it from /data/krux.  It is for a finished, production device:
-# during development the firmware is deployed to /data/krux, which the
-# init stub prefers, so a push always takes effect.
+# loading it from /data/krux.  It is for the standard delivery mode:
+# during development the firmware is deployed to /data/krux, and the
+# development stub runs that copy, so a push always takes effect.
+#
+# --standard builds the init stub for the standard delivery mode: the
+# firmware is the read-only copy in the ramdisk, it does not start by
+# itself, and the device comes up in TWRP.  The firmware is then
+# started with the volume up key during the boot, or with
+# /sbin/start-krux from adb or from TWRP's terminal.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
