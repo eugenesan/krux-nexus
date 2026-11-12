@@ -50,6 +50,15 @@ Two follow-on fixes from testing it:
   mean is smoothed again (it is the noisy metric); P95 stays raw.
   This is what stopped the hunting on the entropy page, which calls
   the follow on every frame.
+- **Entropy's own cycle.**  The log showed mean 87 while 86% of the
+  frame was clipped: the exponential mean filter lagged, the 30%
+  clipped-high step overshot, and the lock's `clip <= 3%` condition
+  could never be met by a paper QR, whose white modules legitimately
+  clip.  Entropy now uses a median of the last three means (no lag),
+  no clipped-high guard (the guard is for the QR P95 metric), a 15%
+  step, and a wider band.  Verified: entropy converges to mean 125 and
+  locks; a bright scene descends monotonically; QR converges in 7
+  steps to p95 202 and locks.
 
 ## The on-demand stream was tried and reverted (2026-11-12)
 
