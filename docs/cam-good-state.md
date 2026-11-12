@@ -43,12 +43,11 @@ bash scripts/deploy-firmware.sh      # copies cam/camd to /data/krux
 ```
 
 The camera runs the vendor processed preview (PIX_VIEWFINDER, full
-sensor mode).  Before the on-demand change the stream ran
-continuously; the binary above (`99ef6da3...`) is that build.  The
-on-demand build keeps the same preview and only stops the sensor when
-nothing is reading (see [cam-state.md](cam-state.md)); setting
-`/data/krux/state/stream_idle` to 0 restores the continuous stream
-without changing the binary.
+sensor mode) and the stream runs continuously.  The binary above
+(`99ef6da3...`) is the current one: the on-demand experiment was
+reverted because a long sensor pause left the ISP/CPP out of frame
+sync (see [cam-state.md](cam-state.md)).  This is again the build to
+come back to.
 
 ## The boot images
 

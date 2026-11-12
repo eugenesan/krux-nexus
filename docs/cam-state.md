@@ -12,35 +12,27 @@ This document was `milestone-2026-11-10-snapshot2.md`; it took the name
 of `cam-state.md` so that there is exactly one canonical camera document.
 The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
-## The stream is on demand (2026-11-12)
+## The on-demand stream was tried and reverted (2026-11-12)
 
-The sensor is stopped when nothing has asked for a frame for about
-three seconds, and started again by the first request.  The switch is
+The sensor was stopped when nothing had asked for a frame for about
+three seconds and started again by the first request.  The switch was
 the sensor's own stream bit (`0x0100`), the same pause the autofocus
-makes around a lens move -- **not** `STREAMOFF`: every node, buffer and
-ISP/CPP configuration stays open.
+makes around a lens move; every node, buffer and ISP/CPP configuration
+stayed open.
 
-Why: the frames were the idle cost.  With the stream running (no page
-open) the system spent ~38 % of the CPUs on the ISP/CPP and the
-per-frame kernel work and the phone was warm on a table; with it
-paused the same measurement is ~6 %.
+It cut the idle cost as intended -- system time ~38 % -> ~6 %, and the
+thermals 7-8 C cooler -- but it **broke the preview**.  After a pause
+and resume the ISP/CPP came back out of frame sync: random horizontal
+overlap whose width changed and drifted across the preview every few
+seconds, and the auto-exposure pumping as it chased the bad frames.
+The brief pause the autofocus uses is fine; a long one is not.
 
-Measured on the device: the daemon logs `[stream] sensor on` on the
-first frame request and `[stream] sensor off (no client)` about three
-seconds after the last one; frames stop and resume with live content
-(a request returns seq N+1, not the pre-pause picture).  At idle the
-thermals fell with it: tsens 54 -> 46 C, the PMIC 45 -> 38 C, and the
-CPU spends most of its time at 300 MHz.
-
-The knob is `/data/krux/state/stream_idle`: 1 (default) is on demand,
-0 keeps the sensor streaming.  See
-[cam-good-state.md](cam-good-state.md) for the state to revert to.
-
-**The teardown rule:** never stop the service while the sensor is
-streaming -- the ISP keeps its write masters and the next start
-overflows into the watchdog (the phone hangs; observed).  Killing the
-daemon while the sensor is paused is safe (observed).  The deploy
-script waits for the pause; a manual `setprop ctl.stop krux` must too.
+**It is reverted.**  `cam/camd.c` is the known-good build again (md5
+`99ef6da3275fdb882efe9cbf18ed67fe`) and the stream runs continuously.
+The idle heat is therefore back, and it is an open problem: the way to
+solve it is at the process/pipeline level (a clean stop/start of the
+whole daemon, or a very low idle frame rate), not by pausing the sensor
+under a running ISP.
 
 ## The commits
 
