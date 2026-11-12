@@ -295,7 +295,67 @@ document, give `docs/README.md` real links and a short "where to start"
 section, and fix the already-broken links (`README.md:11` points at a
 deleted file).
 
-## 5. Execution order
+## 5. The standard mode, as built and tested (2026-11-12)
+
+The standard delivery mode works on the device.  What it took:
+
+**The init stub (`rootfs/init-stub.c`)**
+
+* `standard_image()` -- the mode the image was built for
+  (`build-stub-init.sh --standard`, passed on by
+  `build-stub-ramdisk.sh --standard`).
+* `autostart_the_firmware()` -- whether the firmware starts at boot.
+  The standard image says no; a file `/data/krux/state/autostart` with
+  a 1 there says yes, so one image can be tried both ways.  The
+  *copy* of the firmware follows the image, not this flag: a standard
+  image always runs the read-only copy in the ramdisk.
+* The volume up key means different things in the two modes: in the
+  development image it is TWRP (as it always was), in the standard
+  image it is the firmware, and the default is TWRP.  The key is also
+  read as a *state* (`EVIOCGKEY`), not only as an event: a key held
+  from power-on produces no press event, and the stub would have
+  missed it.
+* `krux-init start` -- a client that starts the firmware on a running
+  image.  It stops the "krux" service (which is TWRP by then) and
+  starts the firmware.  `/sbin/start-krux` is the script that calls
+  it; it hands the work to a new session (`setsid`), because stopping
+  the service ends TWRP and with it the shell that runs the script
+  when that shell is TWRP's own terminal.
+
+**Two bugs that cost an afternoon**
+
+* `system()` cannot be used in this ramdisk: there is **no `/bin/sh`**,
+  only `/sbin/sh`.  Every `system()` call failed silently -- which
+  meant the stub had *never* stopped TWRP.  The stub now forks and
+  execs the program itself (`run_program`).
+* Android's `setprop ctl.stop <service>` is **two** arguments: the
+  property is `ctl.stop` and the value is the service's name.  Passing
+  "ctl.stop krux" as one argument makes toybox refuse the call.
+
+**What was measured**
+
+| | result |
+|---|---|
+| the standard image | boots into TWRP 3.7.0 (the menu draws, `/data` is mounted, adb works) |
+| the volume up trigger | starts the bundled firmware; TWRP never comes up |
+| `/sbin/start-krux` | stops TWRP and starts the bundled firmware, from adb or from TWRP's terminal |
+| the bundled firmware | runs from the read-only `/opt/krux`; the data partition holds the settings only |
+| XZ ramdisk | 8.7 MB against 14.5 MB for gzip; it boots and works on the `fastboot boot` path |
+| the wipe | removes `/data/krux` (36 entries); the device then comes up with the same firmware and no state |
+
+**Two things to know about the display**
+
+* The framebuffer is **double buffered by panning**: the port's `lcd`
+  module draws into the buffer at `pan_offset` and pans the display to
+  it.  A framebuffer dump therefore shows *two* pictures, and the one
+  in the first 1920 rows may be stale -- after TWRP has run, that is
+  exactly what happens: TWRP's last frame is still in the first
+  buffer while the firmware draws in the second.  The panel shows the
+  firmware; the dump does not.
+* The panel handover works.  It looked broken until the second buffer
+  was read.
+
+## 6. Execution order
 
 1. `docs/packaging-plan.md` (this document).
 2. Task 2(c) — cleanup and the entry point.  Highest value per minute:

@@ -10,9 +10,21 @@
 # /sbin/krux-init in the stub ramdisk.
 #
 # Usage:
-#   ./build-stub-init.sh [output]
+#   ./build-stub-init.sh [--standard] [output]
+#
+# --standard builds the stub for the standard delivery mode: the
+# firmware is not started at boot, and the device comes up with TWRP
+# instead.  The data partition can override it at run time (see
+# init-stub.c).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
+STANDARD=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--standard) STANDARD=1; shift ;;
+		*) break ;;
+	esac
+done
 OUT=${1:-$HERE/stub/krux-init}
 # The host's hard-float sysroot.  The Debian armel (soft-float)
 # sysroot and the Linaro / ARM GNU toolchains are obsolete; see
@@ -23,9 +35,13 @@ CC=${CC:-arm-linux-gnueabihf-gcc}
 [ -d "$SYSROOT" ] || { echo "no sysroot at $SYSROOT (see TOOLCHAIN.md)" >&2; exit 1; }
 
 mkdir -p "$(dirname "$OUT")"
+DEFS=""
+[ "$STANDARD" = "1" ] && DEFS="-DDEFAULT_STANDARD=1"
+
 $CC -Os -static -s -Wall \
     -march=armv7-a -mfpu=neon -mfloat-abi=hard \
     --sysroot="$SYSROOT" \
+    $DEFS \
     -o "$OUT" \
     "$HERE/init-stub.c" -lpthread
 

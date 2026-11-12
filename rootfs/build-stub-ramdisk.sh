@@ -43,6 +43,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 FORCE=""
 BUNDLE=${BUNDLE:-0}
+# The standard delivery mode: the firmware is not started at boot.
+STANDARD=${STANDARD:-0}
 # gzip (default TWRP), xz (best size; needs CONFIG_RD_XZ), lzma or lz4.
 #
 # The device boots the stock bootloader, and IT decides how to unpack
@@ -55,6 +57,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--force)  FORCE=1; shift ;;
 		--bundle) BUNDLE=1; shift ;;
+		--standard) STANDARD=1; shift ;;
 		*)        break ;;
 	esac
 done
@@ -79,7 +82,11 @@ mkdir -p "$WORK/rd"
 ( cd "$WORK/rd" && gzip -dc ../ramdisk.gz | cpio -idm --quiet )
 
 # 3. our stub in place of TWRP's recovery
-[ -x "$HERE/stub/krux-init" ] || { echo "no stub/krux-init (build it first)" >&2; exit 1; }
+# The stub is built here, so that the mode of the image and the mode of
+# the stub cannot drift apart.
+STUB_FLAGS=""
+[ "$STANDARD" = "1" ] && STUB_FLAGS="--standard"
+bash "$HERE/build-stub-init.sh" $STUB_FLAGS "$HERE/stub/krux-init" >/dev/null
 # Prune what the stub never uses.  TWRP ships terminfo (6.6 MB) and a
 # Python 3.10 tree (3.2 MB); the stub runs neither, and the boot
 # partition is tight.
@@ -107,6 +114,24 @@ fi
 mv "$WORK/rd/sbin/recovery" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
+# The way the standard image is started without a reboot: from adb or
+# from TWRP's own terminal.
+cat > "$WORK/rd/sbin/start-krux" <<'SCRIPT'
+#!/bin/sh
+# start-krux -- start the firmware on a running standard image.
+#
+# The standard image comes up with TWRP: the stub has become the
+# recovery service, and the firmware waits to be asked.  This script
+# is the ask.  It works from adb and from TWRP's own terminal.
+#
+# The work is handed to a new session first: stopping the "krux"
+# service ends TWRP, and with it the shell that runs this script when
+# that shell is TWRP's terminal.  A new session is not in the service's
+# process group, so it survives.
+setsid /sbin/krux-init start >/dev/null 2>&1 &
+echo "the firmware is starting"
+SCRIPT
+chmod 755 "$WORK/rd/sbin/start-krux"
 cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
 
 # 3b. the camera's firmware.

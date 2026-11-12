@@ -39,6 +39,7 @@
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <linux/input.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -48,7 +49,7 @@
 #define KEYS_NODE "/dev/input/event2"
 
 /* how long to wait for the key, in milliseconds */
-#define KEY_WINDOW_MS 4000
+#define KEY_WINDOW_MS 8000
 
 /* how long to wait for adb before touching anything, in seconds */
 #define USB_WAIT_S 8
@@ -92,6 +93,86 @@
 /* TWRP's own user interface, which we keep for the volume up key */
 #define RECOVERY_BIN "/sbin/recovery.stock"
 
+/* The delivery mode.
+ *
+ * The development image starts the firmware at boot: the ramdisk is
+ * small, the firmware lives on the data partition and a push over adb
+ * is all it takes to change it.
+ *
+ * The standard image does not.  It carries the firmware read-only in
+ * the ramdisk, leaves the data partition for settings only, and waits
+ * for the volume up key -- or for a script to ask it -- before it runs
+ * anything of its own.  The mode is chosen when the stub is built, and
+ * the data partition can override it, so one image can be tried both
+ * ways: a file with a 1 there means "start the firmware at boot", a 0
+ * means "wait to be asked". */
+#define AUTOSTART_FILE "/data/krux/state/autostart"
+
+/* True when the image is a standard one: the firmware is read-only in
+ * the boot image and the data partition holds the settings only. */
+static int standard_image(void) {
+#ifdef DEFAULT_STANDARD
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+/* True when the firmware is started at boot; the standard image says
+ * no unless the data partition says otherwise. */
+static int autostart_the_firmware(void) {
+    int autostart = !standard_image();
+    FILE *f = fopen(AUTOSTART_FILE, "r");
+
+    if (f != NULL) {
+        int v = -1;
+
+        if (fscanf(f, "%d", &v) == 1 && (v == 0 || v == 1)) {
+            autostart = v;
+        }
+        fclose(f);
+    }
+    return autostart;
+}
+
+/* Run a program and wait for it.
+ *
+ * There is no /bin/sh in this ramdisk -- only /sbin/sh -- so system()
+ * cannot be used: it fails every time, and the program it was meant
+ * to run never happens. */
+static int run_program(const char *path, char *const argv[]) {
+    pid_t pid;
+    int status = -1;
+
+    pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        execv(path, argv);
+        _exit(127);
+    }
+    if (waitpid(pid, &status, 0) == pid && WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+}
+
+/* Stop an init service by name.
+ *
+ * "setprop ctl.stop <service>" is two arguments: the property is
+ * "ctl.stop" and the value is the service's name.  init watches the
+ * property and stops the service. */
+static int stop_service(const char *name) {
+    char *argv[4];
+
+    argv[0] = (char *)"setprop";
+    argv[1] = (char *)"ctl.stop";
+    argv[2] = (char *)name;
+    argv[3] = NULL;
+    return run_program("/sbin/setprop", argv);
+}
+
 static void say(const char *what) {
     fprintf(stderr, "init-stub: %s\n", what);
 }
@@ -102,6 +183,26 @@ static void say(const char *what) {
  *
  * The window is short: the key has to be held while the device comes
  * up, which is when the service starts. */
+/* Is the volume up key held down right now?
+ *
+ * The event is only reported when the key is *pressed*, so a key that
+ * was already held when the device came up would never be seen.  The
+ * ioctl that reports the current key state does see it: it is a bitmap
+ * of every key code the driver knows, and the volume keys are in it. */
+static int the_key_is_down(int fd) {
+    unsigned char state[128];
+
+    memset(state, 0, sizeof(state));
+    if (ioctl(fd, EVIOCGKEY(sizeof(state)), state) < 0) {
+        return 0;
+    }
+    /* the bitmap is indexed by the key code: bit 0 is KEY_RESERVED */
+    if (KEY_VOLUMEUP / 8 >= (int)sizeof(state)) {
+        return 0;
+    }
+    return (state[KEY_VOLUMEUP / 8] >> (KEY_VOLUMEUP % 8)) & 1;
+}
+
 static int wait_for_the_key(int window_ms) {
     struct pollfd pfd;
     int fd;
@@ -111,6 +212,14 @@ static int wait_for_the_key(int window_ms) {
     if (fd < 0) {
         say("no key device");
         return 0;
+    }
+
+    /* already held?  Then it was pressed before this program started
+     * and no event is coming. */
+    if (the_key_is_down(fd)) {
+        say("the volume up key is already held");
+        close(fd);
+        return 1;
     }
 
     while (elapsed < window_ms) {
@@ -124,7 +233,7 @@ static int wait_for_the_key(int window_ms) {
             n = read(fd, &ev, sizeof(ev));
             if (n == (ssize_t)sizeof(ev)) {
                 if (ev.type == EV_KEY && ev.code == KEY_VOLUMEUP && ev.value != 0) {
-                    say("the volume up key is held: TWRP it is");
+                    say("the volume up key is held");
                     close(fd);
                     return 1;
                 }
@@ -290,7 +399,7 @@ static void *start_the_firmware(void *arg) {
      * 140 ms.
      *
      * The absolute path: a service's PATH is not the init's. */
-    if (system("/sbin/setprop ctl.stop recovery") != 0) {
+    if (stop_service("recovery") != 0) {
         say("could not stop the recovery");
     }
     sleep(2);
@@ -303,21 +412,33 @@ static void *start_the_firmware(void *arg) {
      * boot image is the fallback for a production image with no
      * development tree on the data partition. */
     {
-        const char *dir = FIRMWARE_DIR;
+        const char *dir;
         char binary[64];
         char main_py[64];
+        int on_data = access(FIRMWARE_DIR "/micropython", X_OK) == 0 &&
+                      access(FIRMWARE_DIR "/boot.py", R_OK) == 0;
+        int bundled = access(BUNDLED_FIRMWARE_DIR "/micropython", X_OK) == 0 &&
+                      access(BUNDLED_FIRMWARE_DIR "/boot.py", R_OK) == 0;
 
-        if (access(FIRMWARE_DIR "/micropython", X_OK) == 0 &&
-            access(FIRMWARE_DIR "/boot.py", R_OK) == 0) {
-            dir = FIRMWARE_DIR;
-            say("using the firmware on the data partition");
-        } else if (access(BUNDLED_FIRMWARE_DIR "/micropython", X_OK) == 0 &&
-                   access(BUNDLED_FIRMWARE_DIR "/boot.py", R_OK) == 0) {
+        if (standard_image() && bundled) {
+            /* The standard image: the read-only copy in the boot
+             * image is the firmware; the data partition holds the
+             * settings and nothing else. */
             dir = BUNDLED_FIRMWARE_DIR;
             say("using the firmware bundled in the boot image");
+        } else if (on_data) {
+            /* The development copy on the data partition wins: it is
+             * what deploy-firmware.sh pushes, so it is the only tree
+             * whose code changes ever take effect. */
+            dir = FIRMWARE_DIR;
+            say("using the firmware on the data partition");
+        } else if (bundled) {
+            dir = FIRMWARE_DIR;
+            say("using the firmware on the data partition");
         } else {
             say("no firmware: neither the data partition nor the boot "
                 "image carries one");
+            dir = FIRMWARE_DIR;
         }
         snprintf(binary, sizeof(binary), "%s/micropython", dir);
         snprintf(main_py, sizeof(main_py), "%s/boot.py", dir);
@@ -360,14 +481,31 @@ static void mount_the_data(void) {
         /* it may be there but not mounted */
     }
     mkdir("/data", 0755);
-    if (mount("/dev/block/bootdevice/by-name/userdata", "/data", "ext4", 0, NULL) != 0) {
+    if (mount("/dev/block/bootdevice/by-name/userdata", "/data", "ext4", 0, NULL) != 0 &&
+        errno != EBUSY) {
+        /* EBUSY means it is already mounted, which is the normal case
+         * when TWRP has mounted it for us. */
         say("could not mount /data");
     }
 }
 
 int main(int argc, char **argv) {
     (void)argc;
-    (void)argv;
+
+    /* A client: "krux-init start" starts the firmware on a running
+     * image.  It is how the standard image is started from adb or from
+     * TWRP's terminal, without a reboot. */
+    if (argc > 1 && strcmp(argv[1], "start") == 0) {
+        /* TWRP is the service this stub became, so it is the service
+         * to stop; the two would otherwise fight over the panel. */
+        if (stop_service("krux") != 0) {
+            say("could not stop TWRP");
+        }
+        sleep(2);
+        mount_the_data();
+        start_the_firmware(NULL);
+        return 0;
+    }
 
     /* let the USB gadget and adb come up first: the device has to be
      * debuggable even if the firmware goes wrong */
@@ -375,13 +513,27 @@ int main(int argc, char **argv) {
 
     mount_the_data();
 
-    if (wait_for_the_key(KEY_WINDOW_MS)) {
-        /* the volume up key: TWRP, as it always was */
-        start_twrp(NULL);
+    if (autostart_the_firmware()) {
+        /* the development image: without a key the firmware starts,
+         * and the volume up key is TWRP, as it always was */
+        if (wait_for_the_key(KEY_WINDOW_MS)) {
+            start_twrp(NULL);
+            return 0;
+        }
+        start_the_firmware(NULL);
         return 0;
     }
 
-    /* the default: our firmware */
-    start_the_firmware(NULL);
+    /* The standard image: the device comes up with TWRP, and the
+     * firmware is started on request -- the volume up key during this
+     * window, or a script (see /sbin/start-krux). */
+    if (wait_for_the_key(KEY_WINDOW_MS)) {
+        say("the volume up key is held: the firmware it is");
+        start_the_firmware(NULL);
+        return 0;
+    }
+    say("no key: TWRP it is.  Hold the volume up key while it boots, "
+        "or run /sbin/start-krux, for the firmware.");
+    start_twrp(NULL);
     return 0;
 }
