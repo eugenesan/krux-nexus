@@ -28,7 +28,9 @@ paused the same measurement is ~6 %.
 Measured on the device: the daemon logs `[stream] sensor on` on the
 first frame request and `[stream] sensor off (no client)` about three
 seconds after the last one; frames stop and resume with live content
-(a request returns seq N+1, not the pre-pause picture).
+(a request returns seq N+1, not the pre-pause picture).  At idle the
+thermals fell with it: tsens 54 -> 46 C, the PMIC 45 -> 38 C, and the
+CPU spends most of its time at 300 MHz.
 
 The knob is `/data/krux/state/stream_idle`: 1 (default) is on demand,
 0 keeps the sensor streaming.  See
