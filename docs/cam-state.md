@@ -67,6 +67,10 @@ Two follow-on fixes from testing it:
   only rises now when twice the current level is still below the
   target, which is the highest level that does not overshoot.
 
+**Verified in real light (2026-11-12):** the QR page detects a code in
+a dark room after about two AE/AF cycles.  The AE settles and holds;
+there is no brightness hunting in either the QR or the entropy preview.
+
 ## The on-demand stream was tried and reverted (2026-11-12)
 
 The sensor was stopped when nothing had asked for a frame for about
