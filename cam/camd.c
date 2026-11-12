@@ -3941,6 +3941,19 @@ proc_done:
 			struct timespec ts = { 0, 100 * 1000 * 1000 };
 			nanosleep(&ts, NULL);
 		}
+		/*
+		 * With no client the VFE can complete the same buffers at
+		 * its own rate, and the loop then runs flat out for nothing
+		 * (measured at ~180 completions a second).  Keep the
+		 * DQBUF/requeue -- the queue must keep rotating or the next
+		 * client is starved -- but give the CPU back between
+		 * frames.  The first request clears idle and the delay with
+		 * it.
+		 */
+		if (idle > 3) {
+			struct timespec ts = { 0, 20 * 1000 * 1000 };
+			nanosleep(&ts, NULL);
+		}
 		p7 = now_ns();
 
 		{
