@@ -56,12 +56,12 @@ on-demand stream):
 
 | image | bytes | sha256 |
 |---|---|---|
-| `artifacts/built/boot-dev.img` | 20,205,568 | `dd82f3cabdca3549aba7fa78c33d2f36f844d02bbbb8c0e6b00b8ab5c5b00c9b` |
-| `artifacts/built/boot-standard-gzip.img` | 21,764,096 | `84f19141d511ad16469ca10dca7ca1c53132c1343319185df2030ebe9d9930f3` |
+| `artifacts/built/boot-dev.img` | 20,203,520 | `d28822745a77e59926535eb12ac57aa7a585357cbaf604517c0358029b42e57c` |
+| `artifacts/built/boot-standard-gzip.img` | 21,764,096 | `dc4c1b1aa84d95c2528ab0f5df72e1b677c0adac70840cfefed9334ef02a8695` |
 
 The development image runs the firmware from `/data/krux`; the
 standard image carries a read-only copy of it (`opt/krux`), verified to
-be the same `camd` (md5 `471b6d4b...`) and the same `pmu.py`.
+be the same `camd` (md5 `99ef6da3...`) and the same `pmu.py`.
 
 The scripts that check the camera, on the device:
 
