@@ -45,3 +45,6 @@ rootfs/stub/krux-init
 # of it to find the current state
 docs/archive/project-log.md
 docs/archive/compaction-log.md
+
+# the compaction plugin writes this one too
+docs/compaction-log.md
