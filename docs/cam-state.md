@@ -12,6 +12,21 @@ This document was `milestone-2026-11-10-snapshot2.md`; it took the name
 of `cam-state.md` so that there is exactly one canonical camera document.
 The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
+## The idle loop gives the CPU back (2026-11-12)
+
+With no client the VFE completes the same buffers at its own rate
+(~180 a second) and the capture loop ran flat out for nothing.  It now
+sleeps 20 ms between frames once there has been no request for a few
+frames, while still doing the DQBUF/requeue (the queue must rotate, or
+the next client is starved).  Measured on the device: `camd` **63 % ->
+24 % of one core**, system time **33 % -> 13 %**, with the stream and
+frame phase untouched.
+
+The volume keys are read in every image again: the 0.4 ms a read saved
+nothing next to the daemon's idle cost, and they are the exposure
+control on the camera pages.  The entropy page now uses them too (it
+had only the touch strip).
+
 ## Idle frame rate: tried and disabled (2026-11-12)
 
 The idea was to keep the stream running and lengthen the sensor's frame
