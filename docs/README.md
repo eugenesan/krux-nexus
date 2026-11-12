@@ -71,3 +71,14 @@ The raw evidence that is still worth having lives in
 ```sh
 python3 scripts/misc/check-doc-links.py docs
 ```
+
+## Running the Krux test suite
+
+```sh
+scripts/misc/run-krux-tests.sh
+```
+
+One upstream test — the datum tool's "scan a QR" abort test — allocates
+without bound; it grows past 1.5 GB and keeps going, and it is a known
+problem in the krux-mobile tree too.  The runner caps the address space
+and leaves that test out, so a test run cannot take the machine down.
