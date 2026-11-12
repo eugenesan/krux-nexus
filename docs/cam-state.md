@@ -12,6 +12,32 @@ This document was `milestone-2026-11-10-snapshot2.md`; it took the name
 of `cam-state.md` so that there is exactly one canonical camera document.
 The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
+## Idle frame rate: tried and disabled (2026-11-12)
+
+The idea was to keep the stream running and lengthen the sensor's frame
+(VTS) when no client is reading: the sensor's VTS is 16-bit, and at
+260 MHz with a 3280-pixel line the floor is ~1.2 fps (`0xffff` lines).
+No frame phase would be interrupted, so no stitched frames.
+
+It does not work, for two reasons the device showed:
+
+- **The ISP is configured for the mode's frame.**  The CAMIF/VFE run
+  with `lines_per_frame` 2464, not the sensor's VTS.  At `0xffff` the
+  long sensor frame is cut into partial frames: the daemon logged
+  ~1,900 "frames" in 10 s, the capture loop ran faster, and the CPU
+  rose instead of falling.  Going that low needs the ISP geometry
+  (`lines_per_frame`/`last_line`, and the per-frame cycle) changed with
+  the VTS.
+- **The idle heat is not the sensor rate.**  With no client the daemon
+  completes ~180 duplicate/empty buffers per second (`bytesused=0,
+  seq=0`): the per-frame cycle re-arms the VFE, so the loop runs at its
+  own rate whatever the sensor produces.  That is the ~33% system time
+  and the heat; a slower sensor does not touch it.
+
+`idle_vts` is therefore **0 by default** (disabled), though the knob
+remains for experiments.  The real lever for idle heat is the
+per-frame self-driving of the VFE, not the sensor frame rate.
+
 ## The auto-exposure measures P95 (2026-11-12)
 
 The AE's brightness measure was the mean of the pixels within 40 levels

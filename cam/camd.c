@@ -370,6 +370,57 @@ static int sensor_write_regs(const struct imx179_reg *regs, int n)
 }
 
 /*
+ * Idle frame length.  When no client has asked for a frame for a few
+ * seconds, raise the sensor's VTS so it produces the slowest frame it
+ * can: the register is 16-bit, and at 260 MHz with a 3280-pixel line
+ * the floor is ~1.2 fps.  The first request restores the VTS the
+ * camera page chose.
+ *
+ * This is the register the auto-exposure already writes mid-stream, so
+ * it is a proven operation: the sensor keeps its frame phase and no
+ * frame is stitched.  The heat is the per-frame ISP/CPP/kernel work, so
+ * it falls with the frame rate.  The stream is never stopped.
+ *
+ * Knobs (persistent, read at startup):
+ *   idle_vts    the slow frame length; 0 disables (the default).
+ *               The sensor's floor is 0xffff (~1.2 fps), but a VTS
+ *               that far from the mode's frame makes the CAMIF cut the
+ *               long frame into many partial frames: the loop then
+ *               runs faster, not slower.  Going below the mode's rate
+ *               needs the ISP geometry (lines_per_frame/last_line)
+ *               changed with it -- see docs/cam-state.md.
+ *   idle_after  seconds without a request before slowing (5)
+ */
+static unsigned int idle_vts = 0;
+static int idle_after = 5;
+static unsigned int normal_vts = 0x09D6;
+static volatile int vts_slowed;
+static volatile time_t last_request_at;
+
+static int sensor_set_vts(unsigned int vts)
+{
+	struct imx179_reg r = { 0x0340, vts, 0 };
+
+	return sensor_write_regs_as(&r, 1, MSM_CAMERA_I2C_WORD_DATA);
+}
+
+/* Every frame request goes through here: the normal frame length is
+ * restored before the request is answered, so the page is not served
+ * at the idle rate. */
+static void note_frame_request(void)
+{
+	last_request_at = time(NULL);
+	if (vts_slowed) {
+		if (sensor_set_vts(normal_vts) == 0) {
+			vts_slowed = 0;
+			printf("[stream] VTS restored to 0x%04x\n",
+			       normal_vts);
+			fflush(stdout);
+		}
+	}
+}
+
+/*
  * Set the exposure and gain the way the vendor does: inside the
  * sensor's group hold (0x0104), so the values latch at the next frame
  * boundary.  Written bare they take effect mid-readout, and the frame
@@ -2738,6 +2789,24 @@ static void *client_thread(void *arg)
 			}
 		}
 		/*
+		 * No request for a while: stretch the frame to the slowest
+		 * the sensor can produce.  Nothing else changes -- the
+		 * buffers keep rotating and the per-frame work runs at the
+		 * lower rate -- so the pipeline stays in phase.  The next
+		 * request restores the VTS in the socket thread.
+		 */
+		if (!vts_slowed && idle_vts != 0 && idle_after > 0) {
+			time_t now = time(NULL);
+			if (now - last_request_at >= idle_after) {
+				if (sensor_set_vts(idle_vts) == 0) {
+					vts_slowed = 1;
+					printf("[stream] idle: VTS 0x%04x\n",
+					       idle_vts);
+					fflush(stdout);
+				}
+			}
+		}
+		/*
 		 * Do not stop the pipeline when idle.  Skipping the
 		 * DQBUF/requeue here fills the vb2 queue and the CPP
 		 * stalls; the next client then gets no frames at all.
@@ -3984,10 +4053,12 @@ static void *socket_thread(void *arg)
 			if (buf[0] == 'A') {
 				/* "I am reading the shared frame": keep the
 				 * per-frame work on, without sending one. */
+				note_frame_request();
 				frame_requests++;
 				write(cfd, "OK", 2);
 			} else if (buf[0] == 'F') {
 				unsigned char hdr[32];
+				note_frame_request();
 				frame_requests++;
 				memset(hdr, 0, 32);
 				memcpy(hdr, "KCF1", 4);
@@ -4172,6 +4243,8 @@ static void *socket_thread(void *arg)
 						&r, 1, MSM_CAMERA_I2C_WORD_DATA);
 					if (rc == 0) {
 						uint16_t high = 0, low = 0;
+						normal_vts = (p[0] << 8) | p[1];
+						vts_slowed = 0;
 						if (sensor_read_reg(0x0340, &high) == 0 &&
 						    sensor_read_reg(0x0341, &low) == 0)
 							printf("[sensor] VMAX set to 0x%02x%02x\n",
@@ -4248,11 +4321,13 @@ static void *ctl_thread(void *arg)
 				/* Ask for a frame as well: the frame work
 				 * is skipped while no client is asking,
 				 * and the dump needs a frame. */
+				note_frame_request();
 				frame_requests++;
 				write(cfd, "OK", 2);
 			} else if (c == 'c') {
 				/* Toggle the raw linear-crop diagnostic. */
 				rawcrop = !rawcrop;
+				note_frame_request();
 				frame_requests++;
 				printf("[mode] raw linear crop %s\n",
 				       rawcrop ? "on" : "off");
@@ -4388,6 +4463,11 @@ int main(int argc, char **argv)
 		isp_stream_src = PIX_VIEWFINDER;
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
 	}
+	idle_vts = state_read_persist("idle_vts", 0, 0, 0xFFFF);
+	idle_after = state_read_persist("idle_after", 5, 0, 3600);
+	last_request_at = time(NULL);
+	printf("[stream] idle VTS 0x%04x after %ds (0 disables)\n",
+	       idle_vts, idle_after);
 	/*
 	 * The sensor mode is a persistent knob: 0 = the binned 1640x1232
 	 * mode, 1 = the full 3280x2464 mode.  The vendor's preview is a
