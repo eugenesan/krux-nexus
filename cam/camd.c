@@ -457,6 +457,48 @@ static const struct imx179_reg stream_on_regs[] = { { 0x0100, 0x01, 0 } };
 static const struct imx179_reg stream_off_regs[] = { { 0x0100, 0x00, 0 } };
 
 /*
+ * The sensor's stream switch, on demand.
+ *
+ * The frames are what cost the power: while one is coming out, the
+ * ISP writes it, the CPP processes it and the kernel does the per-frame
+ * work, even when no page is reading.  So the sensor is stopped when
+ * nothing has asked for a frame for a few seconds, and started again by
+ * the first request.
+ *
+ * It is stopped at the sensor, not with STREAMOFF: this is the same
+ * pause the autofocus makes around a lens move, and every node, buffer
+ * and ISP/CPP configuration stays exactly as it is.  (STREAMOFF does
+ * not release the ISP write masters on this kernel; STREAMON then
+ * fails and the watchdog bites.)
+ *
+ * stream_idle=0 in the persistent state turns the behaviour off, so a
+ * test that needs a continuous stream does not need a new build.
+ */
+static int stream_on_demand = 1;
+static volatile int stream_running = 1;
+static pthread_mutex_t stream_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+#define STREAM_IDLE_FRAMES 30	/* about three seconds at the sensor rate */
+
+static void camd_set_stream(int running)
+{
+	if (!stream_on_demand)
+		return;
+	pthread_mutex_lock(&stream_mtx);
+	if (running == stream_running) {
+		pthread_mutex_unlock(&stream_mtx);
+		return;
+	}
+	if (sensor_write_regs(running ? stream_on_regs : stream_off_regs, 1) == 0) {
+		stream_running = running;
+		printf("[stream] sensor %s\n",
+		       running ? "on" : "off (no client)");
+		fflush(stdout);
+	}
+	pthread_mutex_unlock(&stream_mtx);
+}
+
+/*
  * The vendor's own sequence, captured from the ROM's camera HAL
  * (sensor_config.h).
  *
@@ -2263,10 +2305,16 @@ static void af_move(int step)
 {
 	struct timespec ts = { 0, 30 * 1000 * 1000 };
 
+	/* The lens move is bracketed by a stream pause.  The switch is
+	 * shared with the idle logic: if the client went away during the
+	 * sweep, the sensor is left paused. */
+	pthread_mutex_lock(&stream_mtx);
 	sensor_write_regs(stream_off_regs, 1);
 	nanosleep(&ts, NULL);
 	actuator_move(step);
-	sensor_write_regs(stream_on_regs, 1);
+	if (stream_running)
+		sensor_write_regs(stream_on_regs, 1);
+	pthread_mutex_unlock(&stream_mtx);
 	nanosleep(&ts, NULL);
 }
 
@@ -2425,6 +2473,10 @@ static void *server_thread(void *arg)
 			}
 			else
 				sensor_write_regs(stream_on_regs, 1);
+			/* A client may have come and gone while the
+			 * pipeline was starting: the idle pause wins. */
+			if (stream_on_demand && !stream_running)
+				sensor_write_regs(stream_off_regs, 1);
 			sensor_dump_regs("after stream-on");
 			break;
 		case PRIV_STREAM_OFF:
@@ -2738,12 +2790,30 @@ static void *client_thread(void *arg)
 			}
 		}
 		/*
-		 * Do not stop the pipeline when idle.  Skipping the
-		 * DQBUF/requeue here fills the vb2 queue and the CPP
-		 * stalls; the next client then gets no frames at all.
-		 * The idle leak (the CPP completed-frame queue) is
-		 * fixed in the kernel, not by starving the pipeline.
+		 * A few seconds without a frame request means no page is
+		 * reading the camera.  Stop the sensor -- the same pause the
+		 * autofocus makes around a lens move -- and keep every node,
+		 * buffer and ISP/CPP configuration as it is.  The first
+		 * request starts it again.
+		 *
+		 * While paused there is no per-frame ISP cycle, no CPP
+		 * message and no polling for a frame that will not come, so
+		 * an idle device is cold.  Do NOT use STREAMOFF to do this:
+		 * it does not release the ISP write masters here, and the
+		 * next STREAMON fails with the watchdog behind it.
 		 */
+		if (!stream_running) {
+			if (idle == 0) {
+				camd_set_stream(1);
+			} else {
+				struct timespec ts = { 0, 100 * 1000 * 1000 };
+				nanosleep(&ts, NULL);
+				continue;
+			}
+		} else if (stream_on_demand && idle > STREAM_IDLE_FRAMES) {
+			camd_set_stream(0);
+			continue;
+		}
 
 		/* The vendor's per-frame order: the chromatrix goes to
 		 * the CPP first (it carries the frame's buffer
@@ -3978,6 +4048,8 @@ static void *socket_thread(void *arg)
 	for (;;) {
 		cfd = accept(sfd, NULL, NULL);
 		if (cfd < 0) continue;
+		/* Somebody is reading: let the sensor run. */
+		camd_set_stream(1);
 		for (;;) {
 			int r = read(cfd, buf, 1);
 			if (r <= 0) break;
@@ -4189,6 +4261,13 @@ static void *socket_thread(void *arg)
 			}
 		}
 		close(cfd);
+		/*
+		 * The client is gone.  On this firmware that is not how an
+		 * idle camera page is detected -- it keeps the socket open --
+		 * but a host client can come and go, and when nobody is left
+		 * there is no reason to keep the sensor running.
+		 */
+		camd_set_stream(0);
 	}
 	return NULL;
 }
@@ -4387,6 +4466,16 @@ int main(int argc, char **argv)
 	if (state_read_persist("stream", 1, 0, 1) == 1) {
 		isp_stream_src = PIX_VIEWFINDER;
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
+	}
+	/*
+	 * Stop the sensor when no page has asked for a frame for a few
+	 * seconds.  It is on by default; stream_idle=0 in the persistent
+	 * state keeps the sensor streaming, which is the way back if a
+	 * client ever needs a continuous flow.
+	 */
+	if (state_read_persist("stream_idle", 1, 0, 1) == 0) {
+		stream_on_demand = 0;
+		printf("[mode] the sensor streams continuously (stream_idle=0)\n");
 	}
 	/*
 	 * The sensor mode is a persistent knob: 0 = the binned 1640x1232

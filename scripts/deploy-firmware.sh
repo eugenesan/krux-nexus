@@ -129,6 +129,31 @@ adb shell 'rm -rf /data/krux/krux/__pycache__ /data/krux/krux/*/__pycache__ \
 	/data/krux/embit/util/__pycache__ /data/krux/embit/wordlists/__pycache__'
 
 if [ "$RESTART" = "1" ]; then
+	# The camera teardown hangs this kernel while the sensor is
+	# streaming: the ISP keeps its write masters, and the next start
+	# overflows the queue into the watchdog.  With the sensor paused
+	# (camd's idle state) the teardown is safe.  So wait for camd to
+	# pause before stopping the service; if a page is holding it open,
+	# stop here rather than hang the phone.
+	stream_state=$(adb shell 'grep -a "\[stream\]" /data/krux/camd.log 2>/dev/null | tail -1' 2>/dev/null | tr -d '\r')
+	if [ -n "$stream_state" ]; then
+		for _ in $(seq 1 12); do
+			case "$stream_state" in
+			*"sensor off"*) break ;;
+			esac
+			sleep 1
+			stream_state=$(adb shell 'grep -a "\[stream\]" /data/krux/camd.log 2>/dev/null | tail -1' 2>/dev/null | tr -d '\r')
+		done
+		case "$stream_state" in
+		*"sensor off"*)
+			echo "== the camera stream is paused: the restart is safe" ;;
+		*)
+			echo "!! the camera is still streaming ($stream_state)." >&2
+			echo "!! Leave the camera page (or wait a few seconds) and run this again;" >&2
+			echo "!! stopping the service now would hang the phone." >&2
+			exit 1 ;;
+		esac
+	fi
 	echo "== restarting the firmware"
 	adb shell 'setprop ctl.stop krux; sleep 4; setprop ctl.start krux; sleep 18; cat /data/krux/fw.log'
 fi

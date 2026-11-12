@@ -262,17 +262,35 @@ Two places, and the difference matters:
 
 | | what is in it | when it is read |
 |---|---|---|
-| `/data/krux/state/` | the **persistent** knobs: `stream`, `mode`, `cycle`, `capture_cfg`, `fov`, `profile`, `autostart` | at every start of the daemon |
+| `/data/krux/state/` | the **persistent** knobs: `stream`, `stream_idle`, `mode`, `cycle`, `capture_cfg`, `fov`, `profile`, `autostart` | at every start of the daemon |
 | `/tmp/krux/` | the **volatile** ones: `af`, `focus`, `luma_gain`, `unsharp` | at every start; `/tmp` is a tmpfs, so they are gone after a reboot |
 
 | knob | what it does |
 |---|---|
 | `stream` | 0 = the raw Bayer through the CPP, 1 = the vendor's processed preview (PIX_VIEWFINDER).  1 is the default |
+| `stream_idle` | 1 = stop the sensor when no page has asked for a frame for about 3 s, and start it again on the next request.  0 = stream continuously.  1 is the default |
 | `mode` | 0 = the binned 1640x1232 sensor mode, 1 = the full 3280x2464 one.  The processed preview forces the full mode |
 | `cycle` | the vendor's per-frame ISP cycle (on by default) |
 | `capture_cfg` | the vendor's per-capture ISP configuration (off by default) |
 | `fov` | the window: 0 = a 2160 square in the centre, 1 = the whole frame |
 | `autostart` | 1 = start the firmware at boot even in the standard image |
+
+**The stream is on demand.**  `camd` stops the sensor (the same pause
+the autofocus makes around a lens move) after about 3 s with no frame
+request, and the first request starts it again.  The nodes, buffers
+and ISP/CPP configuration all stay as they are -- this is **not**
+`STREAMOFF`.  While paused the ISP, the CPP and the per-frame kernel
+work stop, which is what makes an idle device cool; measured on the
+device, the system CPU time fell from ~38 % to ~6 %.
+
+Consequence for restarts: **stop the service only while the stream is
+paused.**  Killing `camd` while the sensor is streaming leaves the ISP
+write masters held and the next start overflows into the watchdog
+(the phone hangs).  With the sensor paused the teardown is safe.
+`scripts/deploy-firmware.sh` waits for the last `[stream]` line in
+`camd.log` to say `sensor off` before it restarts, and refuses if a
+camera page is holding the stream open.  The same rule applies to any
+manual `setprop ctl.stop krux`.
 
 ## The whole thing, in one go
 

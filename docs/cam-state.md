@@ -12,6 +12,34 @@ This document was `milestone-2026-11-10-snapshot2.md`; it took the name
 of `cam-state.md` so that there is exactly one canonical camera document.
 The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
+## The stream is on demand (2026-11-12)
+
+The sensor is stopped when nothing has asked for a frame for about
+three seconds, and started again by the first request.  The switch is
+the sensor's own stream bit (`0x0100`), the same pause the autofocus
+makes around a lens move -- **not** `STREAMOFF`: every node, buffer and
+ISP/CPP configuration stays open.
+
+Why: the frames were the idle cost.  With the stream running (no page
+open) the system spent ~38 % of the CPUs on the ISP/CPP and the
+per-frame kernel work and the phone was warm on a table; with it
+paused the same measurement is ~6 %.
+
+Measured on the device: the daemon logs `[stream] sensor on` on the
+first frame request and `[stream] sensor off (no client)` about three
+seconds after the last one; frames stop and resume with live content
+(a request returns seq N+1, not the pre-pause picture).
+
+The knob is `/data/krux/state/stream_idle`: 1 (default) is on demand,
+0 keeps the sensor streaming.  See
+[cam-good-state.md](cam-good-state.md) for the state to revert to.
+
+**The teardown rule:** never stop the service while the sensor is
+streaming -- the ISP keeps its write masters and the next start
+overflows into the watchdog (the phone hangs; observed).  Killing the
+daemon while the sensor is paused is safe (observed).  The deploy
+script waits for the pause; a manual `setprop ctl.stop krux` must too.
+
 ## The commits
 
 | tree | commit | what it is |
