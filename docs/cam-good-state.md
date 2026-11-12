@@ -52,14 +52,17 @@ without changing the binary.
 
 ## The boot images
 
-These are the images built before the backlight fix; they boot and
-bring up the camera.  Rebuild them from the tagged tree for a
-matching pair.
+The current pair (built 2026-11-12, with the backlight fix and the
+on-demand stream):
 
 | image | bytes | sha256 |
 |---|---|---|
-| `artifacts/built/boot-dev.img` | 20,205,568 | `3510a6ec0dcf42c02d22cebbbf4f1d643a3c7fabbaeceb802ddc57fa8829b29f` |
-| `artifacts/built/boot-standard-gzip.img` | 21,762,048 | (rebuild after the tag) |
+| `artifacts/built/boot-dev.img` | 20,205,568 | `dd82f3cabdca3549aba7fa78c33d2f36f844d02bbbb8c0e6b00b8ab5c5b00c9b` |
+| `artifacts/built/boot-standard-gzip.img` | 21,764,096 | `84f19141d511ad16469ca10dca7ca1c53132c1343319185df2030ebe9d9930f3` |
+
+The development image runs the firmware from `/data/krux`; the
+standard image carries a read-only copy of it (`opt/krux`), verified to
+be the same `camd` (md5 `471b6d4b...`) and the same `pmu.py`.
 
 The scripts that check the camera, on the device:
 
