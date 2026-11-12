@@ -71,6 +71,17 @@ Two follow-on fixes from testing it:
 a dark room after about two AE/AF cycles.  The AE settles and holds;
 there is no brightness hunting in either the QR or the entropy preview.
 
+**The entropy AE wakes at once after a light change.**  The entropy
+page runs at only a few frames a second, and waiting out the settle
+lock's three-measurement wake and two-measurement same-side gate made
+a dim-to-bright change look stuck until the page was reopened.  The
+entropy mean is already the median of three, so one measurement
+outside the wide band now wakes it and it steps on that same
+measurement.  The QR gates are unchanged: P95 is a single-frame
+measure and still needs three measurements to wake and two on the same
+side to move.  Simulated: dim locks at full exposure; doubling the
+light is followed in five steps and locks again.
+
 ## The on-demand stream was tried and reverted (2026-11-12)
 
 The sensor was stopped when nothing had asked for a frame for about
