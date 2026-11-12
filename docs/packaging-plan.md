@@ -355,7 +355,49 @@ The standard delivery mode works on the device.  What it took:
 * The panel handover works.  It looked broken until the second buffer
   was read.
 
-## 6. Execution order
+## 6. The screen saver and the power-off (task f, 2026-11-12)
+
+**The screen saver no longer animates.**  The firmware's own screen saver
+scrolls the splash and runs until a key or a touch arrives.  On this
+device the panel is dark by then anyway (the port turns the backlight
+off after its own timeout), so the animation only kept the CPU and the
+display busy for as long as the device sat on the table.  The screen is
+cleared once and the firmware waits (`pages/screensaver.py`); the
+upstream animation is kept as `start_animated()`, for reference.
+
+**The device powers itself off again, but only in the bundled mode.**
+The port had replaced the firmware's shutdown with "the backlight goes
+off and the device stays alive", because a powered-off phone vanishes
+from the USB bus and cannot be reached.  That is right for a
+development target and wrong for an appliance, so the choice now
+follows the delivery mode:
+
+* `krux/delivery.py` -- which mode this firmware runs in.  The init
+  stub says so through the environment (`KRUX_DELIVERY`), because it
+  is the stub that knows which copy it started; with no environment
+  (the Android app, the simulator) the mode is "development", which is
+  the safe one.
+* `auto_shutdown.py` -- in the bundled mode the idle timeout calls
+  `power_manager.shutdown()`, which is what the firmware does on the
+  K210; in the development mode the device stays alive and only the
+  backlight goes off.
+
+The actual power-off was **not** exercised on the device: it would
+have left the phone switched off with nobody there to press the power
+key.  The decision itself was verified on the device (the firmware
+takes the branch and says so), and the shutdown itself is the port's
+existing `machine.reset()`, which the firmware's own "Shutdown" item
+has always used.
+
+**A battery finding on the way.**  The firmware burned two thirds of a
+core while idle.  The cause was the input loop's debounce wait: a
+*busy* loop that flushed the events until the debounce window passed,
+with a poll every ten milliseconds.  A millisecond of sleep per round
+(`input.py`) took the idle cost from ~430 to ~178 ticks per eight
+seconds, and nothing about the behaviour changed.  It matters because
+the reason to turn the device off is the battery.
+
+## 7. Execution order
 
 1. `docs/packaging-plan.md` (this document).
 2. Task 2(c) — cleanup and the entry point.  Highest value per minute:

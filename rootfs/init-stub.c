@@ -415,6 +415,7 @@ static void *start_the_firmware(void *arg) {
         const char *dir;
         char binary[64];
         char main_py[64];
+        int bundled_copy = 0;
         int on_data = access(FIRMWARE_DIR "/micropython", X_OK) == 0 &&
                       access(FIRMWARE_DIR "/boot.py", R_OK) == 0;
         int bundled = access(BUNDLED_FIRMWARE_DIR "/micropython", X_OK) == 0 &&
@@ -425,6 +426,7 @@ static void *start_the_firmware(void *arg) {
              * image is the firmware; the data partition holds the
              * settings and nothing else. */
             dir = BUNDLED_FIRMWARE_DIR;
+            bundled_copy = 1;
             say("using the firmware bundled in the boot image");
         } else if (on_data) {
             /* The development copy on the data partition wins: it is
@@ -433,8 +435,10 @@ static void *start_the_firmware(void *arg) {
             dir = FIRMWARE_DIR;
             say("using the firmware on the data partition");
         } else if (bundled) {
-            dir = FIRMWARE_DIR;
-            say("using the firmware on the data partition");
+            /* No development tree, but the image carries one. */
+            dir = BUNDLED_FIRMWARE_DIR;
+            bundled_copy = 1;
+            say("using the firmware bundled in the boot image");
         } else {
             say("no firmware: neither the data partition nor the boot "
                 "image carries one");
@@ -460,6 +464,14 @@ static void *start_the_firmware(void *arg) {
         if (chdir(dir) != 0) {
             say("no firmware directory");
         }
+        /* The firmware needs to know which delivery mode it runs in:
+         * a bundled device is an appliance and may power itself off
+         * when it is left alone; a development one is a development
+         * target and may not. */
+        setenv("KRUX_DELIVERY",
+               bundled_copy ? "bundled" : "development", 1);
+        say(bundled_copy ? "delivery mode: bundled"
+                         : "delivery mode: development");
         say("starting the firmware");
         /* The unix port's default GC heap is 1 MiB.  Krux's full UI,
          * the 720x960 luma frame (691,200 bytes), a 720x960 RGB565
