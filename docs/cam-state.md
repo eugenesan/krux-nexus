@@ -12,6 +12,26 @@ This document was `milestone-2026-11-10-snapshot2.md`; it took the name
 of `cam-state.md` so that there is exactly one canonical camera document.
 The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
+## The auto-exposure measures P95 (2026-11-12)
+
+The AE's brightness measure was the mean of the pixels within 40 levels
+of the frame's brightest pixel.  That margin is absolute, so in a dim
+scene the measure collapses to the plain mean, and a few hot pixels
+move it.  On the device it read 151 while 53% of the frame was
+clipped: the controller walked the exposure to the floor and back --
+the pumping that is visible on the preview.
+
+The native image module now computes P50/P90/P95/P99 from a 256-bin
+histogram over the measured region, and how many pixels it measured
+(`image_maixpy.c`).  The controller uses **P95**, targets **210** (the
+review's 200-225), and treats a **clipped fraction above 3%** as
+over-exposed whatever P95 says.  The old 0.75 measurement filter is
+gone: P95 is stable, and the filter's lag was turning every correction
+into an overshoot.  The step is capped at +-20% with a 0x30 floor.
+
+The log line is now `Camera AE p95=... clip=...% exposure=... gain=...
+luma=...`, so a hunting controller can be read directly.
+
 ## The on-demand stream was tried and reverted (2026-11-12)
 
 The sensor was stopped when nothing had asked for a frame for about

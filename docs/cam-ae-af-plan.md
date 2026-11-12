@@ -347,6 +347,15 @@ measurement artifact") is exactly the right question.
 
 ### Step 5 — AE measurement: percentiles
 
+> **Done (2026-11-12).**  `image_maixpy.c` computes P50/P90/P95/P99
+> from a 256-bin histogram of the region plus the pixel count;
+> `camera.py` drives the controller from P95 (target 210, clipped
+> limit 3%, step cap +-20%, no measurement filter) and logs
+> `p95`, the clipped percentage and the luma gain.  This is what the
+> device measurements asked for: with the old bright-pixel mean, 53%
+> of the frame was clipped while the measure read 151, and the
+> exposure walked from one end to the other.
+
 Replace the bright-pixel mean with a percentile-based measure computed
 from a 256-bin histogram of the ROI (P50, P90, P95, P99, clipped
 fraction). The native image module is the right place for it: the
