@@ -232,6 +232,17 @@ mounted, adb works), and the firmware waits to be asked:
 `krux-init start` is what the script calls; it is the same program as
 the stub, with an argument.
 
+Two behaviours of the standard mode are worth knowing before an image
+is given to somebody else:
+
+* **the wipe empties the data partition.**  "Erase User's Data" removes
+  the settings, the encrypted mnemonics *and* the deployment, so the
+  device comes up with the same firmware and no state.  That is only
+  safe because the firmware is in the boot image.
+* **the device powers itself off when it is left alone.**  The idle
+  timeout calls the firmware's own shutdown -- in the bundled mode
+  only; a development device stays alive and reachable over adb.
+
 ## 6. Boot it
 
 The images are **not flashed** -- they are booted, so the phone can
