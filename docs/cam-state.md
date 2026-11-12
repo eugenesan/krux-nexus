@@ -70,6 +70,17 @@ the entropy path took the `MAX_EXPOSURE` branch.  The start and the
 ceiling are `0x09C8` for both paths and the frame length is raised
 unconditionally.
 
+**The follow measured a stale frame.**  The entropy page calls the
+follow on every frame, and after an exposure change the picture it got
+was captured before the change reached the sensor.  The controller
+acted on that stale picture and stepped again: the log showed
+`mean 143` settled at `0x0100`, then `13` at `0x0133` (a higher
+exposure darker), and the same inversion at the top.  The entropy
+follow now skips two frames after a change (the QR path already
+follows every third frame and needs none), and the one-shot flushes
+two frames after each step.  The sequence became monotonic in the
+headless run.
+
 Two follow-on fixes from testing it:
 
 - **The exposure ceiling in PIX.**  The QR ceiling was chosen from the
