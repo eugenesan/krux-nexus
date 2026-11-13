@@ -138,6 +138,12 @@ Two follow-on fixes from testing it:
 a dark room after about two AE/AF cycles.  The AE settles and holds;
 there is no brightness hunting in either the QR or the entropy preview.
 
+**The entropy keys are exposure, not exit.**  PAGE/PAGE_PREV used to
+cancel the entropy page, so trimming the exposure with the volume keys
+aborted the capture; the page now ends only on ENTER (the capture).
+A manual trim pauses the AE for five seconds instead of for the rest
+of the page, so adjusting by hand no longer leaves the AE off.
+
 **The entropy AE wakes at once after a light change.**  The entropy
 page runs at only a few frames a second, and waiting out the settle
 lock's three-measurement wake and two-measurement same-side gate made
