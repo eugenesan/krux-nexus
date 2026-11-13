@@ -53,11 +53,21 @@ BUNDLE=${BUNDLE:-0}
 STANDARD=${STANDARD:-0}
 # gzip (default TWRP), xz (best size; needs CONFIG_RD_XZ), lzma or lz4.
 #
-# The device boots the stock bootloader, and IT decides how to unpack
-# the ramdisk: it looks for a gzip ramdisk and does not look for xz.  A
-# ramdisk packed as xz therefore does not boot -- the device accepts
-# the image, flashes nothing, and comes straight back to Android with
-# no error message anywhere.  That is why this is gzip.
+# Two different unpackers are involved, and that is the whole subtlety:
+#
+#   * `fastboot boot <image>` -- the KERNEL unpacks the initramfs.  Our
+#     kernel (lineageos_hammerhead_defconfig) has CONFIG_RD_XZ=y, so an
+#     XZ ramdisk boots and works on this path.  The earlier capture
+#     kernels (cam-yonly etc.) did NOT have RD_XZ, which is why commit
+#     d060148 recorded "an XZ ramdisk is accepted but boots nothing".
+#   * An image FLASHED to the boot partition -- the BOOTLOADER (aboot)
+#     unpacks it, and this bootloader only looks for a gzip ramdisk.
+#     An XZ ramdisk there boots nothing, silently.
+#
+# This project never flashes (fastboot boot only), so XZ is usable here.
+# gzip stays the default so the same image is also safe to flash; opt in
+# with COMPRESS=xz when you want the ~40% smaller ramdisk on the
+# fastboot path.
 COMPRESS=${COMPRESS:-gzip}
 while [ $# -gt 0 ]; do
 	case "$1" in
