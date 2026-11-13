@@ -138,6 +138,12 @@ Two follow-on fixes from testing it:
 a dark room after about two AE/AF cycles.  The AE settles and holds;
 there is no brightness hunting in either the QR or the entropy preview.
 
+**The camera pages keep the screen on.**  They read the keys
+themselves, so nothing fed the idle timer: after the shutdown timeout
+the backlight went off and the preview went dark while the camera was
+still running (a touch then only focused, which looked like the AE had
+died).  Both pages now feed the timer every frame.
+
 **The entropy keys are exposure, not exit.**  PAGE/PAGE_PREV used to
 cancel the entropy page, so trimming the exposure with the volume keys
 aborted the capture; the page now ends only on ENTER (the capture).
