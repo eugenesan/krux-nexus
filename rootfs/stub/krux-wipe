@@ -1,0 +1,44 @@
+#!/sbin/sh
+# Load the same kernel with wipe=1 and kexec into it.  The wipe kernel
+# zeroes all free RAM and powers off.  Never returns on success.
+#
+# The image is the running boot image when it is available on the boot
+# partition.  Under the development "fastboot boot" workflow the boot
+# partition holds a different kernel, so /data/krux/boot-wipe.img takes
+# precedence when present.
+set -e
+
+IMG="${KRUX_WIPE_IMG:-}"
+if [ -z "$IMG" ]; then
+	if [ -f /data/krux/boot-wipe.img ]; then
+		IMG=/data/krux/boot-wipe.img
+	elif [ -b /dev/block/mmcblk0p19 ]; then
+		IMG=/dev/block/mmcblk0p19
+	else
+		echo "krux-wipe: no boot image (set KRUX_WIPE_IMG)" >&2
+		exit 1
+	fi
+fi
+
+if [ ! -x /sbin/kexec ]; then
+	echo "krux-wipe: /sbin/kexec is missing" >&2
+	exit 1
+fi
+
+# The kernel's early_param parser takes the last wipe= occurrence, so
+# appending wipe=1 is enough even if the current cmdline has wipe=test.
+CMDLINE="$(cat /proc/cmdline) wipe=1"
+
+# The separate DTB is required on this kernel: kexec-tools updates its
+# chosen/bootargs and initrd properties.  Without it the appended DTB
+# still points at the old (freed) initrd.
+DTB="${KRUX_WIPE_DTB:-/data/krux/hammerhead.dtb}"
+if [ -f "$DTB" ]; then
+	/sbin/kexec -l "$IMG" --command-line="$CMDLINE" --dtb "$DTB"
+else
+	/sbin/kexec -l "$IMG" --command-line="$CMDLINE"
+fi
+/sbin/kexec -e
+
+echo "krux-wipe: kexec failed" >&2
+exit 1
