@@ -249,7 +249,7 @@ existing build scripts; the development build is unchanged (no flag).
 | camd | compile-time `-DKRUX_RELEASE` in `build-camd.sh` | a `CAM_LOG` macro that is a no-op, the dump functions and `CAMD_DUMP_RAW` compiled out, sockets 0600, state dir chosen from the delivery env | a separate camd binary in the bundle |
 | MicroPython port | compile-time `-DKRUX_RELEASE` in `build-micropython.sh` | `lcd.save_ppm` out of the module table, the port diagnostics out | a separate `micropython-arm32-release` |
 | Krux Python | runtime, because the package ships as source: a `debug()` helper that is a no-op unless the development delivery, and the backup gated by `delivery` | the prints, the backup page, the last-qr path (already removed) | the same package, selected by the delivery env |
-| build | a thin `scripts/build/build-release.sh` that calls the four builds with `KRUX_RELEASE=1`, picks the kernel, packs the image, and runs the check | nothing new in the source; the orchestration and the artifact names (`*-release`) | `boot-standard-release.img` |
+| build | a thin `scripts/build/build-release.sh` that calls the four builds with `KRUX_RELEASE=1`, picks the kernel, packs the image, and runs the check; `KRUX_SEAL=1` is the final adb/USB-off variant | nothing new in the source; the orchestration and the artifact names (`*-release`, `*-release-audit`) | `boot-standard-release.img` (`*-release-audit.img` for the audited, adb-on build) |
 | verification | `scripts/security-check.sh` | the gate: grep the image for the paths/functions, boot it, use the pages, assert no files/logs/old framebuffer | pass/fail |
 
 Two things this deliberately is **not**:
@@ -290,19 +290,20 @@ One switch, `KRUX_RELEASE`, used by all three components:
 - **MicroPython port**: compile `lcd.save_ppm` out of the release
   binary (keep it in development).
 
-### Phase 2 — boot and access (removes T1/T2's easy route)
+### Phase 2 — boot and access (everything except adb)
 
-- In the delivered image, **do not bring up adbd**: no USB gadget, no
-  adb wait.  The development/update image keeps it.
 - The delivered image **autostarts the firmware**; TWRP is available
   only by holding the volume key, and only in the development image.
-  (Or: TWRP in the standard image but adbd disabled by default.)
 - Mount userdata **read-only** in the delivered image, or not at all;
   the firmware/camd use the initramfs and `/tmp`.
 - Wipe `/data/krux` (and any old `scan.raw`, `last-qr`, logs) on the
   first delivered boot; the standard mode's wipe already does this —
   make it part of the delivered boot, not only the explicit wipe.
 - Set the socket/shm/file modes `0600`; the logs `0600` if any remain.
+
+**adb and the USB gadget are deliberately not removed here.**  They are
+the audit channel; they are removed only in Phase 6, after the final
+batch has been audited on the device.
 
 ### Phase 3 — kernel and cmdline
 
@@ -355,6 +356,38 @@ A `scripts/security-check.sh` that:
    be readable).
 
 The check must run on the **delivered** image, not the development one.
+
+### Phase 6 — the seal: adb and the USB gadget **last**
+
+The image the audit runs on is the release build **with adb**.  The
+sealed image is built from the same commit and differs only by
+`KRUX_SEAL=1`:
+
+- the USB gadget is not enabled and the stub does not wait for adb;
+- TWRP's adbd is not started (the stub stops the recovery before it
+  comes up, or the adbd service is disabled);
+- nothing else changes: the kernel, the port, `camd` and the Python are
+  byte-identical to the audited build.
+
+Procedure:
+
+1. Build `KRUX_RELEASE=1` (adb on); run the Phase 5 check and the whole
+   audit on the device; record the artifact hashes and the result.
+2. Build `KRUX_RELEASE=1 KRUX_SEAL=1`; verify that the difference from
+   the audited artifact is limited to the seal (the stub/ramdisk; the
+   other components' hashes unchanged) and that the audited build
+   passed.
+3. Smoke-test the sealed image without adb: boot, QR, entropy,
+   SeedKeeper, settings, the screen-saver/power-off.  The audit itself
+   is not repeated on the sealed build; it was done on the identical
+   build minus the seal.
+4. Record the sealed artifact's sha256 (and the audited one) in
+   [cam-good-state.md](cam-good-state.md) / the release notes; the seal
+   commit is the shipping tag.
+
+This is why the seal is last: adb is the only way to inspect the final
+bytes on the device, and removing it changes nothing the audit is
+checking.  Removing it first would remove the instrument.
 
 ---
 
