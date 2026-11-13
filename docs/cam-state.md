@@ -138,6 +138,16 @@ Two follow-on fixes from testing it:
 a dark room after about two AE/AF cycles.  The AE settles and holds;
 there is no brightness hunting in either the QR or the entropy preview.
 
+**A large exposure change gets the full correction.**  Every step
+used to be damped to 15-20 % (and the square root on top), so a torch,
+a lamp or a hand over the lens needed about a dozen steps; at the
+entropy page's few frames a second that was the 6-15 s response, and
+going darker (with the gain steps) about twice that.  A change larger
+than twice the band now uses the full factor (clamped 0.45-1.8); only
+the final approach keeps the small step.  The median history is
+cleared after a step so it cannot carry pre-change frames into the
+next decision.  Simulated: doubling the light takes two steps.
+
 **The camera pages keep the screen on.**  They read the keys
 themselves, so nothing fed the idle timer: after the shutdown timeout
 the backlight went off and the preview went dark while the camera was
