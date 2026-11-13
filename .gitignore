@@ -48,3 +48,8 @@ docs/archive/compaction-log.md
 
 # the compaction plugin writes this one too
 docs/compaction-log.md
+
+# the release profile binaries
+cam/camd-dev
+cam/camd-release
+rootfs/micropython-arm32-release

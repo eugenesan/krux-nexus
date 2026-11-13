@@ -243,6 +243,28 @@ is given to somebody else:
   timeout calls the firmware's own shutdown -- in the bundled mode
   only; a development device stays alive and reachable over adb.
 
+## 5c. Development and release builds
+
+The **release profile is the default** at the build layer
+(`KRUX_RELEASE=1`, `KRUX_SEAL=1`); development and the final audit are
+explicit opt-outs, so a forgotten flag cannot produce a debug image.
+
+```sh
+# development: logs, frame dumps, adb, save_ppm
+bash scripts/build/build-dev.sh            # -> artifacts/built/boot-dev.img
+
+# release, sealed (no adb): the shipping image
+bash scripts/build/build-release.sh        # -> boot-standard-release.img
+
+# release with adb kept, for the final on-device audit
+KRUX_SEAL=0 bash scripts/build/build-release.sh  # -> ...-release-audit.img
+```
+
+`scripts/security-check.sh <image>` is the gate: it greps the release
+artifacts and the image for the dump/write capabilities and fails the
+build if one is still there.  The seal (adb/USB off) is deliberately
+the last step — see [security-audit.md](security-audit.md), Phase 6.
+
 ## 6. Boot it
 
 The images are **not flashed** -- they are booted, so the phone can

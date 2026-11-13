@@ -420,14 +420,33 @@ checking.  Removing it first would remove the instrument.
 1. **Done.** The `last-qr.rgb565` write is removed (`qr_capture.py`).
 2. **Done.** The camd sockets are `0600`, and the frame dumps require
    `CAMD_ALLOW_DUMPS` (the bench sets it; the delivered image does not).
-3. Move the camd's state to `/tmp/krux` and send the logs to
-   `/dev/null` when `KRUX_DELIVERY=bundled`; set the env before
-   `start_camd` (S2).
-4. Compile out `lcd.save_ppm` in the release build (S1 capability).
+3. **Done.** The release stub logs to `/dev/null`, does not mount
+   userdata, keeps `/flash` and `/sd` in the initramfs, exports
+   `KRUX_RELEASE`, and disables core dumps; the release camd keeps its
+   state in `/tmp/krux`.
+4. **Done.** `lcd.save_ppm` is compiled out of the release port; the
+   encrypted flash backup is refused in the bundled image.
 5. Add the release kernel config/cmdline profile (Phase 3) — the next
    image build.
 6. Clear/zero the framebuffer and the shared/ION regions on page exit
    and power-off (Phase 4).
+
+### Status at 2026-11-12
+
+The release profile is built and the **audit image** (`KRUX_SEAL=0`,
+adb kept) has been run on the device:
+
+- no `fw.log` or `camd.log` is created; no `/data/krux/state`;
+- the shared preview and the QR crop are `0600` under a `0700`
+  `/tmp/krux`, and the camera sockets are `0600` in a `0700`
+  `/data/krux`;
+- the release port has no `save_ppm` (the development port does);
+- `scripts/security-check.sh` passes on the built image.
+
+Audit image: `artifacts/built/boot-standard-release-audit.img`,
+sha256 `680a7bee6abc69e019381e4b372122ccd61ecbb4fdaa63ab5bc7f9517d5e605b`.
+The sealed image (the default build) is next, after the kernel and the
+framebuffer work.
 
 Items 1–2 are tiny and safe; 3 and 4 are build changes; 5–6 need the
 kernel/ramdisk image and a cold boot.  The rest of the plan is ordered
