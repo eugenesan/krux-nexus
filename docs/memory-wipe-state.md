@@ -36,6 +36,51 @@ installed.  With the USB cable connected the device re-powers itself
 (`reboot_mode restart reason = power_on`); disconnect USB for a true
 off.  The RAM is wiped either way.
 
+## kexec handoff: still broken (2026-11-13, with serial)
+
+The serial console finally shows the handoff:
+
+```
+mdss_fb_release_all: ... from kexec
+i_panel_off:
+Starting new kernel
+MSM Watchdog V2 deactivated for kexec
+kexec: entry=10008000 dtb=<...> head=...
+Bye!
+<silence>
+```
+
+The old kernel reaches `machine_kexec` and jumps; the new kernel never
+prints and the device ends up with a blank screen and the backlight on.
+The UART console is torn down by `device_shutdown` partway through, so
+the last lines are sometimes truncated.
+
+A **control kexec with the original cmdline (no `wipe=`)** hangs exactly
+the same way.  So the failure is independent of the wipe: it is in
+`soft_restart` / `relocate_new_kernel` (MMU disable, relocation, or the
+decompressor), not in the wipe engine and not in the DTB.
+
+### Fixed along the way
+
+- The DTB segment was detected by reading its **destination** in
+  `machine_kexec`, but `relocate_new_kernel` copies the segments only
+  after `soft_restart`, so the check saw stale memory and passed
+  `dtb=0` (no device tree) to the new kernel.  The DTB is now found
+  from the userspace source buffer at load time
+  (`machine_kexec_prepare`), confirmed on the device:
+  `kexec_prepare seg 2: DTB at 121e7000`.
+
+### What is left
+
+`soft_restart`/relocation needs low-level instrumentation (early UART
+from the decompressor or `relocate_new_kernel`).  This tree has no
+`CONFIG_DEBUG_LL` MSM UART, so that is a build of its own.  If kexec
+stays unreliable, the recommended fallback is a **non-kexec shutdown
+wipe**: call the wipe engine from the power-off path in the running
+kernel (the firmware already runs the wipe-capable kernel), covering
+free pages, page cache, the MicroPython heap, the framebuffer and the
+camd buffers.
+
 ## What works
 
 `wipe=` is an early parameter parsed in `setup_arch` and acted on at the
