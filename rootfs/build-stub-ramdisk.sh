@@ -169,7 +169,7 @@ fi
 # without a development tree on the data partition still boots.
 if [ "$BUNDLE" = "1" ]; then
 	BUNDLE_DIR="$WORK/rd/opt/krux"
-	MICROPYTHON="$ROOT/rootfs/micropython-arm32"
+	MICROPYTHON=${MICROPYTHON:-$ROOT/rootfs/micropython-arm32}
 	KRUX_SRC="$ROOT/krux/src"
 	EMBIT_SRC="$ROOT/krux/vendor/embit/src/embit"
 
@@ -191,7 +191,7 @@ if [ "$BUNDLE" = "1" ]; then
 	mkdir -p "$BUNDLE_DIR/krux" "$BUNDLE_DIR/flash" "$BUNDLE_DIR/embit"
 	cp "$MICROPYTHON" "$BUNDLE_DIR/micropython"
 	chmod 755 "$BUNDLE_DIR/micropython"
-	CAMD_BIN="$ROOT/cam/camd"
+	CAMD_BIN=${CAMD:-$ROOT/cam/camd}
 	if [ -x "$CAMD_BIN" ]; then
 		cp "$CAMD_BIN" "$BUNDLE_DIR/camd"
 		chmod 755 "$BUNDLE_DIR/camd"

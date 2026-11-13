@@ -49,6 +49,10 @@ SYSROOT=${SYSROOT:-/usr/arm-linux-gnueabihf}
 }
 HOST_BUILD=$MP_BUILD/mpy-cross
 TARGET_BUILD=$MP_BUILD/target
+# The release profile compiles the framebuffer dump and the port's
+# debug output out; a development build sets KRUX_RELEASE=0.
+KRUX_KFLAGS=""
+[ "${KRUX_RELEASE:-1}" = "1" ] && KRUX_KFLAGS="-DKRUX_RELEASE"
 
 [ -d "$SRC" ] || { echo "no micropython tree at $SRC (set SRC=)" >&2; exit 1; }
 git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1 || {
@@ -111,7 +115,7 @@ make -j"$(nproc)" \
 	MICROPY_PY_CRYPTOLIB_CONSTS=1 \
 	MICROPY_PY_CRYPTOLIB_CTR=1 \
 	USER_C_MODULES="$CUR_STAGE" \
-	CFLAGS_EXTRA="--sysroot=$SYSROOT -mfloat-abi=hard -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_DEFLATE_COMPRESS=1" \
+	CFLAGS_EXTRA="--sysroot=$SYSROOT -mfloat-abi=hard -DMICROPY_PY_DEFLATE=1 -DMICROPY_PY_DEFLATE_COMPRESS=1 ${KRUX_KFLAGS}" \
 	LDFLAGS_EXTRA="-static --sysroot=$SYSROOT -mfloat-abi=hard -lm"
 
 file "$TARGET_BUILD/micropython"

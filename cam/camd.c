@@ -43,6 +43,17 @@
 #include <dirent.h>
 #include <signal.h>
 #include <time.h>
+
+/*
+ * A delivered build has no debug stream.  The print sites below are the
+ * camera's trace -- frame counts, geometry, exposure, AF scores -- and
+ * they are not part of the product.  Compiling them out also removes
+ * the format strings and the paths they contain.  The stub sends the
+ * remaining stderr (perror) to /dev/null in the release.
+ */
+#ifdef KRUX_RELEASE
+#define printf(...) ((void)0)
+#endif
 #include <unistd.h>
 
 #include "v4l2_caf.h"
@@ -706,11 +717,12 @@ static int state_read(const char *name, int def, int lo, int hi)
 		had_file = 0;
 	}
 	if (!had_file) {
-		mkdir(CAMD_STATE_DIR, 0755);
+		mkdir(CAMD_STATE_DIR, 0700);
 		f = fopen(path, "w");
 		if (f) {
 			fprintf(f, "%d\n", v);
 			fclose(f);
+			chmod(path, 0600);
 			printf("[state] %s = %d (default)\n", name, v);
 		}
 	}
@@ -727,7 +739,14 @@ static int state_read(const char *name, int def, int lo, int hi)
  * "adb shell echo N > /data/krux/state/<name>" and a reboot keeps
  * them.
  */
+#ifdef KRUX_RELEASE
+/* The release keeps no state on the data partition: the knobs are
+ * rebuilt from defaults every boot in /tmp/krux. */
+#define CAMD_PERSIST_DIR "/tmp/krux"
+#else
 #define CAMD_PERSIST_DIR "/data/krux/state"
+#endif
+static const char *persist_dir = CAMD_PERSIST_DIR;
 
 static int state_read_persist(const char *name, int def, int lo, int hi)
 {
@@ -736,7 +755,7 @@ static int state_read_persist(const char *name, int def, int lo, int hi)
 	int v = def;
 	int had_file = 0;
 
-	snprintf(path, sizeof(path), "%s/%s", CAMD_PERSIST_DIR, name);
+	snprintf(path, sizeof(path), "%s/%s", persist_dir, name);
 	f = fopen(path, "r");
 	if (f) {
 		had_file = 1;
@@ -1033,10 +1052,23 @@ static unsigned char *latest_y = NULL;
  * picture can be looked at on the host.  The preview is what the
  * camera page shows; the window is what the sensor sent.
  */
+#ifdef KRUX_RELEASE
+/* No frame dumps in a delivered build: the pictures can show a
+ * seed, an xprv or a PSBT. */
+static void dump_frames(const unsigned char *src_y)
+{
+	(void)src_y;
+}
+#else
 static void dump_frames(const unsigned char *src_y)
 {
 	FILE *f;
 
+#ifdef KRUX_RELEASE
+	/* pictures of the screen, some of which show a seed or a QR */
+	(void)src_y;
+	return;
+#endif
 	/*
 	 * These are camera pictures: the preview and the sensor window.
 	 * The QR page can show a seed, an xprv or a PSBT in them, so a
@@ -1078,6 +1110,8 @@ static void dump_frames(const unsigned char *src_y)
  * copy for a QR retry without racing the capture thread, which only
  * ever writes the other one.
  */
+#endif
+
 static unsigned char *bounce_buf[2];
 static int bounce_pub = -1;
 static pthread_mutex_t bounce_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -1123,6 +1157,8 @@ static void shm_init(void)
 
 	shm_size = sizeof(*h) + (size_t)out_w * out_h;
 	shm_fd = open(SHM_PATH, O_RDWR | O_CREAT, 0666);
+	if (shm_fd >= 0)
+		fchmod(shm_fd, 0600);	/* the preview is a picture */
 	if (shm_fd < 0) {
 		printf("[shm] open %s: %s\n", SHM_PATH, strerror(errno));
 		return;
@@ -1195,6 +1231,8 @@ static void crop_shm_init(void)
 
 	crop_shm_size = sizeof(*h) + (size_t)CROP_MAX * CROP_MAX;
 	crop_shm_fd = open(CROP_PATH, O_RDWR | O_CREAT, 0666);
+	if (crop_shm_fd >= 0)
+		fchmod(crop_shm_fd, 0600);	/* the QR crop is a picture */
 	if (crop_shm_fd < 0) {
 		printf("[crop] open %s: %s\n", CROP_PATH, strerror(errno));
 		return;
@@ -3165,17 +3203,24 @@ static void *client_thread(void *arg)
 						latest_ready = 1;
 						shm_publish();
 						published = 1;
-						if (dump_now) {
+						#ifndef KRUX_RELEASE
+if (dump_now) {
 							dump_now = 0;
 							dump_frames(src_y);
 						}
+#endif
+
 					}
 					pthread_mutex_unlock(&frame_mutex);
 					goto proc_done;
 				}
 				{
 					static int dumped;
+#ifdef KRUX_RELEASE
+					const char *dump = NULL;
+#else
 					const char *dump = getenv("CAMD_DUMP_RAW");
+#endif
 					if (dump && !dumped) {
 						size_t k, n = (size_t)crop_w * crop_h;
 						unsigned long sum = 0;
@@ -3598,7 +3643,8 @@ static void *client_thread(void *arg)
 						shm_publish();
 					}
 
-					if (dump_now) {
+					#ifndef KRUX_RELEASE
+if (dump_now) {
 						dump_now = 0;
 						dump_frames(src_y);
 						{
@@ -3631,6 +3677,8 @@ static void *client_thread(void *arg)
 							}
 						}
 					}
+#endif
+
 				}
 				pthread_mutex_unlock(&frame_mutex);
 			}
@@ -4057,6 +4105,9 @@ static void *socket_thread(void *arg)
 
 	unlink("/data/krux/camd.sock");
 	mkdir("/data/krux", 0755);
+#ifdef KRUX_RELEASE
+	chmod("/data/krux", 0700);
+#endif
 	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sfd < 0) { perror("socket"); return NULL; }
 	memset(&addr, 0, sizeof(addr));
@@ -4300,6 +4351,9 @@ static void *ctl_thread(void *arg)
 
 	unlink("/data/krux/camd-ctl.sock");
 	mkdir("/data/krux", 0755);
+#ifdef KRUX_RELEASE
+	chmod("/data/krux", 0700);
+#endif
 	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sfd < 0) {
 		perror("ctl socket");
@@ -4418,6 +4472,11 @@ int main(int argc, char **argv)
 		target_fps = f ? atoi(f) : 0;
 		full_chroma = fc ? atoi(fc) : 0;
 		use_vendor_sensor_seq = vs ? atoi(vs) : 0;
+#ifdef KRUX_RELEASE
+		/* no frame files, and no state on /data */
+		debug_frames = 0;
+		persist_dir = CAMD_STATE_DIR;
+#endif
 		printf("[prof] profile=%d debug_frames=%d bench=%d target_fps=%d full_chroma=%d\n",
 		       profile_mode, debug_frames, bench_mode, target_fps,
 		       full_chroma);

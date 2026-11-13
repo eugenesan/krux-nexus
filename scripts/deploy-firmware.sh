@@ -14,6 +14,11 @@
 #   DEPLOY_RESTART=0   push the files but do not restart the firmware
 set -e
 
+# The deploy path is the development image: the camd it rebuilds must
+# keep the logs, the state on /data and the dumps.
+export KRUX_RELEASE=0
+export KRUX_SEAL=0
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 MICROPYTHON=${MICROPYTHON:-$ROOT/rootfs/micropython-arm32}

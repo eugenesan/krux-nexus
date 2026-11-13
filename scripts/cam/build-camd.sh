@@ -24,7 +24,12 @@ CC=${CC:-arm-linux-gnueabihf-gcc}
 # build: a stale binary that still runs is worse than no binary.
 TMP="$OUT.new"
 rm -f "$TMP"
-$CC -O2 -ftree-vectorize -mfpu=neon -mfloat-abi=hard -static -s -Wall \
+# The release profile is the default: it compiles out the debug trace,
+# the frame dumps and the /data state.  A development build sets
+# KRUX_RELEASE=0 (the build-dev.sh wrapper does).
+DEFS=""
+[ "${KRUX_RELEASE:-1}" = "1" ] && DEFS="-DKRUX_RELEASE"
+$CC -O2 -ftree-vectorize -mfpu=neon -mfloat-abi=hard -static -s -Wall $DEFS \
     -ffunction-sections -fdata-sections -Wl,--gc-sections \
     -o "$TMP" cam/camd.c \
     -lpthread -lrt -lm

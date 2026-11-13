@@ -37,6 +37,10 @@ CC=${CC:-arm-linux-gnueabihf-gcc}
 mkdir -p "$(dirname "$OUT")"
 DEFS=""
 [ "$STANDARD" = "1" ] && DEFS="-DDEFAULT_STANDARD=1"
+# The release profile is the default; the development wrappers set
+# KRUX_RELEASE=0 (and KRUX_SEAL=0).  The seal removes adb.
+[ "${KRUX_RELEASE:-1}" = "1" ] && DEFS="$DEFS -DKRUX_RELEASE"
+[ "${KRUX_SEAL:-1}" = "1" ] && DEFS="$DEFS -DKRUX_SEAL"
 
 $CC -Os -static -s -Wall \
     -march=armv7-a -mfpu=neon -mfloat-abi=hard \

@@ -43,6 +43,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 /* the gpio keys: the power key and the two volume keys */
@@ -52,6 +53,9 @@
 #define KEY_WINDOW_MS 8000
 
 /* how long to wait for adb before touching anything, in seconds */
+#ifdef KRUX_SEAL
+#define USB_WAIT_S 0
+#endif
 #define USB_WAIT_S 8
 
 /* Where the firmware lives.
@@ -74,7 +78,13 @@
 /* the firmware's own log: init gives a service /dev/null on stdout and
  * stderr, so without this the firmware's messages -- how far it got, and
  * why it stopped -- are lost. */
+#ifdef KRUX_RELEASE
+/* A delivered image writes no log: the firmware's and camd's output go
+ * to /dev/null, and the stub itself is silent. */
+#define FIRMWARE_LOG "/dev/null"
+#else
 #define FIRMWARE_LOG "/data/krux/fw.log"
+#endif
 
 /* The firmware's settings store writes to the absolute paths "/flash/"
  * and "/sd/" (krux/settings.py: Store.get_vfs_location returns
@@ -83,12 +93,24 @@
  * therefore pointed at the data partition, so the firmware can read and
  * write its settings, and so that a TC code file ("/flash/tcc") can be
  * put there. */
+#ifdef KRUX_RELEASE
+/* The release keeps no settings or backups on the data partition: the
+ * firmware's /flash and /sd are directories in the initramfs, so they
+ * are gone on the next power-off. */
+#define SETTINGS_DIR "/flash"
+#define SD_DIR "/sd"
+#else
 #define SETTINGS_DIR "/data/krux/flash"
 #define SD_DIR "/data/krux/sd"
+#endif
 
 /* the camera daemon and its socket */
 #define CAMD_SOCKET "/data/krux/camd.sock"
+#ifdef KRUX_RELEASE
+#define CAMD_LOG "/dev/null"
+#else
 #define CAMD_LOG "/data/krux/camd.log"
+#endif
 
 /* TWRP's own user interface, which we keep for the volume up key */
 #define RECOVERY_BIN "/sbin/recovery.stock"
@@ -174,7 +196,11 @@ static int stop_service(const char *name) {
 }
 
 static void say(const char *what) {
+#ifdef KRUX_RELEASE
+    (void)what;
+#else
     fprintf(stderr, "init-stub: %s\n", what);
+#endif
 }
 
 /* Is the volume up key pressed?  The press is an event, so the stub
@@ -257,7 +283,12 @@ static void *start_twrp(void *arg) {
 /* The firmware's settings store wants "/flash" and "/sd".  Point them at
  * the data partition. */
 static void make_the_settings_directories(void) {
-    /* bundled firmware still keeps its mutable settings on /data */
+#ifdef KRUX_RELEASE
+    /* /flash and /sd are ordinary directories in the initramfs */
+    mkdir(SETTINGS_DIR, 0700);
+    mkdir(SD_DIR, 0700);
+#else
+    /* development keeps its mutable settings on /data */
     mkdir("/data/krux", 0755);
     mkdir(SETTINGS_DIR, 0755);
     mkdir(SD_DIR, 0755);
@@ -267,6 +298,7 @@ static void make_the_settings_directories(void) {
     if (symlink(SD_DIR, "/sd") != 0 && errno != EEXIST) {
         say("could not make /sd");
     }
+#endif
 }
 
 /* Give the firmware a log file: init hands a service /dev/null, so
@@ -402,6 +434,11 @@ static void *start_the_firmware(void *arg) {
     if (stop_service("recovery") != 0) {
         say("could not stop the recovery");
     }
+#ifdef KRUX_SEAL
+    /* The audit channel is removed last; this is the seal.  The
+     * recovery may have started adbd as its own service. */
+    stop_service("adbd");
+#endif
     sleep(2);
     make_the_settings_directories();
     redirect_the_output();
@@ -504,6 +541,23 @@ static void mount_the_data(void) {
 int main(int argc, char **argv) {
     (void)argc;
 
+    /* The environment is what the Python and camd read to choose the
+     * release behaviour.  A missing variable means release on the
+     * Python side; the stub sets it explicitly for both. */
+#ifdef KRUX_RELEASE
+    setenv("KRUX_RELEASE", "1", 1);
+#else
+    setenv("KRUX_RELEASE", "0", 1);
+#endif
+#ifndef KRUX_RELEASE
+    /* the bench keeps the frame dumps for its tests */
+    setenv("CAMD_ALLOW_DUMPS", "1", 1);
+#endif
+    {
+        struct rlimit no_core = { 0, 0 };
+        setrlimit(RLIMIT_CORE, &no_core);
+    }
+
     /* A client: "krux-init start" starts the firmware on a running
      * image.  It is how the standard image is started from adb or from
      * TWRP's terminal, without a reboot. */
@@ -514,7 +568,9 @@ int main(int argc, char **argv) {
             say("could not stop TWRP");
         }
         sleep(2);
-        mount_the_data();
+    #ifndef KRUX_RELEASE
+    mount_the_data();
+#endif
         start_the_firmware(NULL);
         return 0;
     }
