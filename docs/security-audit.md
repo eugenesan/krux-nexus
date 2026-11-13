@@ -239,8 +239,32 @@ boot should create them `0700` (or not at all).
 ### 6.0 How the profile is applied (the mechanism)
 
 It is a **build variant of the same tree**, not a branch and not a
-separate source tree.  One flag, `KRUX_RELEASE=1`, flows through the
-existing build scripts; the development build is unchanged (no flag).
+separate source tree.  The **default is the release profile**:
+`KRUX_RELEASE=1` and `KRUX_SEAL=1` are assumed by the build scripts.
+Development and the audit are explicit opt-outs, so forgetting a flag
+produces the secure image, never a debug one.
+
+```sh
+# the shipping image (release + sealed; no adb)
+scripts/build/build-release.sh
+
+# the audit image: release, adb kept for the measurement
+KRUX_SEAL=0 scripts/build/build-release.sh
+
+# development: logs, dumps, save_ppm, adb (the existing dev flow)
+KRUX_RELEASE=0 scripts/deploy-firmware.sh
+KRUX_RELEASE=0 rootfs/build-stub-ramdisk.sh --bundle
+```
+
+`KRUX_RELEASE=0` is the one a developer disables while working; it
+implies the debug capabilities and adb.  `KRUX_SEAL=0` is the one we
+disable only for the final audit.  A plain `build-release.sh` with no
+environment is the sealed, shipping image.
+
+The Python side follows the same rule: the stub exports
+`KRUX_RELEASE=1` by default and `0` in development, and `debug()` is a
+no-op unless the environment says development — a missing variable
+means release.
 
 | Component | Mechanism | What the flag changes | Artifact |
 |---|---|---|---|
@@ -249,7 +273,7 @@ existing build scripts; the development build is unchanged (no flag).
 | camd | compile-time `-DKRUX_RELEASE` in `build-camd.sh` | a `CAM_LOG` macro that is a no-op, the dump functions and `CAMD_DUMP_RAW` compiled out, sockets 0600, state dir chosen from the delivery env | a separate camd binary in the bundle |
 | MicroPython port | compile-time `-DKRUX_RELEASE` in `build-micropython.sh` | `lcd.save_ppm` out of the module table, the port diagnostics out | a separate `micropython-arm32-release` |
 | Krux Python | runtime, because the package ships as source: a `debug()` helper that is a no-op unless the development delivery, and the backup gated by `delivery` | the prints, the backup page, the last-qr path (already removed) | the same package, selected by the delivery env |
-| build | a thin `scripts/build/build-release.sh` that calls the four builds with `KRUX_RELEASE=1`, picks the kernel, packs the image, and runs the check; `KRUX_SEAL=1` is the final adb/USB-off variant | nothing new in the source; the orchestration and the artifact names (`*-release`, `*-release-audit`) | `boot-standard-release.img` (`*-release-audit.img` for the audited, adb-on build) |
+| build | a thin `scripts/build/build-release.sh` that calls the four builds with the release defaults and packs the image; `KRUX_SEAL=0` keeps adb for the audit, `KRUX_RELEASE=0` is the development build | nothing new in the source; the orchestration and the artifact names (`*-release`, `*-release-audit`) | `boot-standard-release.img` (default), `*-release-audit.img` (`KRUX_SEAL=0`) |
 | verification | `scripts/security-check.sh` | the gate: grep the image for the paths/functions, boot it, use the pages, assert no files/logs/old framebuffer | pass/fail |
 
 Two things this deliberately is **not**:
@@ -359,9 +383,9 @@ The check must run on the **delivered** image, not the development one.
 
 ### Phase 6 — the seal: adb and the USB gadget **last**
 
-The image the audit runs on is the release build **with adb**.  The
-sealed image is built from the same commit and differs only by
-`KRUX_SEAL=1`:
+The image the audit runs on is the release build **with adb**
+(`KRUX_SEAL=0`).  The sealed image is the default build, from the same
+commit, and differs only by that flag:
 
 - the USB gadget is not enabled and the stub does not wait for adb;
 - TWRP's adbd is not started (the stub stops the recovery before it
@@ -371,9 +395,9 @@ sealed image is built from the same commit and differs only by
 
 Procedure:
 
-1. Build `KRUX_RELEASE=1` (adb on); run the Phase 5 check and the whole
+1. Build `KRUX_SEAL=0` (release, adb on); run the Phase 5 check and the whole
    audit on the device; record the artifact hashes and the result.
-2. Build `KRUX_RELEASE=1 KRUX_SEAL=1`; verify that the difference from
+2. Build the default (`KRUX_SEAL=1`); verify that the difference from
    the audited artifact is limited to the seal (the stub/ramdisk; the
    other components' hashes unchanged) and that the audited build
    passed.
