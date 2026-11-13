@@ -1,17 +1,40 @@
-# Memory wipe — current state (2026-11-05)
+# Memory wipe — current state (2026-11-13)
 
-Work paused until a serial console is available on the device.  The
-kernel-side wipe is implemented and verified; the userspace **kexec
-handoff is the open blocker**.
+The kernel-side wipe is implemented and verified again on the XZ
+kernel; the userspace **kexec handoff is still the open blocker**.  A
+serial console is now available (`/dev/ttyUSB0`, 115200 8N1), so the
+handoff can finally be debugged.
 
 ## Branch and commits
 
-- Linux: `airgap/memory-wipe`, head `44e3385803d`
-  (`ARM: msm: expose the V2 watchdog disable for kexec`), branched
-  from the camera work at `17774b5abd9`.
-- Outer repo: `3eb0165` points the `linux` submodule at that branch.
+- Linux: `airgap/cam-xz-wipe`, head `c47f7605af5`, branched from the
+  current camera+release work and carrying the memory-wipe engine plus
+  the XZ piggy.  It is the `airgap/memory-wipe` work cherry-picked onto
+  the current tree.
 - The camera branch (`airgap/cam-ksu-dump`) is untouched and is the
   branch to use for camera work.
+- `scripts/build/build-kexec.sh` and `rootfs/stub/krux-wipe` are back
+  on master for the kexec tests.
+
+## Verified with the serial console (2026-11-13)
+
+- `wipe=test`: wipes **1488 MB** and boots normally to recovery.
+- `wipe=1`: wipes **1488 MB** and powers off; the device stays off.
+- Kernel: `CONFIG_KERNEL_XZ=y` (zImage 4.1 MB, zImage-dtb 5.5 MB).
+
+The wipe=1 serial trace:
+
+```
+wipe: start (mode 1, test 0 MB, verify 0)
+wipe: 1488 MB wiped
+wipe: powering off
+```
+
+The power-off is `kernel_power_off()` from `kernel_init()` after
+`do_basic_setup()`, so `pm_power_off` (the MSM PMIC path) is already
+installed.  With the USB cable connected the device re-powers itself
+(`reboot_mode restart reason = power_on`); disconnect USB for a true
+off.  The RAM is wiped either way.
 
 ## What works
 
