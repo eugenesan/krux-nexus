@@ -13,6 +13,7 @@ history in the git log.
 | work on packaging (the three delivery modes) | [packaging-plan.md](packaging-plan.md) |
 | see what is left to do | [todo.md](todo.md) |
 | understand the layout | [directories.md](directories.md) |
+| secure the delivered image (logs, storage, RAM) | [security-audit.md](security-audit.md) |
 
 ## The camera
 

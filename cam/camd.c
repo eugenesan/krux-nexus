@@ -1037,6 +1037,15 @@ static void dump_frames(const unsigned char *src_y)
 {
 	FILE *f;
 
+	/*
+	 * These are camera pictures: the preview and the sensor window.
+	 * The QR page can show a seed, an xprv or a PSBT in them, so a
+	 * dump is a persistent copy of a secret on the data partition.
+	 * Nothing may call this in a delivered build; the host tools set
+	 * CAMD_ALLOW_DUMPS for the bench.
+	 */
+	if (!getenv("CAMD_ALLOW_DUMPS"))
+		return;
 	f = fopen("/data/krux/scan.raw.tmp", "wb");
 	if (f) {
 		fwrite(latest_y, 1, (size_t)out_w * out_h, f);
@@ -4055,7 +4064,7 @@ static void *socket_thread(void *arg)
 	strncpy(addr.sun_path, "/data/krux/camd.sock", sizeof(addr.sun_path) - 1);
 	if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { perror("bind"); return NULL; }
 	listen(sfd, 4);
-	chmod("/data/krux/camd.sock", 0666);
+	chmod("/data/krux/camd.sock", 0600);
 
 	for (;;) {
 		cfd = accept(sfd, NULL, NULL);
@@ -4305,7 +4314,7 @@ static void *ctl_thread(void *arg)
 		return NULL;
 	}
 	listen(sfd, 4);
-	chmod("/data/krux/camd-ctl.sock", 0666);
+	chmod("/data/krux/camd-ctl.sock", 0600);
 	for (;;) {
 		cfd = accept(sfd, NULL, NULL);
 		if (cfd < 0)
