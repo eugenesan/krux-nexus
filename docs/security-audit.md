@@ -201,6 +201,24 @@ only reason the firmware writes a log at all.
 
 ---
 
+### 4.1 What the audit found on the development device (2026-11-12)
+
+Not hypotheticals — these were present on the device:
+
+| Found | Size / mode | Meaning |
+|---|---|---|
+| `/data/krux/last-qr.rgb565` | 2.4 MB, 0600 | the **last QR frame** from an incomplete scan (the scan.raw write in `qr_capture.py`) |
+| `/data/local/tmp/frame0.nv12`, `frame2.nv12`, `frame3.nv12` | ~8 MB each, **0666** | raw camera frames from the `debug_frames` path, world-readable |
+| `/data/krux/frame.raw` | 1.2 MB, 0644 | a camera frame from the AE work |
+| `/data/krux/camd.sock`, `camd-ctl.sock` | **0666** | any local process could read the preview or force a dump |
+| `/data/krux` | **0777** | the deployed tree and logs, world-writable |
+| `fw.log`, `camd.log` | persistent | the boot/camera traces |
+
+All the picture files were removed, the failed-scan write is gone, the
+sockets are `0600`, and the dumps require `CAMD_ALLOW_DUMPS`.  The
+directories were left as they are on this development copy; a delivered
+boot should create them `0700` (or not at all).
+
 ## 5. What is *not* a leak (verified)
 
 - The QR payload is not printed: only `QR detected` / part counts (the
