@@ -64,9 +64,12 @@ the pumping that is visible on the preview.
 
 The native image module now computes P50/P90/P95/P99 from a 256-bin
 histogram over the measured region, and how many pixels it measured
-(`image_maixpy.c`).  The controller uses **P95**, targets **210** (the
-review's 200-225), and treats a **clipped fraction above 3%** as
-over-exposed whatever P95 says.  The old 0.75 measurement filter is
+(`image_maixpy.c`).  The controller uses **P95**, targets **180**, and
+treats a **clipped fraction above 3%** as over-exposed whatever P95
+says.  The target started at the review's 200-225, but a screen that
+fills the frame reads 200-208 at maximum exposure and sat inside the
+dead band: the preview was mostly white and never came down.  At 180
+that screen is over target and the exposure follows it down.  The old 0.75 measurement filter is
 gone: P95 is stable, and the filter's lag was turning every correction
 into an overshoot.  The step is capped at +-20% with a 0x30 floor.
 
