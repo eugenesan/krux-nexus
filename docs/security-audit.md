@@ -236,6 +236,35 @@ boot should create them `0700` (or not at all).
 
 ## 6. The plan
 
+### 6.0 How the profile is applied (the mechanism)
+
+It is a **build variant of the same tree**, not a branch and not a
+separate source tree.  One flag, `KRUX_RELEASE=1`, flows through the
+existing build scripts; the development build is unchanged (no flag).
+
+| Component | Mechanism | What the flag changes | Artifact |
+|---|---|---|---|
+| kernel | a `krux-release.config` fragment applied after the defconfig (the pattern `build-romcfg.sh` already uses) + a release `EXTRA_CMDLINE` | the options in Phase 3 (no RAMOOPS/DEBUG_FS/SYSRQ, dmesg_restrict, ELF_CORE off, vendor prints), the cmdline (no console/uart) | a separate kernel build dir and `zImage-dtb` |
+| init stub | compile-time `-DKRUX_RELEASE` in `build-stub-ramdisk.sh --release` | log fds to `/dev/null`, no adb wait, userdata policy, `setenv("KRUX_DELIVERY")`, `RLIMIT_CORE=0`, framebuffer clear | a separate stub binary in the release ramdisk |
+| camd | compile-time `-DKRUX_RELEASE` in `build-camd.sh` | a `CAM_LOG` macro that is a no-op, the dump functions and `CAMD_DUMP_RAW` compiled out, sockets 0600, state dir chosen from the delivery env | a separate camd binary in the bundle |
+| MicroPython port | compile-time `-DKRUX_RELEASE` in `build-micropython.sh` | `lcd.save_ppm` out of the module table, the port diagnostics out | a separate `micropython-arm32-release` |
+| Krux Python | runtime, because the package ships as source: a `debug()` helper that is a no-op unless the development delivery, and the backup gated by `delivery` | the prints, the backup page, the last-qr path (already removed) | the same package, selected by the delivery env |
+| build | a thin `scripts/build/build-release.sh` that calls the four builds with `KRUX_RELEASE=1`, picks the kernel, packs the image, and runs the check | nothing new in the source; the orchestration and the artifact names (`*-release`) | `boot-standard-release.img` |
+| verification | `scripts/security-check.sh` | the gate: grep the image for the paths/functions, boot it, use the pages, assert no files/logs/old framebuffer | pass/fail |
+
+Two things this deliberately is **not**:
+
+- **Not a runtime switch for the compiled parts.**  A flag an
+  attacker can flip is not a control; the dumps and `save_ppm` are
+  compiled out.  Only the Python is runtime-gated, because it ships as
+  source; even there the dangerous write is removed rather than
+  conditional.
+- **Not a second tree or branch.**  The camera/AE work continues on the
+  development build; the release build is the same commits with the
+  profile on.  The delivery modes (development / standard) and the
+  security profile are orthogonal: a bundled image can be debug (for
+  testing) or release (delivered).
+
 ### Phase 1 — release build profile (removes the S1 file writes)
 
 One switch, `KRUX_RELEASE`, used by all three components:
