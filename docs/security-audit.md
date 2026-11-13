@@ -318,50 +318,82 @@ One switch, `KRUX_RELEASE`, used by all three components:
 
 - The delivered image **autostarts the firmware**; TWRP is available
   only by holding the volume key, and only in the development image.
-- Mount userdata **read-only** in the delivered image, or not at all;
-  the firmware/camd use the initramfs and `/tmp`.
-- Wipe `/data/krux` (and any old `scan.raw`, `last-qr`, logs) on the
-  first delivered boot; the standard mode's wipe already does this —
-  make it part of the delivered boot, not only the explicit wipe.
+- Do **not mount userdata** in the delivered image; the firmware/camd
+  run from the initramfs and use `/tmp`.  There is nothing to wipe:
+  the image writes nothing there (no logs, no state, no frames), so a
+  stale `/data/krux` is out of scope.
 - Set the socket/shm/file modes `0600`; the logs `0600` if any remain.
 
 **adb and the USB gadget are deliberately not removed here.**  They are
 the audit channel; they are removed only in Phase 6, after the final
 batch has been audited on the device.
 
-### Phase 3 — kernel and cmdline
+### Phase 3 — kernel: the crash-persisted channels only
 
-Release config (the build `.config` is `/tmp/opencode/ko/.config`):
+An unlocked bootloader makes runtime hardening pointless — anyone can
+boot their own kernel.  The only kernel concern is what **this kernel
+leaves for the next one to read**:
 
-| Option | Now | Release |
+| Channel | Config | Action |
 |---|---|---|
-| `CONFIG_PSTORE*` | off | off |
-| `CONFIG_RAMOOPS` | **y** | **n** |
-| `CONFIG_DEBUG_FS` | **y** | **n** (or not mountable) |
-| `CONFIG_KALLSYMS` | **y** | n, or `kptr_restrict=2` |
-| `CONFIG_MAGIC_SYSRQ` | **y** | **n** |
-| `CONFIG_SECURITY_DMESG_RESTRICT` | **off** | **y** and `dmesg_restrict=1` |
-| `CONFIG_ELF_CORE` | **y** | n; `core_pattern=/dev/null`, `ulimit -c 0` |
-| `CONFIG_IKCONFIG` | y | y is fine (no secret) |
-| `STRICT_DEVMEM` | off | on (defence in depth; no `/dev/mem` today) |
-| vendor camera prints | per-frame | `pr_debug`/removed; `loglevel=1` |
-| cmdline | `console=ttyHSL0`, `uart_console=enable`, `selinux=permissive` | no console/uart in the delivered image; permissive only where the recovery needs it |
+| `/proc/last_kmsg` (the previous kernel's log) | `CONFIG_ANDROID_RAM_CONSOLE=y` | **off** |
+| the reserved region behind it | `CONFIG_ANDROID_PERSISTENT_RAM=y` | **off** |
+| pstore/ramoops | `CONFIG_RAMOOPS=y`, `CONFIG_PSTORE` off | **RAMOOPS off** |
+| core files of a crashed process | `CONFIG_ELF_CORE=y` | **off** (and the stub's `RLIMIT_CORE=0`) |
 
-The serial console is the UART attack (T3): disable it in the release
-cmdline.  The extreme delivery mode can keep a UART build.
+The fragment is `scripts/build/krux-release.config`; apply it to the
+kernel build's `.config`, `olddefconfig`, rebuild `zImage-dtb`, and pair
+that kernel with the release ramdisk.  Nothing else in the kernel needs
+to change: dmesg/debugfs/kallsyms/SysRq/serial are runtime and the
+device is unlocked anyway.
 
 ### Phase 4 — RAM and framebuffer hygiene (T5)
 
-- **Clear the framebuffer and all three scanout buffers** at start and
-  before power-off; blank the panel.  The `rcS` band paint is not a
-  clear, and a power-off currently leaves the last screen in reserved
-  RAM.
-- **Zero the preview/QR shared regions and the ION/CPP buffers** when a
-  camera page closes and before power-off.
-- The kernel has no `INIT_ON_ALLOC`; the app cannot zero freed heap
-  pages, so the remaining defence is: do not leave the secret in a
-  reserved buffer, and clear the display path explicitly.
-- Disable core dumps in the stub (`setrlimit(RLIMIT_CORE, 0)`).
+This is a belt, not a `/proc` channel: the next kernel would have to map
+the reserved memory itself (a custom kernel or a cold-boot attack), and
+the bootloader is unlocked anyway.  The one high-value case is the
+**screen at power-off**, because the auto-shutdown can fire while a
+mnemonic or seed page is displayed.
+
+**The display (what it takes: ~50 lines, low risk).**
+
+- `fb0` is 1080×1920, 32 bpp, stride 4352, triple-buffered; buffer 2 is
+  only partially backed (the `rcS` note).  The panel is video-mode: the
+  MDSS copies the framebuffer into the scanout buffer on
+  `MSMFB_DISPLAY_COMMIT`, so the scanout memory holds the *last
+  committed* screen.
+- Add `lcd.scrub()`: zero the mapped framebuffer (both full buffers and
+  the partial one), commit the black frame, blank the panel
+  (`FBIOBLANK`/the blank attribute), and leave the backlight off.  The
+  scanout copy then holds black too.
+- Call it from the idle/power-off path (`auto_shutdown`, before
+  `power_manager.shutdown()`), and before the screen saver releases the
+  display.  This is the case that matters: the 10-minute timer can fire
+  on the mnemonic page.
+- Test: in development, write a known pattern, scrub, and read the
+  framebuffer back (`lcd.save_ppm` is available there); the reserved
+  scanout can only be checked from the next boot.
+
+**The camera (what it takes: a scrub command, moderate risk).**
+
+- `camd` holds 8 ION buffers (Y/UV), two bounce buffers, and the
+  `/tmp/krux/frame` + `crop` regions.  The ION buffers are the live
+  pipeline: the ISP writes them continuously, so they cannot be zeroed
+  while the stream runs without stopping it (the fragile path).
+- When no camera page is open the buffers hold the room, not the
+  secret: the camera pages feed the auto-shutdown, so a power-off while
+  the QR/entropy view is up does not happen.  The display scrub above
+  covers the page that can be up at power-off (the mnemonic).
+- So the useful, cheap part is: zero `/tmp/krux/frame` and `crop` when
+  the camera page closes, and zero the bounce buffers.  The ION zeroing
+  is only worth it if the reserved-memory threat is in scope; it needs a
+  `Z` command that pauses the sensor, zeroes the buffers and resumes,
+  and it exercises the same teardown that has been fragile.
+
+**Core dumps.**  The stub sets `RLIMIT_CORE=0` for the firmware and
+camd; the kernel fragment also turns `CONFIG_ELF_CORE` off.  The kernel
+has no `INIT_ON_ALLOC`, so freed heap pages are not zeroed; the app
+cannot fix that, which is why the display is scrubbed instead.
 
 ### Phase 5 — verification (a release gate)
 
@@ -381,7 +413,10 @@ A `scripts/security-check.sh` that:
 
 The check must run on the **delivered** image, not the development one.
 
-### Phase 6 — the seal: adb and the USB gadget **last**
+### Phase 6 — the seal: adb and the USB gadget **last** (deferred)
+
+> Deferred until the UART is available: it is the fallback if the seal
+> makes the device unreachable.  Until then the audit image keeps adb.
 
 The image the audit runs on is the release build **with adb**
 (`KRUX_SEAL=0`).  The sealed image is the default build, from the same
@@ -447,6 +482,12 @@ Audit image: `artifacts/built/boot-standard-release-audit.img`,
 sha256 `680a7bee6abc69e019381e4b372122ccd61ecbb4fdaa63ab5bc7f9517d5e605b`.
 The sealed image (the default build) is next, after the kernel and the
 framebuffer work.
+
+The audit image is the bundled delivery, so its auto-shutdown powers
+the device off after the configured timeout (10 minutes by default).
+For an extended audit set *Settings → Security → Auto-shutdown → Never*;
+the setting lives in the initramfs `/flash` and is gone on the next
+boot, which is the intended behaviour for the release.
 
 Items 1–2 are tiny and safe; 3 and 4 are build changes; 5–6 need the
 kernel/ramdisk image and a cold boot.  The rest of the plan is ordered
