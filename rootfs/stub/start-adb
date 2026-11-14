@@ -1,9 +1,9 @@
 #!/sbin/sh
-# enable-adb -- bring up adbd and the USB adb gadget on demand.
+# start-adb -- bring up adbd and the USB adb gadget on demand.
 #
 # The sealed image keeps adb off at boot (the stub stops adbd and does
 # not wait for a host).  Run this from TWRP's terminal, or
-# 'sh /sbin/enable-adb' from the recovery shell, when adb is needed --
+# 'sh /sbin/start-adb' from the recovery shell, when adb is needed --
 # for example to sideload an Android update.
 #
 # TWRP's init.recovery.usb.rc already knows how to configure the

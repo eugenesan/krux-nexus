@@ -149,8 +149,8 @@ echo "the firmware is starting"
 SCRIPT
 chmod 755 "$WORK/rd/sbin/start-krux"
 # adb on demand: the sealed image keeps it off, this brings it up.
-cp "$HERE/stub/enable-adb" "$WORK/rd/sbin/enable-adb"
-chmod 755 "$WORK/rd/sbin/enable-adb"
+cp "$HERE/stub/start-adb" "$WORK/rd/sbin/start-adb"
+chmod 755 "$WORK/rd/sbin/start-adb"
 cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
 
 # 3b. the camera's firmware.
