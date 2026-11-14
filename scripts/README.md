@@ -27,11 +27,13 @@ made — a probe is usually the only description of the question it was asking.
 Shared drivers at the top level:
 
 * `scripts/build/build-micropython.sh` builds the static arm32 interpreter and
-  writes `rootfs/micropython-arm32`;
-* `scripts/build-armel-sysroot.sh` builds the armel sysroot the firmware is
-  linked against;
+  writes `rootfs/micropython-arm32` (release:
+  `rootfs/micropython-arm32-release`);
+* `scripts/build/build-release.sh` builds the delivered sealed image (and the
+  audit variant with `KRUX_SEAL=0`); `build-dev.sh` builds the bench image;
 * `scripts/deploy-firmware.sh` pushes the interpreter, `krux/src`, embit and
-  the port modules to the device and restarts the service.
+  the port modules to the device and restarts the service (development image
+  only).
 
 Two of the probes are worth knowing about:
 
@@ -54,11 +56,12 @@ sourced rather than run:
 
 Two kinds of path, and the difference is the whole point of the split:
 
-* the **project** holds what is ours and survives a reboot — the kernel
-  tree, the port, the captured ROM data;
-* **tmpfs** holds what is rebuilt — the kernel's object tree, the
-  firmware's build tree, and the scratch the captures write into.
+* the **project** holds what is ours and must survive a reboot — the kernel
+  tree, the kernel's persistent build tree (`artifacts/built/ko`), the port,
+  the captured ROM data;
+* **tmpfs** holds what is rebuilt — the MicroPython build tree, the ramdisk
+  work tree, and the scratch the captures write into.
 
-So the scripts read from the project and write to tmpfs, and every path
-can be pointed elsewhere by exporting the variable first
-(`KERNEL_OUT=...`, `MP_BUILD=...`, `SCRATCH=...`).
+Every path can be pointed elsewhere by exporting the variable first
+(`KERNEL_OUT=...`, `MP_BUILD=...`, `SCRATCH=...`).  Do not put the kernel
+build under `/tmp`: it is 700 MB and a reboot would throw it away.

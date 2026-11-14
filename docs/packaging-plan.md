@@ -1,15 +1,20 @@
 # Packaging plan, delivery modes, and the two Krux trees
 
-Status: plan of record, 2026-11-11.  Supersedes the packaging sections of
-`docs/build-guide.md` (which still describes XZ as the default and a removed
-`KEXEC=` wipe path).
+Status: **implemented** (standard mode shipped 2026-11-13).  This document
+is the design record for the three modes; the build commands and current
+state are in `docs/build-guide.md` and the top-level `README.md`.
+
+The delivered image is mode **(b), standard**, sealed
+(`KRUX_RELEASE=1`, `KRUX_SEAL=1`), written to the recovery partition.  Its
+kernel does the power-off RAM wipe with a RAM marker; the old
+userspace/kexec path is not used.
 
 ## 1. The three delivery modes
 
 | | mode | firmware lives | camd/MP start | `/data/krux` holds |
 |---|---|---|---|---|
-| a | development (current) | `/data/krux`, or bundled in the ramdisk | automatically at boot | everything, including the deployment |
-| b | standard | bundled in the ramdisk, read-only | **not** at boot: boot trigger or a script | config only |
+| a | development (bench) | `/data/krux`, or bundled in the ramdisk | automatically at boot | everything, including the deployment |
+| b | standard (**shipped**) | bundled in the ramdisk, read-only | **not** at boot: boot trigger or a script | config only |
 | c | extreme | a minimal initramfs userspace, no partitions mounted | automatically | nothing (no persistence) |
 
 ### (a) — what exists today
@@ -20,12 +25,12 @@ installed as the `krux` service, and `init.recovery.service.rc` rewritten to
 run it.  `rootfs/make-boot-image.sh` packs that into a copy of the TWRP
 template.
 
-`rootfs/init-stub.c` then: waits 8 s for USB/adb, mounts `/data`, watches
-the volume-up key for 4 s (`wait_for_the_key`, `init-stub.c:105-137`), and
-either execs TWRP (`start_twrp`, :140-146) or starts the firmware
-(`start_the_firmware`, :255-352) — which starts `camd` (:183-253) and execs
-`micropython boot.py` (:347).  Firmware directory choice: `/data/krux` if it
-holds `micropython` + `boot.py`, else the bundled `/opt/krux` (:305-321).
+`rootfs/init-stub.c` then: waits 8 s (the USB/adb window; the seal
+currently still takes it, see the TODO), mounts `/data`, watches the
+volume-up key for 8 s, and either starts TWRP or starts the firmware —
+which starts `camd` and execs `micropython boot.py`.  Firmware directory
+choice: `/data/krux` in a development image, the bundled `/opt/krux` in a
+standard image.
 
 This is mode (a) and it works.
 
@@ -45,14 +50,11 @@ this is the whole subtlety:
   it, and this bootloader only looks for a gzip ramdisk.  An XZ ramdisk
   there boots nothing, silently.
 
-So: XZ is safe for the `fastboot boot` delivery this project actually uses
-(nothing is ever flashed), and *unsafe* for a distributable flashed image.
-Decision: keep **gzip** as the default for images that may be flashed, add
-`COMPRESS=xz` as an explicit opt-in for the `fastboot boot` path, and
-document the constraint at the top of `build-stub-ramdisk.sh` (it already
-carries a comment saying the opposite of the above — it says the *bootloader*
-decides; that part is right, but the conclusion "that is why this is gzip"
-should also mention that the kernel path would accept XZ).
+The delivered image is **flashed to the recovery partition**, so it keeps
+**gzip**.  XZ is an opt-in only for the `fastboot boot` development path
+(`COMPRESS=xz`), where the kernel unpacks it; it must never be used for an
+image that is written to a partition.  The constraint is documented at the
+top of `build-stub-ramdisk.sh`.
 
 **(b)(II) A fully working TWRP.**  The stub replaces TWRP's own init
 (`sbin/recovery` → `sbin/recovery.stock`) and its service file.  The
@@ -89,16 +91,16 @@ entry) and then reboots.  In mode (a) the wipe must refuse, or degrade to
 ### (c) — deferred, but plan it now
 
 A standalone minimal userspace: a stub init that starts `camd` + MicroPython
-and nothing else — no partition mounting, no `/data`, no persistence.  It
-needs UART for any diagnosis (the current device has no working UART, which
-is why it is deferred).  The pieces already exist: `rootfs/init-stub.c` is
+and nothing else — no partition mounting, no `/data`, no persistence.  A
+UART is available now (`/sbin/start-serial`, ttyHSL0 115200 8N1), so the
+diagnosis obstacle is gone; what is missing is the minimal ramdisk itself.  The pieces already exist: `rootfs/init-stub.c` is
 the stub, `rootfs/build-stub-ramdisk.sh` can build a ramdisk without TWRP,
 and `rootfs/init-*.c` contain older variants (`init-freestanding.c`,
 `init-airgap.c`) that explored the same ground.  What is missing is the
-*minimal* ramdisk (no TWRP, no adb), a way to get logs out (UART or a
-one-shot dump to `/data` before the mount is dropped), and a camera path
-that does not need `/data` (the daemon currently writes its log and socket
-there).
+*minimal* ramdisk (no TWRP, no adb), a camera path that does not need
+`/data` (the daemon currently writes its log and socket there), and a
+non-USB log channel (the UART shell is available, but the daemon's own
+log still assumes a writable filesystem).
 
 ## 2. The two Krux trees
 
@@ -305,10 +307,11 @@ The standard delivery mode works on the device.  What it took:
   (`build-stub-init.sh --standard`, passed on by
   `build-stub-ramdisk.sh --standard`).
 * `autostart_the_firmware()` -- whether the firmware starts at boot.
-  The standard image says no; a file `/data/krux/state/autostart` with
-  a 1 there says yes, so one image can be tried both ways.  The
-  *copy* of the firmware follows the image, not this flag: a standard
-  image always runs the read-only copy in the ramdisk.
+  The standard image says no.  A development build can override it with
+  a file `/data/krux/state/autostart`; the release does not read the
+  data partition for this at all.  The *copy* of the firmware follows
+  the image, not this flag: a standard image always runs the read-only
+  copy in the ramdisk.
 * The volume up key means different things in the two modes: in the
   development image it is TWRP (as it always was), in the standard
   image it is the firmware, and the default is TWRP.  The key is also
@@ -317,10 +320,11 @@ The standard delivery mode works on the device.  What it took:
   missed it.
 * `krux-init start` -- a client that starts the firmware on a running
   image.  It stops the "krux" service (which is TWRP by then) and
-  starts the firmware.  `/sbin/start-krux` is the script that calls
-  it; it hands the work to a new session (`setsid`), because stopping
-  the service ends TWRP and with it the shell that runs the script
-  when that shell is TWRP's own terminal.
+  starts the firmware.  `/sbin/start-krux` asks init to run that client
+  as its own service (`ctl.start krux-firmware`), so stopping TWRP does
+  not kill the shell that launched it.  The `krux-firmware` service is
+  `disabled`: without that, `class_start default` starts it at boot
+  alongside TWRP.
 
 **Two bugs that cost an afternoon**
 
@@ -336,7 +340,7 @@ The standard delivery mode works on the device.  What it took:
 
 | | result |
 |---|---|
-| the standard image | boots into TWRP 3.7.0 (the menu draws, `/data` is mounted, adb works) |
+| the standard image | boots into TWRP 3.7.0 (the menu draws, `/data` is mounted); sealed, so adb is off until `/sbin/start-adb` |
 | the volume up trigger | starts the bundled firmware; TWRP never comes up |
 | `/sbin/start-krux` | stops TWRP and starts the bundled firmware, from adb or from TWRP's terminal |
 | the bundled firmware | runs from the read-only `/opt/krux`; the data partition holds the settings only |

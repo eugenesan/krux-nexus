@@ -8,8 +8,10 @@ history in the git log.
 
 | you want to | read |
 |---|---|
-| know what works right now | [cam-state.md](cam-state.md) — the camera, verified |
-| build the firmware, the kernel and the boot image | [build-guide.md](build-guide.md), [build-kernel.md](build-kernel.md) |
+| build the firmware from scratch | the top-level [README.md](../README.md), then [build-guide.md](build-guide.md) |
+| know what works right now | the top-level README; the camera detail is [cam-state.md](cam-state.md) |
+| build the kernel / understand the air gap | [build-kernel.md](build-kernel.md) |
+| understand the RAM wipe on power-off | [memory-wipe-state.md](memory-wipe-state.md) |
 | work on packaging (the three delivery modes) | [packaging-plan.md](packaging-plan.md) |
 | see what is left to do | [todo.md](todo.md) |
 | understand the layout | [directories.md](directories.md) |
@@ -50,7 +52,8 @@ history in the git log.
 | [krux-runtime-data.md](krux-runtime-data.md) | where the firmware keeps its settings and seeds at run time |
 | [hw-bringup.md](hw-bringup.md) | how the hardware was brought up: the methods, the tools and the lessons |
 | [phase0-findings.md](phase0-findings.md) | the phase 0 measurements taken on the stock phone |
-| [memory-wipe-state.md](memory-wipe-state.md), [memory-wipe-continue.md](memory-wipe-continue.md) | the paused RAM-wipe experiment: where it stands and how to pick it up |
+| [memory-wipe-state.md](memory-wipe-state.md) | the kernel-only RAM wipe on power-off: design, marker, verified traces, limits |
+| [memory-wipe-continue.md](memory-wipe-continue.md) | the abandoned kexec handoff, kept as history |
 | [todo.md](todo.md) | the live task list for every area |
 | [packaging-plan.md](packaging-plan.md) | the three delivery modes, and the two Krux trees |
 

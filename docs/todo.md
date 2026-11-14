@@ -104,12 +104,16 @@
 - [x] Defer poweroff to `kernel_init()` so the PMIC path is used
 - [x] Verify `wipe=test` (1487 MB) and `wipe=1` (poweroff) on hardware
 - [x] Fix STRICT_MEMORY_RWX, V2 watchdog, DTB/r2, initrd and load address
-      for the kexec path
-- [ ] Make the kexec handoff reach the new kernel (blocked: needs serial
-      console; see docs/memory-wipe-continue.md)
-- [ ] Wire wipe into both shutdown and reboot in the UI
-- [ ] Cover panics/watchdog resets
-- [ ] Decide on the non-kexec fallback if kexec stays unreliable
+      for the kexec path (kept as history; the path is abandoned)
+- [x] Kernel-only wipe on any power-off: RAM marker -> recovery restart ->
+      `mem_init()` wipe -> power off before userspace
+- [x] Wire the power-off wipe into the delivered firmware (Krux Shutdown,
+      TWRP and `reboot -p` all go through it)
+- [x] Verify on the serial console (`artifacts/built/logs/wipe-serial-2026-11-13.log`)
+- [ ] Cover panics/watchdog resets (the current marker is written only by
+      the power-off path)
+- [ ] Scrub the framebuffer/scanout and reserved ION buffers before
+      power-off (the free-page wipe does not touch reserved memory)
 
 ## NFC / SeedKeeper
 
@@ -119,9 +123,18 @@
 
 ## Build / packaging
 
-- [ ] Final firmware image build (bundled ramdisk + kernel)
-- [ ] Verify boot image size < 16 MB
-- [ ] Verify no debug symbols in production build
+- [x] Final sealed firmware image (bundled ramdisk + kernel)
+- [x] Flash to recovery and verify on the device
+      (`boot-final-sealed.img`, sha256 `807facd8…`)
+- [x] `start-adb`, `start-serial`, `/sbin/recovery` and `/system/bin/sh`
+- [x] Sideload verified on the device
+- [ ] Apply `scripts/build/krux-release.config` to a hardened kernel
+      (keep `CONFIG_ANDROID_PERSISTENT_RAM=y` for the wipe marker)
+- [ ] Verify no debug symbols in the production build
+- [ ] Rebuild the final image from a clean checkout as the reproducibility test
+- [ ] Fix `USB_WAIT_S` in `rootfs/init-stub.c`: `KRUX_SEAL` defines it as 0,
+      then an unconditional `#define` sets it to 8, so the sealed image
+      still waits 8 s at boot (harmless, but the warning is real)
 
 ## Documentation
 

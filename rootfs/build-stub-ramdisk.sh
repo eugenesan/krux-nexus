@@ -5,12 +5,14 @@
 # WHAT THIS IS
 # ------------
 # The runtime design hides the firmware "under" TWRP: the device boots
-# TWRP's ramdisk, but the `recovery` service is our own init stub
-# (init-stub.c).  The stub decides at runtime whether to run TWRP (the
-# user holds the volume up key) or to hand the display and the touch
-# screen to the firmware.
+# TWRP's ramdisk, but the `krux` service is our own init stub
+# (init-stub.c) and TWRP's own `recovery` service is stopped.  The stub
+# decides at runtime which one runs: in the standard image the device
+# comes up in TWRP, and the volume-up key starts the firmware; in the
+# development image it is the other way round.
 #
-# So the stub ramdisk is the stock TWRP ramdisk with three changes:
+# So the stub ramdisk is the stock TWRP ramdisk with these changes
+# (plus the on-demand `start-*` scripts and `/system/bin/sh`):
 #
 #   * sbin/recovery        -> sbin/recovery.stock   (TWRP, kept for the
 #                                                     volume up key path)
@@ -21,8 +23,11 @@
 # (boot.img's ramdisk); the two patched files and the stub binary are
 # in this directory.
 #
-# The result is artifacts/built/ramdisk-stub.  It is also packed into a
-# boot image by make-boot-image.sh.
+# The result is artifacts/built/ramdisk-stub (or -bundled with
+# --bundle).  It is packed into a boot image by make-boot-image.sh.
+# That image is booted with `fastboot boot` while developing, and the
+# final standard image is written to the recovery partition
+# (`fastboot flash recovery`), never to boot.
 #
 # The cpio is not byte-reproducible: it carries the filesystem's inode
 # numbers and mtimes, so two packs of the same tree differ.  What is
@@ -64,10 +69,9 @@ STANDARD=${STANDARD:-0}
 #     unpacks it, and this bootloader only looks for a gzip ramdisk.
 #     An XZ ramdisk there boots nothing, silently.
 #
-# This project never flashes (fastboot boot only), so XZ is usable here.
-# gzip stays the default so the same image is also safe to flash; opt in
-# with COMPRESS=xz when you want the ~40% smaller ramdisk on the
-# fastboot path.
+# The final image is FLASHED to the recovery partition, so it must keep
+# gzip.  XZ is an opt-in only for the `fastboot boot` development path;
+# COMPRESS=xz gives a ~40% smaller ramdisk there.
 COMPRESS=${COMPRESS:-gzip}
 while [ $# -gt 0 ]; do
 	case "$1" in

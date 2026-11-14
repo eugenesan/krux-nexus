@@ -9,8 +9,8 @@ All paths are relative to the LineageOS source tree.
 > `lineage-23.2-20260926-UNOFFICIAL-hammerhead_gms_go_2gb`, kernel
 > `3.4.113-g11370a8eb99`, using `/proc/config.gz` from the live device rather
 > than the in-tree defconfig. Where the two disagree, the device wins.
-> The current profile lives in `../standalone/tools/profiles/hammerhead.list`. There is a script
-> for this — see section **B1** and `build/build-kernel.sh`.
+> The current profile lives in `tools/profiles/hammerhead.list`. There is a script
+> for this — see section **B1** and `tools/build-kernel.sh`.
 
 > **Reflash warning specific to this ROM.** This is not a stock-layout ROM.
 > The XDA instructions require running a repartition script first
@@ -73,13 +73,15 @@ Do **not** touch: `CONFIG_QSEECOM` (keystore/lock screen), and the
 > and you can block every non-loopback interface at netfilter and still talk
 > to the device. Verified on the live unit.
 
-Automate with `standalone/tools/apply-defconfig.py` (device-agnostic):
+Automate with `tools/apply-defconfig.py` (device-agnostic).  The kernel
+builder calls it on the build's `.config` after `olddefconfig`; the same
+command can be run by hand:
 
 ```sh
-python3 standalone/tools/apply-defconfig.py \
-    kernel/lge/hammerhead/arch/arm/configs/lineageos_hammerhead_defconfig \
-    standalone/tools/profiles/hammerhead.list -i --check \
-    --kernel-root kernel/lge/hammerhead
+python3 tools/apply-defconfig.py \
+    artifacts/built/ko/.config \
+    tools/profiles/hammerhead.list -i --check \
+    --kernel-root linux
 ```
 
 Measured result on the real defconfig: 78 lines removed, no profile symbol
@@ -324,37 +326,44 @@ telephony entirely.
 ## B1 — building only the kernel (no ROM rebuild)
 
 **You do not need an Android source tree.** That is the common misconception and
-it is what makes people think a kernel build is a heavy job. A kernel build needs
-two git repositories and nothing else:
-
-| What | Repo | Size |
-|---|---|---|
-| kernel | `LineageOS/android_kernel_lge`, branch `lineage-18.1`, `android_kernel_lge_hammerhead` | ~1.5 GB |
-| toolchain | `LineageOS/android_prebuilts_gcc_linux-x86` (only the `arm` subtree) | ~2 GB |
-| build output | — | ~5 GB |
-
-**Realistic total: ~10 GB and 20–40 minutes**, not the 30 GB I said earlier —
-that figure was for a full ROM build and I should not have let it stand next to a
-kernel.
-
-There is no device tree, no vendor blobs, no AOSP `frameworks/`, no `soong`, no
-`envsetup.sh` in this path. Those are needed to produce a **ROM**; a kernel is
-just a cross-compile.
+it is what makes people think a kernel build is a heavy job. This repository
+already carries the kernel as the `linux/` submodule, and the host's
+`arm-linux-gnueabihf-gcc` builds it; there is nothing else to fetch.
 
 ```sh
-git clone -b lineage-18.1 --depth 1 \
-    https://github.com/LineageOS/android_kernel_lge android_kernel_lge_hammerhead
-git clone -b lineage-18.1 --depth 1 \
-    https://github.com/LineageOS/android_prebuilts_gcc_linux-x86 prebuilts
+cd krux-nexus
+git submodule update --init linux
 
-./build/build-kernel.sh --tree ./android_kernel_lge_hammerhead --prebuilts ./prebuilts
+bash tools/build-kernel.sh --tree linux --out artifacts/built/ko
 ```
 
-`build/build-kernel.sh` wraps the whole thing: locate tree → locate toolchain →
-`hammerhead_defconfig` → apply `standalone/tools/profiles/hammerhead.list` → verify nothing
-re-enabled itself → compile → print the config it produced.
+That takes about fifteen minutes on four cores and leaves:
 
-Full option list — `./build-kernel.sh --help`:
+```
+artifacts/built/ko/arch/arm/boot/zImage-dtb
+artifacts/built/ko/.config
+artifacts/built/ko.build.log
+```
+
+The output directory is deliberately on disk, under `artifacts/`, not in
+`/tmp`: `/tmp` is a tmpfs on this host and a reboot would throw the build
+away.  The wrappers (`scripts/build/build-dev.sh`,
+`build-release.sh`) use the same path and build it on demand.
+
+`tools/build-kernel.sh` wraps the whole thing: locate tree → select the
+host toolchain → `lineageos_hammerhead_defconfig` → apply
+`tools/profiles/hammerhead.list` → verify nothing re-enabled itself →
+compile → print the config it produced.  **Use `zImage-dtb`, not
+`zImage`**: the bootloader finds the DTB by scanning the image.
+
+The defconfig carries the firmware-specific options:
+`CONFIG_KERNEL_XZ=y`, `CONFIG_RD_XZ=y`, `CONFIG_MEMORY_WIPE=y` and
+`CONFIG_MEMORY_WIPE_ON_POWEROFF=y`.  The release fragment
+(`scripts/build/krux-release.config`) is a separate manual
+`.config`/`olddefconfig` step; it must keep
+`CONFIG_ANDROID_PERSISTENT_RAM=y` for the wipe marker at `0x100F0000`.
+
+Full option list — `tools/build-kernel.sh --help`:
 
 ```sh
 --tree PATH        kernel tree; auto-detected from a few well-known locations
@@ -378,8 +387,10 @@ non-zero on any drift. Run it after touching either script.
 **The kernel is 32-bit ARM, not arm64.** The MSM8974 is 64-bit-capable, so it is
 natural to assume `arm64` and then pick the wrong toolchain. Measured from
 `/proc/config.gz` on the live device: `CONFIG_ARM=y`, and neither `CONFIG_ARM64`
-nor `CONFIG_64BIT` appears. The cross prefix is `arm-linux-androideabi-`, not
-`aarch64-linux-android-`.
+nor `CONFIG_64BIT` appears.  This project builds with the host's
+`arm-linux-gnueabihf-gcc` (`TOOLCHAIN=host`, the default), not
+`aarch64-linux-android-`.  The AOSP/Arch toolchains are historical; see
+`toolchain.md`.
 
 **One symbol matters most, and two of its siblings must survive.**
 
@@ -398,7 +409,7 @@ final values so you can see they survived.
 
 ### Why the baseband strip is Tier 1 and the SMD/IPC strip is commented out
 
-`standalone/tools/profiles/hammerhead.list` deliberately does **not** strip
+`tools/profiles/hammerhead.list` deliberately does **not** strip
 `CONFIG_MSM_SMD`, `CONFIG_MSM_IPC_ROUTER_SMD_XPRT`, `CONFIG_MSM_QMI_INTERFACE`
 or `CONFIG_MSM_SUBSYSTEM_RESTART`. Those are not modem-private: the same SMD
 channel carries QMI for WLAN, GNSS, sensors and the DSP. Stripping them is
@@ -408,10 +419,14 @@ if you want to bisect.
 
 ### Flashing it
 
-A kernel is not flashable on its own. Either `--install-to` the device tree and
-build a full ROM (the expensive path), or unpack the existing `boot.img` from
-your ROM zip and swap the `Image` — which is the repack path from §Q4 and keeps
-everything else exactly as it was.
+A kernel is not flashable on its own.  In this project it is packed into
+the firmware's recovery image by `rootfs/make-boot-image.sh` (or by
+`scripts/build/build-release.sh`), and that image is written to the
+recovery partition.  For the stock Android system, either `--install-to`
+the device tree and build a full ROM (the expensive path), or unpack the
+existing `boot.img` from your ROM zip and swap the `Image` — the repack
+path from §Q4 — which keeps everything else exactly as it was.  Never
+flash this project's image to `boot`.
 
 After flashing, check in this order:
 

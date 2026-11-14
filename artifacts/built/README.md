@@ -4,11 +4,28 @@ Built boot images and ramdisks (gitignored). Contains camera kernel boot
 images, stub ramdisks, and bundled firmware images. Rebuild with
 tools/build-kernel.sh and rootfs/make-boot-image.sh.
 
-## The reference image
+## The reference image (2026-11-13)
 
-`boot-standard-gzip.img` is the project's result: the **standard
-delivery mode** with the firmware bundled read-only in the ramdisk.
-It is the image to flash to a finished phone.
+`boot-final-sealed.img` is the delivered firmware: the **standard,
+sealed** delivery mode with the firmware bundled read-only in the
+ramdisk, flashed to the recovery partition (`mmcblk0p20`) and verified
+on device serial `0879524b0068abca`.
+
+- 20,064,256 bytes, within the 23,068,672-byte recovery-partition limit.
+- sha256 `807facd8a5b521daf675b29e910efb441b77e432873f327030c079c540130892`.
+- kernel `673242ee6e09e25edc658dfb6ee05e794eb821e5e35e08f2cd647a3588652805`
+  (preserved in `kernel-final/` and at
+  `ko/arch/arm/boot/zImage-dtb`).
+- gzip ramdisk, because it is flashed; XZ is only for `fastboot boot`.
+- TWRP by default with adb off; volume-up or `/sbin/start-krux` starts
+  Krux; `/sbin/start-adb` and `/sbin/start-serial` are the ways in.
+- a power-off marks RAM and the next boot wipes 1488 MB before userspace.
+
+The serial trace is in `logs/wipe-serial-2026-11-13.log`; the kernel
+provenance is in `kernel-final/README.md`.
+
+`boot-standard-gzip.img` is the earlier reference build (standard mode,
+gzip ramdisk); keep it for comparison.  The shipped image supersedes it.
 
 - 21,762,048 bytes (20.75 MiB), against the 23,068,672-byte limit of
   the boot and recovery partitions -- 1.25 MiB of headroom.

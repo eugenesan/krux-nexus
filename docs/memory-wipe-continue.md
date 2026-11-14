@@ -1,4 +1,10 @@
-# Continue memory-wipe work
+# Continue memory-wipe work (superseded)
+
+> **Historical.**  This was the hand-off note for the kexec approach.
+> The kexec handoff was abandoned; the delivered firmware uses the
+> kernel-only power-off marker described in
+> [memory-wipe-state.md](memory-wipe-state.md).  Read that document
+> first; the text below is kept for the record only.
 
 Paste this into a fresh session.  Read `docs/memory-wipe-state.md` and
 `docs/memory-wipe-kexec-review.md` first; they contain the full findings.

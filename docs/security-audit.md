@@ -1,4 +1,4 @@
-# Security audit: logs, prints and storage (2026-11-12)
+# Security audit: logs, prints and storage (updated 2026-11-13)
 
 **Scope.** Everything the delivered image runs: the boot ramdisk (init
 stub, TWRP), the kernel, `camd`, the MicroPython Unix port and the Krux
@@ -66,6 +66,7 @@ pages on allocation (`INIT_ON_ALLOC`/`INIT_ON_FREE` do not exist here).
 | `CONFIG_IKCONFIG=y` | `/proc/config.gz` | RAM | any | not secret, but free reconnaissance |
 | `/dev/mem`, `/dev/kmem` | physical RAM | — | — | absent (`DEVKMEM` off; no node), `STRICT_DEVMEM` off is moot while absent |
 | `CONFIG_ELF_CORE=y` | core dumps of crashed processes | file | T2 | no `core_pattern` restriction; a crash may dump the Python heap (A1) |
+| `CONFIG_ANDROID_PERSISTENT_RAM=y` | 1 MB reserved region, marker at `0x100F0000` | reserved RAM | T5 | the wipe marker is magic/seq/CRC only — no secret; the region is needed for the power-off wipe |
 | `INIT_ON_ALLOC/FREE` | page zeroing | — | — | **absent**; freed pages keep A1 until reused |
 
 Kernel debug prints themselves do not carry the secret, but they carry
@@ -76,10 +77,10 @@ The camera/ISP/CPP per-frame lines are the bulk of the ring.
 
 | Sink | What | Lives | Read by | Note |
 |---|---|---|---|---|
-| `/data/krux/fw.log` | the firmware's stdout/stderr: every `print()` in the Python, including camera AE, page errors, "QR detected" | **persistent /data**, 0644 | T1/T2 | created/truncated by the stub |
-| `/data/krux/camd.log` | camd's ~194 print sites: frame indices, exposure, AF scores, ISP geometry, crop rects, dump paths | **persistent /data**, 0644 | T1/T2 | no pixels, but a full trace of what the camera did |
+| `/data/krux/fw.log` | the firmware's stdout/stderr: every `print()` in the Python, including camera AE, page errors, "QR detected" | **persistent /data**, 0644 | T1/T2 | development build only; the release stub logs to `/dev/null` |
+| `/data/krux/camd.log` | camd's ~194 print sites: frame indices, exposure, AF scores, ISP geometry, crop rects, dump paths | **persistent /data**, 0644 | T1/T2 | development build only; the release camd has no trace |
 | `say()` | stub messages | recovery console | T3 | not secret |
-| adb/USB | adbd comes up **first**; the stub waits `USB_WAIT_S` for it | — | T1 | the standard image boots TWRP with root adb |
+| adb/USB | the sealed image renames `adbd` to `adbd.off`; no adb listener until `/sbin/start-adb` | — | T1 | adb is on demand; `/sbin/start-serial` is the non-USB way in |
 | `/data` mount | userdata, auto-mounted for the firmware and camd | — | T1/T2 | the delivered image still mounts and writes it |
 | fb band paint (`rcS`) | 400 rows, buffers 0/1 | reserved RAM | T5 | not a clear; the rest of the previous screen survives |
 
@@ -268,7 +269,7 @@ means release.
 
 | Component | Mechanism | What the flag changes | Artifact |
 |---|---|---|---|
-| kernel | a `krux-release.config` fragment applied after the defconfig (the pattern `build-romcfg.sh` already uses) + a release `EXTRA_CMDLINE` | the options in Phase 3 (no RAMOOPS/DEBUG_FS/SYSRQ, dmesg_restrict, ELF_CORE off, vendor prints), the cmdline (no console/uart) | a separate kernel build dir and `zImage-dtb` |
+| kernel | a `krux-release.config` fragment applied by hand after the defconfig (manual `.config` + `olddefconfig`; the profile format cannot express `=y`) | the crash-persisted channels in Phase 3 (no ram console, no RAMOOPS, ELF_CORE off), while keeping the persistent-RAM reservation for the wipe marker | a separate kernel build dir and `zImage-dtb` |
 | init stub | compile-time `-DKRUX_RELEASE` in `build-stub-ramdisk.sh --release` | log fds to `/dev/null`, no adb wait, userdata policy, `setenv("KRUX_DELIVERY")`, `RLIMIT_CORE=0`, framebuffer clear | a separate stub binary in the release ramdisk |
 | camd | compile-time `-DKRUX_RELEASE` in `build-camd.sh` | a `CAM_LOG` macro that is a no-op, the dump functions and `CAMD_DUMP_RAW` compiled out, sockets 0600, state dir chosen from the delivery env | a separate camd binary in the bundle |
 | MicroPython port | compile-time `-DKRUX_RELEASE` in `build-micropython.sh` | `lcd.save_ppm` out of the module table, the port diagnostics out | a separate `micropython-arm32-release` |
@@ -314,19 +315,21 @@ One switch, `KRUX_RELEASE`, used by all three components:
 - **MicroPython port**: compile `lcd.save_ppm` out of the release
   binary (keep it in development).
 
-### Phase 2 — boot and access (everything except adb)
+### Phase 2 — boot and access (done)
 
-- The delivered image **autostarts the firmware**; TWRP is available
-  only by holding the volume key, and only in the development image.
-- Do **not mount userdata** in the delivered image; the firmware/camd
-  run from the initramfs and use `/tmp`.  There is nothing to wipe:
-  the image writes nothing there (no logs, no state, no frames), so a
-  stale `/data/krux` is out of scope.
-- Set the socket/shm/file modes `0600`; the logs `0600` if any remain.
+The delivered mode is the **standard** one: the device comes up in TWRP
+with adb off, and the firmware is started by holding volume-up or by
+`/sbin/start-krux`.  It does not autostart the firmware.  This changed
+from the original plan (which autostarted the firmware); the standard
+mode is better for the seal because a device in the field looks like a
+normal TWRP until the operator asks for Krux.
 
-**adb and the USB gadget are deliberately not removed here.**  They are
-the audit channel; they are removed only in Phase 6, after the final
-batch has been audited on the device.
+- The release firmware runs from the read-only `/opt/krux`; `/data` is
+  mounted for settings only, and the release writes no logs there.
+- The sockets and shared files are `0600`; the release has no trace or
+  frame dumps.
+- adb and the USB gadget are removed in Phase 6, after the final audit;
+  the sealed image keeps them off until `/sbin/start-adb`.
 
 ### Phase 3 — kernel: the crash-persisted channels only
 
@@ -337,15 +340,20 @@ leaves for the next one to read**:
 | Channel | Config | Action |
 |---|---|---|
 | `/proc/last_kmsg` (the previous kernel's log) | `CONFIG_ANDROID_RAM_CONSOLE=y` | **off** |
-| the reserved region behind it | `CONFIG_ANDROID_PERSISTENT_RAM=y` | **off** |
+| the reserved region behind it | `CONFIG_ANDROID_PERSISTENT_RAM=y` | **keep on** — the power-off wipe marker lives at `0x100F0000` in this region; with the ram console off the region is still reserved and nothing logs into it |
 | pstore/ramoops | `CONFIG_RAMOOPS=y`, `CONFIG_PSTORE` off | **RAMOOPS off** |
 | core files of a crashed process | `CONFIG_ELF_CORE=y` | **off** (and the stub's `RLIMIT_CORE=0`) |
 
 The fragment is `scripts/build/krux-release.config`; apply it to the
 kernel build's `.config`, `olddefconfig`, rebuild `zImage-dtb`, and pair
-that kernel with the release ramdisk.  Nothing else in the kernel needs
-to change: dmesg/debugfs/kallsyms/SysRq/serial are runtime and the
-device is unlocked anyway.
+that kernel with the release ramdisk.  **This has not been applied to the
+shipping image yet**: the delivered kernel still has the ram console,
+ramoops and `ELF_CORE` enabled (PSTORE is off).  The wipe marker does not
+depend on the ram console, only on the reserved region, so the fragment
+keeps `CONFIG_ANDROID_PERSISTENT_RAM=y`.
+
+Nothing else in the kernel needs to change: dmesg/debugfs/kallsyms/SysRq/
+serial are runtime and the device is unlocked anyway.
 
 ### Phase 4 — RAM and framebuffer hygiene (T5)
 
@@ -413,40 +421,40 @@ A `scripts/security-check.sh` that:
 
 The check must run on the **delivered** image, not the development one.
 
-### Phase 6 — the seal: adb and the USB gadget **last** (deferred)
+### Phase 6 — the seal: adb and the USB gadget **last** (done)
 
-> Deferred until the UART is available: it is the fallback if the seal
-> makes the device unreachable.  Until then the audit image keeps adb.
+The seal was deferred until the UART gave a way back in; `start-serial`
+now does that, so the seal is in the delivered image.  The image the
+audit runs on remains the release build **with adb**
+(`KRUX_SEAL=0`); the sealed image is the default build from the same
+commit and differs only by that flag.
 
-The image the audit runs on is the release build **with adb**
-(`KRUX_SEAL=0`).  The sealed image is the default build, from the same
-commit, and differs only by that flag:
+The implementation is stronger than the original plan:
 
-- the USB gadget is not enabled and the stub does not wait for adb;
-- TWRP's adbd is not started (the stub stops the recovery before it
-  comes up, or the adbd service is disabled);
-- nothing else changes: the kernel, the port, `camd` and the Python are
-  byte-identical to the audited build.
+- the stub renames `/sbin/adbd` to `/sbin/adbd.off` in **every** path,
+  not only the firmware path, so TWRP's init cannot restart it;
+- the `krux-firmware` service is `disabled`, so the firmware does not
+  start at boot beside TWRP;
+- `/sbin/start-adb` restores `adbd` and enables adb on demand, and
+  `/sbin/start-serial` gives a root shell on `ttyHSL0` (115200 8N1)
+  even when adb is off or broken;
+- the release build ignores `/data/krux/state/autostart`.
 
-Procedure:
+Procedure (completed):
 
-1. Build `KRUX_SEAL=0` (release, adb on); run the Phase 5 check and the whole
-   audit on the device; record the artifact hashes and the result.
-2. Build the default (`KRUX_SEAL=1`); verify that the difference from
-   the audited artifact is limited to the seal (the stub/ramdisk; the
-   other components' hashes unchanged) and that the audited build
-   passed.
-3. Smoke-test the sealed image without adb: boot, QR, entropy,
-   SeedKeeper, settings, the screen-saver/power-off.  The audit itself
-   is not repeated on the sealed build; it was done on the identical
-   build minus the seal.
-4. Record the sealed artifact's sha256 (and the audited one) in
-   [cam-good-state.md](cam-good-state.md) / the release notes; the seal
-   commit is the shipping tag.
+1. Built `KRUX_SEAL=0` (release, adb on); ran the Phase 5 check and the
+   on-device audit.
+2. Built the default (`KRUX_SEAL=1`) from the same commit; the
+   difference is the stub/ramdisk seal, not the kernel, port, `camd` or
+   Python.
+3. Smoke-tested the sealed image: TWRP boot, QR/entropy, SeedKeeper,
+   settings, the screen-saver/power-off, and the RAM wipe.
+4. Recorded the sealed artifact: `artifacts/built/boot-final-sealed.img`,
+   sha256 `807facd8a5b521daf675b29e910efb441b77e432873f327030c079c540130892`.
 
-This is why the seal is last: adb is the only way to inspect the final
-bytes on the device, and removing it changes nothing the audit is
-checking.  Removing it first would remove the instrument.
+adb is the only way to inspect the final bytes on the device, which is
+why the seal is still the last step; `start-serial` is the fallback if a
+sealed device has to be inspected or recovered.
 
 ---
 
@@ -461,12 +469,18 @@ checking.  Removing it first would remove the instrument.
    state in `/tmp/krux`.
 4. **Done.** `lcd.save_ppm` is compiled out of the release port; the
    encrypted flash backup is refused in the bundled image.
-5. Add the release kernel config/cmdline profile (Phase 3) — the next
-   image build.
-6. Clear/zero the framebuffer and the shared/ION regions on page exit
-   and power-off (Phase 4).
+5. **Open.** Apply the release kernel fragment (Phase 3) in a manual
+   `.config`/`olddefconfig` build.  The shipping kernel still has the
+   ram console, ramoops and `ELF_CORE` on.  Keep
+   `CONFIG_ANDROID_PERSISTENT_RAM=y`: the wipe marker lives in that
+   region.
+6. **Partly done.** The kernel-only power-off wipe zeroes free RAM
+   (1488 MB) before userspace; it is verified.  The framebuffer/scanout
+   and the ION/camera carveouts are reserved memory and are **not**
+   covered by that pass; the display scrub and the buffer zeroing on
+   page exit remain open (Phase 4).
 
-### Status at 2026-11-12
+### Status at 2026-11-13
 
 The release profile is built and the **audit image** (`KRUX_SEAL=0`,
 adb kept) has been run on the device:
@@ -479,9 +493,23 @@ adb kept) has been run on the device:
 - `scripts/security-check.sh` passes on the built image.
 
 Audit image: `artifacts/built/boot-standard-release-audit.img`,
-sha256 `680a7bee6abc69e019381e4b372122ccd61ecbb4fdaa63ab5bc7f9517d5e605b`.
-The sealed image (the default build) is next, after the kernel and the
-framebuffer work.
+sha256 `680a7bee6abc69e019381e4b372122ccd61ecbb4fdaa63ab5bc7f9517d5e605b`
+(the 2026-11-12 build).
+
+The **sealed** image is built, flashed to the recovery partition and
+verified on the device:
+
+```
+artifacts/built/boot-final-sealed.img
+20,064,256 bytes
+sha256 807facd8a5b521daf675b29e910efb441b77e432873f327030c079c540130892
+kernel 673242ee6e09e25edc658dfb6ee05e794eb821e5e35e08f2cd647a3588652805
+```
+
+That includes the seal, `start-adb`, `start-serial`, `/sbin/recovery`,
+`/system/bin/sh`, and the kernel-only RAM wipe on power-off.  The two
+open items above are the release kernel fragment (ram console/ramoops/
+core files) and reserved-memory/framebuffer scrubbing.
 
 The audit image is the bundled delivery, so its auto-shutdown powers
 the device off after the configured timeout (10 minutes by default).
