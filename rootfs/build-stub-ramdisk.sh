@@ -133,7 +133,7 @@ chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
 # The way the standard image is started without a reboot: from adb or
 # from TWRP's own terminal.
 cat > "$WORK/rd/sbin/start-krux" <<'SCRIPT'
-#!/bin/sh
+#!/sbin/sh
 # start-krux -- start the firmware on a running standard image.
 #
 # The standard image comes up with TWRP: the stub has become the
