@@ -1,19 +1,17 @@
 #!/sbin/sh
 # start-adb -- bring up adbd and the USB adb gadget on demand.
 #
-# The sealed image keeps adb off at boot (the stub stops adbd and does
-# not wait for a host).  Run this from TWRP's terminal, or
-# 'sh /sbin/start-adb' from the recovery shell, when adb is needed --
-# for example to sideload an Android update.
-#
-# TWRP's init.recovery.usb.rc already knows how to configure the
-# gadget: 'sys.usb.config=adb' writes the android_usb attributes and
-# starts adbd.  The property may already be "adb" from boot, so clear
-# it first to make the handler fire again.
+# The sealed image hides /sbin/adbd at boot (the stub renames it to
+# adbd.off) so TWRP's init cannot start it.  Run this from TWRP's
+# terminal, or 'sh /sbin/start-adb' from the recovery shell, when adb
+# is needed -- for example to sideload an Android update.
+if [ -e /sbin/adbd.off ]; then
+    mv /sbin/adbd.off /sbin/adbd
+    chmod 750 /sbin/adbd
+fi
 setprop sys.usb.config none
 sleep 1
 setprop sys.usb.config adb
 setprop sys.usb.state adb
-# Covers the case where the property did not change (no rc handler).
 setprop ctl.start adbd
 echo "adb: $(getprop sys.usb.state)"

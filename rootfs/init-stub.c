@@ -434,11 +434,7 @@ static void *start_the_firmware(void *arg) {
     if (stop_service("recovery") != 0) {
         say("could not stop the recovery");
     }
-#ifdef KRUX_SEAL
-    /* The audit channel is removed last; this is the seal.  The
-     * recovery may have started adbd as its own service. */
-    stop_service("adbd");
-#endif
+
     sleep(2);
     make_the_settings_directories();
     redirect_the_output();
@@ -557,6 +553,18 @@ int main(int argc, char **argv) {
         struct rlimit no_core = { 0, 0 };
         setrlimit(RLIMIT_CORE, &no_core);
     }
+
+#ifdef KRUX_SEAL
+    /* Keep the audit channel off in every path, TWRP included.  TWRP's
+     * init restarts adbd on sys.usb.config=adb, so stopping the service
+     * once is not enough: hide the binary as well.  The operator brings
+     * it back with /sbin/start-adb when adb is needed (for example to
+     * sideload an Android update). */
+    if (rename("/sbin/adbd", "/sbin/adbd.off") != 0 && errno != ENOENT) {
+        say("could not hide adbd");
+    }
+    stop_service("adbd");
+#endif
 
     /* A client: "krux-init start" starts the firmware on a running
      * image.  It is how the standard image is started from adb or from
