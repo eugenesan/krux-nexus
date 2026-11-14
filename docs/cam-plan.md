@@ -149,13 +149,10 @@ sh rootfs/make-boot-image.sh \
   artifacts/built/boot-cam.img
 ```
 
-For a camera build, devtmpfs must be on for this build only:
-
-```sh
-sed -i 's/^CONFIG_DEVTMPFS=n/CONFIG_DEVTMPFS=y/' tools/profiles/hammerhead-keep.list
-# ... build ...
-sed -i 's/^CONFIG_DEVTMPFS=y/CONFIG_DEVTMPFS=n/' tools/profiles/hammerhead-keep.list
-```
+A VFE diagnostic build needs devtmpfs on when ueventd is not in the
+picture.  Do not edit the tracked keep-list: `build-vfe-kernel.sh` makes
+a temporary copy with `CONFIG_DEVTMPFS=y` and passes it through
+`KEEPLISTS`.  The tracked profile stays `=n`.
 
 Do not pass `PROFILE=tools/profiles/hammerhead-camera.list`: that file is an
 enable list consumed by the keep-list loop, not a strip profile.  The default

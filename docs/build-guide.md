@@ -341,8 +341,12 @@ build.  `KERNEL_OUT` must point at a directory with
 
 `scripts/security-check.sh <image>` is the gate: it greps the release
 artifacts and the image for the dump/write capabilities and fails the
-build if one is still there.  The seal (adb off) is deliberately the
-last step — see [security-audit.md](security-audit.md), Phase 6.
+build if one is still there.  `scripts/misc/check-airgap.py` is the
+wireless gate: it checks the kernel `.config` and the ramdisk for
+WLAN/Bluetooth/cellular/FM drivers, userspace and firmware, and allows
+only `CONFIG_NFC_BCM2079X`.  Both run from `build-release.sh`.  The seal
+(adb off) is deliberately the last step — see
+[security-audit.md](security-audit.md), Phase 6.
 
 The release kernel fragment (`scripts/build/krux-release.config`) is
 **not applied by these wrappers**; the hardened kernel is a manual

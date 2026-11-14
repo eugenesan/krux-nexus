@@ -118,6 +118,12 @@ rm -rf "$WORK/rd/sbin/etc/terminfo" "$WORK/rd/etc/python"
 if [ "${KEEP_KEYSTORE:-0}" != "1" ]; then
 	rm -f "$WORK/rd/sbin/keystore" "$WORK/rd/sbin/keystore_auth" \
 	      "$WORK/rd/sbin/keystore_cli"
+	# TWRP's Wi-Fi keystore HAL is dead weight here: the image has no
+	# Wi-Fi driver and no keystore service to load it.  Removing it also
+	# keeps the air-gap audit free of "wifi" names that are not the NFC
+	# path.
+	rm -f "$WORK/rd/sbin/libwifikeystorehal.so" \
+	      "$WORK/rd/sbin/android.system.wifi.keystore@1.0.so"
 fi
 rm -f "$WORK/rd/sbin/libclang_rt.ubsan_standalone-arm-android.so"
 

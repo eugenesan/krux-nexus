@@ -493,8 +493,12 @@ ENABLE_ARGS=()
 # does not end in a newline, and these files are hand-edited. The keep-list
 # once had no trailing newline, so its only symbol was silently skipped and
 # CONFIG_USB_FUNCTIONFS never reached the config.
-for KEEPLIST in "$here/profiles/hammerhead-keep.list" \
-               "$here/profiles/hammerhead-camera.list"; do
+# KEEPLISTS overrides the keep-list files (a space-separated list).  A
+# diagnostic build that needs one symbol different can point at a
+# temporary copy instead of editing a tracked profile in place; that is
+# what scripts/cam/build-vfe-kernel.sh does for CONFIG_DEVTMPFS.
+KEEPLISTS=${KEEPLISTS:-"$here/profiles/hammerhead-keep.list $here/profiles/hammerhead-camera.list"}
+for KEEPLIST in $KEEPLISTS; do
     [ -f "$KEEPLIST" ] || continue
     while read -r sym || [ -n "$sym" ]; do
         case "$sym" in ''|'#'*) continue;; esac

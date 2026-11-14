@@ -29,4 +29,7 @@ RAMDISK=artifacts/built/ramdisk-bundled bash rootfs/make-boot-image.sh \
     artifacts/twrp-3.7.0_9-HH.R.17-MADV_WIPEONFORK.img \
     "$KERNEL_IMG" \
     "artifacts/built/boot-standard-${NAME}.img"
+python3 scripts/misc/check-airgap.py \
+    --config "$KERNEL_OUT/.config" \
+    --ramdisk artifacts/built/ramdisk-bundled
 bash scripts/security-check.sh "artifacts/built/boot-standard-${NAME}.img"

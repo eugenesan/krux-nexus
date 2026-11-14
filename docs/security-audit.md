@@ -418,6 +418,12 @@ A `scripts/security-check.sh` that:
 4. after a warm reboot, checks that the framebuffer no longer holds the
    previous screen (a known pattern written before the reboot must not
    be readable).
+5. `scripts/misc/check-airgap.py` checks the kernel `.config` and the
+   ramdisk: no WLAN/`CFG80211`/`BCMDHD`, no BT/RFCOMM/BNEP/HIDP, no MSS
+   baseband/RMNET/QMI-WWAN, no FM tuner, and no
+   `wpa_supplicant`/`hostapd`/`wificond` or Broadcom Wi-Fi/Bluetooth
+   firmware.  `CONFIG_NFC_BCM2079X=y` is the one allowed wireless
+   interface.  It runs from `build-release.sh`.
 
 The check must run on the **delivered** image, not the development one.
 

@@ -254,6 +254,15 @@ to `/sbin/adbd.off` in **every** path, TWRP's init cannot restart it, and
 the `krux-firmware` service is `disabled`.  There is no adb listener
 until `start-adb` is run.
 
+**Wireless:** the standard image has exactly one wireless interface,
+the NFC reader (`CONFIG_NFC_BCM2079X`).  The kernel has no WLAN/
+`CFG80211`/`BCMDHD`, no Bluetooth/RFCOMM/BNEP/HIDP, no MSS baseband/
+RMNET/QMI-WWAN and no FM tuner drivers; the ramdisk has no
+`wpa_supplicant`/`hostapd`/`wificond` or Broadcom Wi-Fi/Bluetooth
+firmware.  `build-release.sh` runs `scripts/misc/check-airgap.py` as a
+build gate, and the ramdisk build prunes TWRP's dead Wi-Fi keystore
+HAL.
+
 ---
 
 ## 6. Deploy
