@@ -130,6 +130,10 @@ fi
 mv "$WORK/rd/sbin/recovery" "$WORK/rd/sbin/recovery.stock"
 cp "$HERE/stub/krux-init" "$WORK/rd/sbin/krux-init"
 chmod 755 "$WORK/rd/sbin/krux-init" "$WORK/rd/sbin/recovery.stock"
+# TWRP's sideload child is execl("/sbin/recovery", "recovery", "--adbd", ...).
+# Keep that path pointing at the real TWRP binary; without it execl fails
+# and the child exits 255 ("adbd status 255") before minadbd runs.
+ln -sf recovery.stock "$WORK/rd/sbin/recovery"
 # The way the standard image is started without a reboot: from adb or
 # from TWRP's own terminal.
 cat > "$WORK/rd/sbin/start-krux" <<'SCRIPT'
