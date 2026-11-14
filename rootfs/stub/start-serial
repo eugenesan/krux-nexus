@@ -1,0 +1,22 @@
+#!/sbin/sh
+# start-serial -- an interactive root shell on the UART (ttyHSL0).
+#
+# The host sees it on /dev/ttyUSB0 at 115200 8N1.  It is the same root
+# shell TWRP's terminal gives, over the serial cable, and it works when
+# adb is off (the sealed image) or broken -- which makes it the way to
+# debug the adb/sideload path: stop adbd from here, run the sideload
+# child, and read minadbd's errors as they happen.
+#
+# Run it from TWRP's terminal (or adb).  The kernel console already owns
+# ttyHSL0, so kernel messages interleave with the shell; that is
+# expected.
+TTY="${1:-/dev/ttyHSL0}"
+
+if [ ! -e "$TTY" ]; then
+    echo "start-serial: no $TTY" >&2
+    exit 1
+fi
+
+stty -F "$TTY" 115200 cs8 -cstopb -parenb raw 2>/dev/null
+setsid sh -i <"$TTY" >"$TTY" 2>&1 &
+echo "start-serial: root shell on $TTY (115200 8N1)"

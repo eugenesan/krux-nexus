@@ -154,7 +154,18 @@ chmod 755 "$WORK/rd/sbin/start-krux"
 # adb on demand: the sealed image keeps it off, this brings it up.
 cp "$HERE/stub/start-adb" "$WORK/rd/sbin/start-adb"
 chmod 755 "$WORK/rd/sbin/start-adb"
+# A root shell on the UART: the way to debug adb/sideload without adb.
+cp "$HERE/stub/start-serial" "$WORK/rd/sbin/start-serial"
+chmod 755 "$WORK/rd/sbin/start-serial"
 cp "$HERE/stub/init.recovery.service.rc" "$WORK/rd/init.recovery.service.rc"
+
+# /bin is a symlink to /system/bin in the TWRP ramdisk, and TWRP's
+# system() calls go through /bin/sh.  /system is only a mount point, so
+# when it is not mounted (as on this image) there is no shell and every
+# system() returns 255 -- the sideload's "adbd status 255" is that.
+# Provide /system/bin/sh in the ramdisk; a mounted /system shadows it.
+mkdir -p "$WORK/rd/system/bin"
+ln -sf /sbin/sh "$WORK/rd/system/bin/sh"
 
 # 3b. the camera's firmware.
 #
