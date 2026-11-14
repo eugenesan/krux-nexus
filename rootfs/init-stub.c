@@ -144,6 +144,13 @@ static int standard_image(void) {
  * no unless the data partition says otherwise. */
 static int autostart_the_firmware(void) {
     int autostart = !standard_image();
+#ifndef KRUX_RELEASE
+    /*
+     * A development knob: /data/krux/state/autostart overrides the
+     * image default so the bench can boot straight into the firmware
+     * without a key.  The release does not read the data partition at
+     * all, and the standard image must come up with TWRP.
+     */
     FILE *f = fopen(AUTOSTART_FILE, "r");
 
     if (f != NULL) {
@@ -154,6 +161,7 @@ static int autostart_the_firmware(void) {
         }
         fclose(f);
     }
+#endif
     return autostart;
 }
 

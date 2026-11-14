@@ -30,3 +30,7 @@ service krux /sbin/krux-init
 service krux-firmware /sbin/krux-init start
     seclabel u:r:recovery:s0
     oneshot
+    # Not in the boot class: only "setprop ctl.start krux-firmware"
+    # (the start-krux script) starts it.  Without this, class_start
+    # default starts it at boot alongside the krux service.
+    disabled
