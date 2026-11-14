@@ -144,7 +144,10 @@ cat > "$WORK/rd/sbin/start-krux" <<'SCRIPT'
 # service ends TWRP, and with it the shell that runs this script when
 # that shell is TWRP's terminal.  A new session is not in the service's
 # process group, so it survives.
-setsid /sbin/krux-init start >/dev/null 2>&1 &
+# Ask init to run the starter as its own service: "ctl.stop krux"
+# kills the krux service's cgroup, and a client running in that cgroup
+# would be killed before the firmware is up.
+setprop ctl.start krux-firmware
 echo "the firmware is starting"
 SCRIPT
 chmod 755 "$WORK/rd/sbin/start-krux"

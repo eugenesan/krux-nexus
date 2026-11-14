@@ -22,3 +22,11 @@ on boot
 
 service krux /sbin/krux-init
     seclabel u:r:recovery:s0
+
+# Start the firmware on request (the "start-krux" script).  It is a
+# separate service so that its cgroup is not the "krux" service's: the
+# starter stops TWRP with ctl.stop krux, and init kills that service's
+# cgroup -- which would include the starter itself if it ran in it.
+service krux-firmware /sbin/krux-init start
+    seclabel u:r:recovery:s0
+    oneshot
