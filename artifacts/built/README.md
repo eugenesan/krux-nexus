@@ -24,6 +24,18 @@ on device serial `0879524b0068abca`.
 The serial trace is in `logs/wipe-serial-2026-11-13.log`; the kernel
 provenance is in `kernel-final/README.md`.
 
+`boot-standard-release.img` is the same standard/sealed build rebuilt
+after the air-gap gate was added:
+
+- 20,021,248 bytes, sha256
+  `436d8a5595230edb3b7f6b4b66f1d4cd1153d26b464c1f345a190dd501cfeee4`.
+- the same kernel (`673242ee…`) and the same behaviour.
+- `check-airgap.py` PASS: no WLAN/BT/cellular/FM, NFC only.
+- TWRP's dead Wi-Fi keystore HAL is pruned from its ramdisk.
+- Flash it to `recovery` when the device is next in fastboot; the
+  currently flashed `boot-final-sealed.img` has no wireless drivers
+  either, only the two inert Wi-Fi-named keystore libraries.
+
 `boot-standard-gzip.img` is the earlier reference build (standard mode,
 gzip ramdisk); keep it for comparison.  The shipped image supersedes it.
 
