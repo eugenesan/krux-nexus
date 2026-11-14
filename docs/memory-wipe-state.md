@@ -234,3 +234,25 @@ adb shell '/sbin/kexec -l /data/krux/boot-wipe.img \
 
 The DTB is extracted from the boot image's zImage-dtb (DTB magic at the
 end); see `docs/memory-wipe-continue.md`.
+
+## Kernel-only wipe on poweroff (2026-11-13, verified)
+
+`CONFIG_MEMORY_WIPE_ON_POWEROFF=y` makes *any* poweroff a wipe:
+
+1. `sys_reboot(LINUX_REBOOT_CMD_POWER_OFF)` writes a marker into the
+   spare tail of the persistent RAM (`0x100F0000`; the LGE ram-console
+   region is 1 MB and the ring uses only the first 256 KB) and calls
+   `kernel_restart("recovery")`.
+2. `msm_restart_prepare("recovery")` writes `0x77665502` to the IMEM
+   restart reason, so the bootloader boots the recovery partition --
+   the same mechanism as `reboot bootloader`.  No NAND, no BCB.
+3. `mem_init()` sees the marker, wipes every free page, and
+   `kernel_init()` powers off before userspace.  The marker is cleared
+   only at that power-off, so a crash re-wipes.
+
+Marker format: `{magic, ~magic, seq, crc32}` -- the CRC rejects stale
+RAM.  There is no NAND copy: if the recovery boot does not happen, the
+marker is gone with the RAM (and so are the secrets).
+
+Verified: `reboot -p` -> `restart reason = recovery` -> recovery boot ->
+`wipe: powering off` -> `Powering off the SoC` from `swapper/0`.
