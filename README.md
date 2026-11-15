@@ -391,6 +391,7 @@ A smoke test on the device:
 | TWRP commands return 255 | `/system/bin/sh` is missing; the ramdisk builder installs the symlink to `/sbin/sh` |
 | `start-krux` does nothing | run it from TWRP's terminal or adb; it asks init to start the `krux-firmware` service, which stops TWRP first |
 | device powers itself off after shutdown and comes back | USB charger; disconnect the cable |
+| bootloop after a wipe: boot logo, then off/reboot every ~13 s | the normal boot partition's Android is broken; the charger/auto power-on boots it and its init panics (`execv("/system/bin/init") failed`). This is not the wipe. Enter the bootloader (Volume Down + Power), select **Recovery**, or reinstall Android |
 | `dtb not found` from the bootloader | the image was built with `zImage`, not `zImage-dtb` |
 | no display and no adb | use the UART shell (`start-serial`), or `fastboot boot` the image again |
 | camera has no preview, `camd` missing | the standard image must carry `/opt/krux/camd` and `/opt/krux/cpp_firmware_v1_2_0.fw`; check `dmesg` for `CPP FW Version` (not `deadbeef`) |

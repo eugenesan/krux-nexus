@@ -76,6 +76,33 @@ does not zero them.  The display should be blank before shutdown; the
 framebuffer scrub is still a tracked item in
 [security-audit.md](security-audit.md), Phase 4.
 
+## A bootloop after the wipe is not the wipe
+
+After the wipe powers off, a charger or a normal power-on boots the
+**boot partition**, not the recovery image.  If that Android installation
+is broken (for example `/system/bin/init` is missing), the phone
+bootloops: the Android init panics, the kernel reboots in 5 seconds, and
+the bootloader loads the same boot image again.  The charger animation in
+that state belongs to the bootloader/Android, not to this firmware.
+
+The serial signature is:
+
+```
+Power-on reason: Triggered from USB (USB charger insertion)
+init: Switching root to '/system'
+init: execv("/system/bin/init") failed: No such file or directory
+Kernel panic - not syncing: Attempted to kill init!
+[390] reboot_mode restart reason = kernel_panic
+[620] Loading boot image (8775680): start
+```
+
+There are no `wipe:` lines, and the kernel is the Android one (for
+example with KernelSU), not this firmware's.  The recovery image is
+intact in its partition; the bootloader simply was not asked to load it.
+Hold **Volume Down + Power** to enter the bootloader, select **Recovery**,
+or use `fastboot boot` with the recovery image.  Fix or reinstall the
+Android boot/system pair if normal boot is wanted.
+
 If the recovery boot does not happen, the marker is gone with RAM, and so
 are the secrets; the wipe is **not** retried on a later cold boot.  The
 "recovery crashed → Android → user reboots recovery" resume path was
