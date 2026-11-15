@@ -79,11 +79,15 @@ framebuffer scrub is still a tracked item in
 ## A bootloop after the wipe is not the wipe
 
 After the wipe powers off, a charger or a normal power-on boots the
-**boot partition**, not the recovery image.  If that Android installation
-is broken (for example `/system/bin/init` is missing), the phone
-bootloops: the Android init panics, the kernel reboots in 5 seconds, and
-the bootloader loads the same boot image again.  The charger animation in
-that state belongs to the bootloader/Android, not to this firmware.
+**boot partition**, not the recovery image.  The charging animation is
+Android's offline charger (`/sbin/charger`, built from `healthd`) in that
+boot image's ramdisk; it draws through `libminui`/the framebuffer, not
+through this firmware.  When it exits, normal Android starts from the same
+boot image.  If that Android installation is broken (for example
+`/system/bin/init` is missing), the phone bootloops: the Android init
+panics, the kernel reboots in 5 seconds, and the bootloader loads the same
+boot image again.  The animation and the loop belong to the Android boot
+image, not to this firmware or its recovery.
 
 The serial signature is:
 
