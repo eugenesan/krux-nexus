@@ -28,9 +28,11 @@
  * firmware's MicroPython is built with.
  */
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <pthread.h>
@@ -201,6 +203,79 @@ static int stop_service(const char *name) {
     argv[2] = (char *)name;
     argv[3] = NULL;
     return run_program("/sbin/setprop", argv);
+}
+
+static void say(const char *what);
+
+/* Find TWRP's process.  It runs with argv[0] == "recovery" whether the
+ * stub exec'd /sbin/recovery.stock directly or TWRP forked its
+ * "recovery --adbd" sideload child. */
+static pid_t find_twrp(void) {
+    DIR *proc = opendir("/proc");
+    struct dirent *entry;
+
+    if (proc == NULL) {
+        return -1;
+    }
+    while ((entry = readdir(proc)) != NULL) {
+        char path[64];
+        char cmdline[64];
+        ssize_t n;
+        int fd;
+
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9') {
+            continue;
+        }
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
+        fd = open(path, O_RDONLY);
+        if (fd < 0) {
+            continue;
+        }
+        n = read(fd, cmdline, sizeof(cmdline) - 1);
+        close(fd);
+        if (n <= 0) {
+            continue;
+        }
+        cmdline[n] = '\0';
+        if (strcmp(cmdline, "recovery") == 0) {
+            pid_t pid = (pid_t)atoi(entry->d_name);
+
+            closedir(proc);
+            return pid;
+        }
+    }
+    closedir(proc);
+    return -1;
+}
+
+/* Stop TWRP before starting the firmware on request.
+ *
+ * start-krux runs this as the krux-firmware service, not as the krux
+ * service, so stopping "krux" is safe here: it is TWRP's service, not
+ * this process.  ctl.stop is asynchronous; wait for the process to
+ * disappear, and kill it if init did not, so TWRP and the firmware can
+ * never share the panel. */
+static void stop_twrp(void) {
+    int i;
+    pid_t pid;
+
+    stop_service("krux");
+    /* TWRP's own service name in some ramdisks; harmless if absent. */
+    stop_service("recovery");
+
+    for (i = 0; i < 50; i++) {
+        if (find_twrp() < 0) {
+            return;
+        }
+        usleep(100000);
+    }
+
+    pid = find_twrp();
+    if (pid > 0) {
+        say("TWRP is still running; killing it");
+        kill(pid, SIGKILL);
+        sleep(1);
+    }
 }
 
 static void say(const char *what) {
@@ -427,18 +502,10 @@ static void *start_the_firmware(void *arg) {
             fclose(f);
         }
     }
-    /* Stop TWRP's user interface.  It is a service of TWRP's init,
-     * and this is how a service is stopped.
-     *
-     * The service is called "recovery" and *this* program is not it:
-     * the stub runs as the service "krux" (see
-     * init.recovery.service.rc).  When the stub was the service
-     * "recovery", this stop killed the stub's own process group -- and
-     * with it the firmware the stub had just started -- and init
-     * restarted the service, and the loop blanked the panel every
-     * 140 ms.
-     *
-     * The absolute path: a service's PATH is not the init's. */
+    /* On the key path TWRP never started.  On the start-krux path
+     * stop_twrp() has already stopped and waited for it.  Keep the
+     * historical "recovery" stop for ramdisks that still register that
+     * service; it is a no-op here. */
     if (stop_service("recovery") != 0) {
         say("could not stop the recovery");
     }
@@ -578,14 +645,14 @@ int main(int argc, char **argv) {
      * image.  It is how the standard image is started from adb or from
      * TWRP's terminal, without a reboot. */
     if (argc > 1 && strcmp(argv[1], "start") == 0) {
-        /* TWRP is the service this stub became, so it is the service
-         * to stop; the two would otherwise fight over the panel. */
-        if (stop_service("krux") != 0) {
-            say("could not stop TWRP");
-        }
-        sleep(2);
+        /* This process is the krux-firmware service, not the krux
+         * service TWRP became, so stopping "krux" here is safe.  Do it
+         * synchronously: ctl.stop is asynchronous, and starting the
+         * firmware before TWRP is gone is how both ended up driving the
+         * panel. */
+        stop_twrp();
     #ifndef KRUX_RELEASE
-    mount_the_data();
+        mount_the_data();
 #endif
         start_the_firmware(NULL);
         return 0;

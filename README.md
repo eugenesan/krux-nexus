@@ -240,7 +240,7 @@ The runtime entry points are installed by `rootfs/build-stub-ramdisk.sh`:
 | `/sbin/start-krux` | stop TWRP and start the firmware now |
 | `/sbin/start-adb` | restore `adbd` and enable adb on demand |
 | `/sbin/start-serial` | root shell on the UART |
-| `/opt/krux` | the bundled read-only firmware and Python libraries |
+| `/opt/krux` | the bundled firmware, Python libraries, `camd` and the CPP firmware |
 | `/system/bin/sh` | symlink to `/sbin/sh`, for TWRP's `system()` |
 
 At boot the stub mounts `/data` and waits for the volume-up key.  In the
@@ -295,7 +295,9 @@ the wipe path sets).
 
 - **TWRP:** the menu appears with adb off.
 - **Krux:** hold volume-up while the device boots, or run
-  `/sbin/start-krux` in the TWRP terminal.
+  `/sbin/start-krux` in the TWRP terminal.  `start-krux` stops the
+  `krux` service (TWRP), waits for the `recovery` process to disappear,
+  and only then starts the firmware; the two never share the panel.
 - **adb shell/push:** run `/sbin/start-adb` in the TWRP terminal.
 - **UART:** run `/sbin/start-serial`; the host sees `/dev/ttyUSB0` at
   115200 8N1.  For scripted checks:
@@ -391,6 +393,7 @@ A smoke test on the device:
 | device powers itself off after shutdown and comes back | USB charger; disconnect the cable |
 | `dtb not found` from the bootloader | the image was built with `zImage`, not `zImage-dtb` |
 | no display and no adb | use the UART shell (`start-serial`), or `fastboot boot` the image again |
+| camera has no preview, `camd` missing | the standard image must carry `/opt/krux/camd` and `/opt/krux/cpp_firmware_v1_2_0.fw`; check `dmesg` for `CPP FW Version` (not `deadbeef`) |
 
 The serial console is the reliable diagnostic path when adb is off.  The
 kernel console owns `ttyHSL0`; `start-serial` gives a root shell on the

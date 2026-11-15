@@ -272,6 +272,11 @@ RAMDISK=artifacts/built/ramdisk-bundled \
     artifacts/built/boot-standard-release.img
 ```
 
+The bundled `/opt/krux` carries the interpreter, the Python tree,
+`camd` and `cpp_firmware_v1_2_0.fw`.  `camd` stages the CPP blob into
+`/lib/firmware` before asking the kernel to load it; the image build
+fails if either `camd` or the blob is missing from a bundle.
+
 The standard image boots into **TWRP 3.7.0** (the menu draws, `/data`
 is mounted), and the firmware waits to be asked:
 
@@ -284,8 +289,9 @@ is mounted), and the firmware waits to be asked:
   adb shell sh /sbin/start-krux
   ```
 
-  It stops TWRP and starts the firmware, running the read-only copy in
-  `/opt/krux`.  The data partition keeps the settings and the logs.
+  It stops TWRP, waits for the `recovery` process to disappear, then
+  starts the firmware from the read-only copy in `/opt/krux`.  The data
+  partition keeps the settings and the logs.
 
 `krux-init start` is what the script calls; it is the same program as
 the stub, with an argument.

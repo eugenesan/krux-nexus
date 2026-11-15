@@ -24,17 +24,22 @@ on device serial `0879524b0068abca`.
 The serial trace is in `logs/wipe-serial-2026-11-13.log`; the kernel
 provenance is in `kernel-final/README.md`.
 
-`boot-standard-release.img` is the same standard/sealed build rebuilt
-after the air-gap gate was added:
+`boot-final-sealed-2026-11-14.img` is the standard/sealed build with
+the air-gap gate and the camera/start-krux fixes (copied from
+`boot-standard-release.img` after the build, so its hash is stable):
 
-- 20,021,248 bytes, sha256
-  `436d8a5595230edb3b7f6b4b66f1d4cd1153d26b464c1f345a190dd501cfeee4`.
-- the same kernel (`673242ee…`) and the same behaviour.
+- 20,025,344 bytes, sha256
+  `6b7b1e7bcef39b68c7eb0d62a7be771707991a23ea071ab276eea65b8486afce`.
+- the same kernel (`673242ee…`) and the same boot behaviour.
 - `check-airgap.py` PASS: no WLAN/BT/cellular/FM, NFC only.
 - TWRP's dead Wi-Fi keystore HAL is pruned from its ramdisk.
+- `/opt/krux` carries `camd` and `cpp_firmware_v1_2_0.fw`; camd stages
+  the blob to `/lib/firmware` (and no longer truncates it when the
+  source and destination are the same file).
+- `start-krux` stops TWRP and waits for the `recovery` process to exit
+  before starting the firmware.
 - Flash it to `recovery` when the device is next in fastboot; the
-  currently flashed `boot-final-sealed.img` has no wireless drivers
-  either, only the two inert Wi-Fi-named keystore libraries.
+  currently flashed `boot-final-sealed.img` predates these two fixes.
 
 `boot-standard-gzip.img` is the earlier reference build (standard mode,
 gzip ramdisk); keep it for comparison.  The shipped image supersedes it.

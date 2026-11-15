@@ -2089,29 +2089,46 @@ static int cpp_load_firmware(const char *path)
 	/* copy it where the kernel's firmware loader will look */
 	mkdir("/lib", 0755);
 	mkdir("/lib/firmware", 0755);
-	fd = open(path, O_RDONLY);
-	if (fd < 0) {
-		printf("[cpp] open %s: %s\n", path, strerror(errno));
-		return -1;
-	}
 	{
 		char dst[128];
+		struct stat src_st, dst_st;
+
 		snprintf(dst, sizeof(dst), "/lib/firmware/%s", name);
-		out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-		if (out < 0) {
-			printf("[cpp] open %s: %s\n", dst, strerror(errno));
-			close(fd);
+		fd = open(path, O_RDONLY);
+		if (fd < 0) {
+			printf("[cpp] open %s: %s\n", path, strerror(errno));
 			return -1;
 		}
-	}
-	while ((n = read(fd, buf, sizeof(buf))) > 0)
-		if (write(out, buf, n) != n) {
-			printf("[cpp] write failed\n");
-			break;
+		/*
+		 * The fallback path is already /lib/firmware/<name>.
+		 * Opening the destination with O_TRUNC in that case
+		 * truncates the source to zero and the CPP then loads
+		 * an empty blob ("Invalid frame message").  Detect the
+		 * same inode before touching it.
+		 */
+		if (stat(path, &src_st) == 0 &&
+		    stat(dst, &dst_st) == 0 &&
+		    src_st.st_dev == dst_st.st_dev &&
+		    src_st.st_ino == dst_st.st_ino) {
+			close(fd);
+			printf("[cpp] %s is already in /lib/firmware\n", name);
+		} else {
+			out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+			if (out < 0) {
+				printf("[cpp] open %s: %s\n", dst, strerror(errno));
+				close(fd);
+				return -1;
+			}
+			while ((n = read(fd, buf, sizeof(buf))) > 0)
+				if (write(out, buf, n) != n) {
+					printf("[cpp] write failed\n");
+					break;
+				}
+			close(fd);
+			close(out);
+			printf("[cpp] %s staged in /lib/firmware\n", name);
 		}
-	close(fd);
-	close(out);
-	printf("[cpp] %s staged in /lib/firmware\n", name);
+	}
 
 	/* ask the CPP to load it */
 	fd = open(CPP_NODE, O_RDWR);

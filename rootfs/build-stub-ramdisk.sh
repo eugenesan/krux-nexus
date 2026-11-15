@@ -238,7 +238,18 @@ if [ "$BUNDLE" = "1" ]; then
 		chmod 755 "$BUNDLE_DIR/camd"
 	else
 		echo "  !! no camd at $CAMD_BIN -- the firmware has no camera" >&2
+		exit 1
 	fi
+	# camd stages the CPP firmware into /lib/firmware itself.  Keep a
+	# copy next to the daemon: if the only copy is /lib/firmware and
+	# camd is asked to stage that same path, it would truncate the
+	# source (camd guards against it, but a distinct source is
+	# clearer).  The blob is 16 KB.
+	[ -f "$CPP_FW" ] || {
+		echo "  !! no CPP firmware at $CPP_FW -- the camera cannot work" >&2
+		exit 1
+	}
+	cp "$CPP_FW" "$BUNDLE_DIR/cpp_firmware_v1_2_0.fw"
 	cp "$KRUX_SRC"/*.py "$BUNDLE_DIR/"
 	cp -R "$KRUX_SRC/krux/." "$BUNDLE_DIR/krux/"
 	cp -R "$KRUX_SRC/flash/." "$BUNDLE_DIR/flash/"
