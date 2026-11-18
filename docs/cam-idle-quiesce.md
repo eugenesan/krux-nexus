@@ -1,8 +1,8 @@
 # Idle quiesce for camd — port from kern-nexus (2026-11-17)
 
-**Status:** code ported to this branch (`camera/idle-quiesce-port`), compiles,
-**not yet device-verified**.  The feature is default-off; the shipped
-continuous-stream behaviour is unchanged unless the knob is set.
+**Status:** code ported to this branch (`camera/idle-quiesce-port`),
+**verified on hardware 2026-11-17**.  The feature is default-off; the
+shipped continuous-stream behaviour is unchanged unless the knob is set.
 
 ## What this is
 
@@ -65,6 +65,32 @@ quiesce on a kernel without it.
   plus cold init) can complete before the page gives up.
 * Existing `image.shared_reset()` on reset already handles the new
   daemon's recreated shared regions.
+
+## Verification results (device 0643efdcf0eca63a, 2026-11-17)
+
+Image: `artifacts/built/boot-dev.img` built from this branch, kernel
+`airgap/cam-xz-wipe` at `1d2a76cd835` (CPP NULL-frame guard), booted with
+`fastboot boot` only.  The firmware's `/data/krux/camd` was replaced with
+the newly built binary after backing the old one up to
+`/data/local/tmp/camd.bak-pre-quiesce` (md5-verifiable).  The test knob
+was removed from `/data/krux/state` afterwards.
+
+| test | result |
+|---|---|
+| default knob (`idle_stop_after=0`) | `[stream] idle stop after 0s (0 disables)`; camera unchanged |
+| manual quiesce (`0` on ctl socket) | `CFG_STREAM rc=0`, `STREAMOFF rc=0`, `RELEASE_BUF rc=0`, `RELEASE_STREAM rc=0`, `complete, exiting`; supervisor respawned a fresh camd |
+| frames after respawn | frame socket returns `KCF1`; `camclient` read 16,192 Y + 16,192 UV bytes, `Y non-zero 16192/76800` |
+| automatic quiesce (`idle_stop_after=15`, one client opened+closed) | `quiesce begin` → `complete, exiting` → fresh camd read `idle stop after 15s` |
+| grace-window cancel (`0` then `U` within 2 s) | `quiesce cancelled`, **same camd pid**, no restart, frames still served |
+| dmesg | no panic, `No free write masters`, ping-pong mismatch, tasklet overflow or `wdog_bark`; the teardown does log `msm_isp_close_node: Invalid close` / `NULL stream` / `cci_release` errors, as kern-nexus also observed, but the fresh daemon starts cleanly and serves frames |
+
+**Not yet covered**: QR decode / entropy through the UI after a quiesce,
+the 10-minute thermal soak and 100-cycle test, and a closer look at the
+`Invalid close` messages.  These are the next verification steps.
+
+**Caution confirmed**: directly `kill -9`-ing a *streaming* camd (rather
+than using quiesce) left a zombie child and a supervisor stuck in
+`waitpid`, requiring a RAM-only reboot.  Only use the clean quiesce path.
 
 ## Verification plan (before enabling by default)
 
