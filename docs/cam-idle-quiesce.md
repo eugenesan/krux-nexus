@@ -33,14 +33,30 @@ Those are kern-specific performance work.
 ## Knob
 
 ```
-/data/krux/state/idle_stop_after   seconds, 0 = disabled (DEFAULT)
+idle_stop_after   seconds, 0 = disabled (DEFAULT)
 ```
 
 Read at camd startup via `state_read_persist("idle_stop_after", 0, 0, 3600)`.
-Trigger requires: knob > 0, `idle > 3` frame periods, at least one past
-frame request, **zero live frame-socket clients**, and no request for
-`idle_stop_after` seconds.  A page opening during the 15 s teardown grace
-window cancels the quiesce entirely and resets the idle timer.
+**The path depends on the build profile** (this matters when testing):
+
+| build | knob path | survives reboot? |
+|---|---|---|
+| release (default, `KRUX_RELEASE` set) | `/tmp/krux/idle_stop_after` | no — `/tmp` is tmpfs, recreated from defaults each boot |
+| development (`KRUX_RELEASE=0`) | `/data/krux/state/idle_stop_after` | yes |
+
+`printf` is compiled out of the release build, so `[stream] idle stop
+after Ns` and the `quiesce ...` trace lines only appear in a development
+build.  On a release build, verify quiesce by watching the camd **PID**
+change (quiesce exits, the supervisor respawns), not by grepping
+`camd.log`.  Setting the knob in `/data/krux/state` while running the
+release build has no effect — write it to `/tmp/krux/idle_stop_after`.
+
+Trigger requires: knob > 0, `idle > 3` frame periods, and **zero live
+frame-socket clients**, with no request for `idle_stop_after` seconds.  A
+page opening during the 15 s teardown grace window cancels the quiesce
+entirely and resets the idle timer.  There is deliberately **no**
+`frame_requests > 0` condition: those belong to the previous process in
+a respawned daemon, so requiring them would stop it ever quiescing again.
 
 ## Teardown order (do not reorder)
 
@@ -210,6 +226,8 @@ with a backup), not one file.
 | dmesg after auto quiesce | only the boot-time `msm_cci_probe ... device id = -1` line, no teardown errors |
 | reopen camera page after respawn | `Camera exposure mean=132 exposure=0x09c8 gain=0x00ff`, camera usable |
 | knob | left at 15 on the device for further testing; ships as 0 |
+| **10-minute idle soak (release build, `/tmp/krux/idle_stop_after=15`)** | **19 quiesce/respawn cycles** (PIDs 3377 → 5930), one every ~30 s; `errs=0` throughout, `fds=32` on every settled sample, thermal zone 5 stable 44–52 °C, no wdog/panic/Invalid-close/tasklet signatures |
+| camera after soak | frames flowing on reopen (`shm` mean 131, AF sweep active) — quiesce/respawn does not degrade the pipeline |
 
 ## Verification plan (before enabling by default)
 
@@ -236,8 +254,10 @@ panic, or drifting horizontal overlap in the preview.
 
 ## Rollback
 
-* Remove/zero `/data/krux/state/idle_stop_after` → continuous stream,
-  exactly the previous behaviour.
+* On a development build: remove/zero `/data/krux/state/idle_stop_after`.
+  On a release build: `echo 0 > /tmp/krux/idle_stop_after` (or just reboot,
+  since `/tmp` is tmpfs) → continuous stream, exactly the previous
+  behaviour.
 * Known-good pre-port points: Krux `camera-good-2026-11-12` tag, camd md5
   `99ef6da3275fdb882efe9cbf18ed67fe`, kernel `airgap/cam-xz-wipe` at
   `cc17c59739b`.  The branch `camera/idle-quiesce-port` holds the port;
