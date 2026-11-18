@@ -33,7 +33,7 @@ Those are kern-specific performance work.
 ## Knob
 
 ```
-idle_stop_after   seconds, 0 = disabled (DEFAULT)
+idle_stop_after   seconds, 0 = disabled (DEFAULT: 15, on)
 ```
 
 Read at camd startup via `state_read_persist("idle_stop_after", 0, 0, 3600)`.
@@ -225,7 +225,7 @@ with a backup), not one file.
 | leave camera page → auto quiesce | `quiesce complete, exiting`, fresh camd (214 → 327) |
 | dmesg after auto quiesce | only the boot-time `msm_cci_probe ... device id = -1` line, no teardown errors |
 | reopen camera page after respawn | `Camera exposure mean=132 exposure=0x09c8 gain=0x00ff`, camera usable |
-| knob | left at 15 on the device for further testing; ships as 0 |
+| knob | defaults to 15 (on) in the shipped image; set to 0 to disable |
 | **10-minute idle soak (release build, `/tmp/krux/idle_stop_after=15`)** | **19 quiesce/respawn cycles** (PIDs 3377 → 5930), one every ~30 s; `errs=0` throughout, `fds=32` on every settled sample, thermal zone 5 stable 44–52 °C, no wdog/panic/Invalid-close/tasklet signatures |
 | camera after soak | frames flowing on reopen (`shm` mean 131, AF sweep active) — quiesce/respawn does not degrade the pipeline |
 
