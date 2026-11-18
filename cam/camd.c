@@ -1546,15 +1546,16 @@ static volatile int cpp_input_index = 0;
  * idle camera page does not keep a core busy. */
 static volatile unsigned frame_requests;
 
-/* ---- idle quiesce (opt-in, default off) -------------------------------
+/* ---- idle quiesce (on by default) ------------------------------------
  * A full pipeline teardown and a fresh daemon is the only stop/restart
  * sequence proven clean on this kernel.  See docs/cam-state.md.  The
- * persistent idle_stop_after knob (seconds, 0 = disabled) gates it; the
- * supervisor in rootfs/init-stub.c restarts the daemon on the next page.
+ * idle_stop_after knob (seconds, 0 = disabled) gates it; the supervisor in
+ * rootfs/init-stub.c restarts the daemon on the next page.  Shipped on at
+ * 15 s; set it to 0 to restore the old continuous-stream behaviour.
  */
 static int krux_capture_fd = -1;        /* capture node fd, for STREAMOFF */
 static volatile int cam_clients;        /* live frame-socket clients */
-static int idle_stop_after;             /* seconds; 0 disables (default) */
+static int idle_stop_after = 15;        /* seconds; 0 disables */
 static volatile int quiescing;
 static volatile sig_atomic_t cam_quiesce_cancel;
 static void quiesce_cancel_handler(int sig)
@@ -4682,7 +4683,7 @@ int main(int argc, char **argv)
 		isp_stream_src = PIX_VIEWFINDER;
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
 	}
-	idle_stop_after = state_read_persist("idle_stop_after", 0, 0, 3600);
+	idle_stop_after = state_read_persist("idle_stop_after", 15, 0, 3600);
 	printf("[stream] idle stop after %ds (0 disables)\n", idle_stop_after);
 	idle_vts = state_read_persist("idle_vts", 0, 0, 0xFFFF);
 	idle_after = state_read_persist("idle_after", 5, 0, 3600);
