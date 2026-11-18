@@ -174,9 +174,32 @@ so the sweep was postponed repeatedly.  Two small changes:
   daemon is not stopped; the next page's `sensor.reset()` reconnects
   (or survives a respawn).
 
-The brief colour-inversion flicker was not reproduced in the captured
-frames; it is most likely a transient during the VTS/exposure register
-change at page open, and is left as an observation rather than a fix.
+### The "AE drives the picture to 100% white" failure
+
+A later report was that the entropy page went white after a couple of
+frames.  Two independent causes, both found on the device:
+
+1. `/data/krux/krux/pages/capture_entropy.py` was an ancient copy
+   (2026-09-28) with **no `auto_expose_follow()` call**.  The one-shot
+   AE left the sensor at its entropy start (longest exposure, highest
+   gain) and nothing ever followed the scene.  Deploying the current
+   `krux/src/krux/pages/*.py` to `/data/krux/krux/pages/` fixed it:
+   `Camera AE ...` / `Camera exposure ...` lines then converged to
+   `mean=112`, `exposure=0x05d2`, `gain=0x00e7`, `Good entropy!` and
+   the shared frame mean matched the AE measurement (112).
+2. `_auto_expose()` reset the settle state at page start but not
+   `_ae_auto_lock`.  A QR page locks the exposure when it reads a code;
+   that lock survived into the entropy page, where `follow()` returns
+   False immediately, so the AE could not recover.  Fixed by clearing
+   `_ae_auto_lock` and `_code_box` in `_auto_expose()`.
+
+The earlier brief colour-inversion flicker was not reproduced after
+these fixes; it was most likely the transient while the exposure/VTS
+registers changed at page open.
+
+**Deployment reminder:** both of these were stale-copy problems.  When
+Python changes, deploy the *whole* package (`scripts/deploy-firmware.sh`
+with a backup), not one file.
 
 ### Verification with `idle_stop_after=15`
 
