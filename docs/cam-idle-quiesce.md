@@ -1,8 +1,9 @@
 # Idle quiesce for camd — port from kern-nexus (2026-11-17)
 
 **Status:** code ported to this branch (`camera/idle-quiesce-port`),
-**verified on hardware 2026-11-17**.  The feature is default-off; the
-shipped continuous-stream behaviour is unchanged unless the knob is set.
+**verified on hardware 2026-11-17**, including a clean teardown with no
+kernel error messages.  The feature is default-off; the shipped
+continuous-stream behaviour is unchanged unless the knob is set.
 
 ## What this is
 
@@ -82,15 +83,77 @@ was removed from `/data/krux/state` afterwards.
 | frames after respawn | frame socket returns `KCF1`; `camclient` read 16,192 Y + 16,192 UV bytes, `Y non-zero 16192/76800` |
 | automatic quiesce (`idle_stop_after=15`, one client opened+closed) | `quiesce begin` → `complete, exiting` → fresh camd read `idle stop after 15s` |
 | grace-window cancel (`0` then `U` within 2 s) | `quiesce cancelled`, **same camd pid**, no restart, frames still served |
-| dmesg | no panic, `No free write masters`, ping-pong mismatch, tasklet overflow or `wdog_bark`; the teardown does log `msm_isp_close_node: Invalid close` / `NULL stream` / `cci_release` errors, as kern-nexus also observed, but the fresh daemon starts cleanly and serves frames |
+| dmesg (initial kernel) | no panic/watchdog, but the teardown logged `msm_vb2_buf_cleanup: NULL stream`, `msm_isp_close_node: Invalid close`, `msm_cci_release invalid ref count` and `msm_actuator_close: cci_init failed` |
+| dmesg (after kernel patch `d10a28ee249`) | **all teardown messages gone**; clean quiesce, fresh daemon, frames served |
+| camera page after quiesce | entropy page opened and produced `Camera exposure mean=136 exposure=0x09c8 gain=0x00ff`; QR/entropy path works again |
 
-**Not yet covered**: QR decode / entropy through the UI after a quiesce,
-the 10-minute thermal soak and 100-cycle test, and a closer look at the
-`Invalid close` messages.  These are the next verification steps.
+**Not yet covered**: the 10-minute thermal soak and 100-cycle test.
+The `Invalid close` messages have been fixed in the kernel (see below)
+and the entropy UI path after a quiesce has been verified with touch
+injection.  Idle power numbers still need a soak.
 
 **Caution confirmed**: directly `kill -9`-ing a *streaming* camd (rather
 than using quiesce) left a zombie child and a supervisor stuck in
 `waitpid`, requiring a RAM-only reboot.  Only use the clean quiesce path.
+
+## Why the camera stopped starting after the port (and the fix)
+
+The port changed `krux/src/sensor.py`, but the device runs the Python
+sources from **`/data/krux/*.py`**, which shadow the modules frozen into
+the interpreter (`init-stub: using the firmware on the data partition`).
+Those files dated from 2026-11-05 and were inconsistent with both the
+current camd and the current `image.py` (`module 'image' has no attribute
+'shared_status'`).  The stale client took a "bad frame header" exception
+and abandoned its socket mid-frame, leaving camd's socket thread blocked
+in `sock_alloc_send_pskb` — so every later camera page failed too.
+
+Fix: deploy the **whole** current Python package (not just one file):
+
+```
+# after backing up /data/krux (65 MB) to the host:
+cd krux/src
+adb push *.py /data/krux/
+adb push krux/*.py /data/krux/krux/
+# plus krux/pages, printers, translations, touchscreens
+```
+
+`scripts/deploy-firmware.sh` does this (and removes files the tree no
+longer has); back up `/data/krux` first because that step deletes files.
+A backup from this session is at `/tmp/opencode/krux-data-backup`.
+
+## Reliable touch injection
+
+The working injector sends the complete MT event burst, matching the
+Krux `inject.py` in `artifacts/cam-2026-11-11/tools/`:
+
+```
+ABS_MT_SLOT 0, ABS_MT_TRACKING_ID 1, ABS_MT_POSITION_X x,
+ABS_MT_POSITION_Y y, ABS_MT_TOUCH_MAJOR 8, ABS_MT_PRESSURE 60, SYN
+... hold ...
+ABS_MT_TRACKING_ID -1, ABS_MT_TOUCH_MAJOR 0, ABS_MT_PRESSURE 0, SYN
+```
+
+`EV_KEY`/`ABS_X`/`ABS_Y` are **not** supported by this panel; a tap that
+only sets TRACKING_ID and X/Y is unreliable.  A compiled ARM version is
+at `/tmp/opencode/touch` (usage `touch X Y [hold_ms]`).  Key injection
+does not work; use touch.  Entropy-page path:
+New Mnemonic (540,445) → Via Camera (540,203) → 12 words (540,280) →
+Yes (810,1850).
+
+## `Invalid close` and the other teardown messages
+
+They are all "already released" paths in the 3.4 camera driver: the
+quiesce releases the stream/buffers before the process exits, and V4L2
+then closes nodes that are already closed.  Fixed in the shared kernel
+branch `airgap/cam-xz-wipe` commit `d10a28ee249`:
+
+* `msm_isp_close_node`: an already-closed VFE is a successful no-op;
+* `msm_vb2_buf_cleanup`: no stream during cleanup is a debug message;
+* `msm_cci_release`: a repeated release is a no-op;
+* `msm_actuator_close`: a failed CCI release on close is not an error.
+
+No functional change to the live path; verified with a manual quiesce:
+clean dmesg, fresh daemon, working camera page.
 
 ## Verification plan (before enabling by default)
 
