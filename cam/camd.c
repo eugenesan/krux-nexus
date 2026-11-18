@@ -2875,10 +2875,12 @@ static void *client_thread(void *arg)
 		/* Full quiesce after a long idle period: tear the pipeline
 		 * down in the only order this kernel recovers from, then
 		 * exit.  The supervisor starts a fresh daemon for the next
-		 * camera page.  Requires at least one past request and zero
-		 * live clients, so an open page can never be torn down. */
-		if (idle_stop_after > 0 && idle > 3 && frame_requests > 0 &&
-		    cam_clients == 0 &&
+		 * camera page.  Zero live clients is the only gate: an open
+		 * page holds a client, so it can never be torn down.  We must
+		 * not also require frame_requests > 0 -- those belong to the
+		 * old process in a respawned daemon, so it would never
+		 * quiesce again. */
+		if (idle_stop_after > 0 && idle > 3 && cam_clients == 0 &&
 		    time(NULL) - last_request_at >= idle_stop_after)
 			krux_camera_quiesce();
 		/*
