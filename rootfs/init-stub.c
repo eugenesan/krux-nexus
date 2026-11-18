@@ -107,7 +107,9 @@
 #endif
 
 /* the camera daemon and its socket */
-#define CAMD_SOCKET "/data/krux/camd.sock"
+/* camd is a launcher at boot: it creates this wake socket immediately.
+ * The real frame socket only appears once a camera page is opened. */
+#define CAMD_SOCKET "/data/krux/camd-launch.sock"
 #ifdef KRUX_RELEASE
 #define CAMD_LOG "/dev/null"
 #else

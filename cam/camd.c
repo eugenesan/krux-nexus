@@ -42,6 +42,7 @@
 #include <sys/un.h>
 #include <dirent.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <time.h>
 
 /*
@@ -4588,10 +4589,102 @@ static void *ctl_thread(void *arg)
 	return NULL;
 }
 
+/* ------------------------------------------------------------------ *
+ * The on-demand launcher.
+ *
+ * init-stub starts camd once at boot.  Instead of owning the camera
+ * pipeline from then on, this process becomes a small launcher: it
+ * waits on a wake socket, and forks a real camd child only when the
+ * firmware opens a camera page.  The child tears the pipeline down on
+ * idle quiesce and exits; the launcher reaps it and goes back to
+ * sleep.  Between pages there is no camera process and no ISP/CPP
+ * pipeline burning CPU and keeping the device warm.
+ *
+ * The firmware wakes the launcher by connecting to CAMD_LAUNCH_SOCKET
+ * (see sensor.py's _start_camd).  A wake that finds a live camd is a
+ * no-op, so reconnecting on every page is harmless.  The child is the
+ * same binary re-exec'd with CAMD_REAL set, so all the camera state is
+ * fresh on every session.
+ * ------------------------------------------------------------------ */
+#define CAMD_LAUNCH_SOCKET "/data/krux/camd-launch.sock"
+
+static int camd_is_live(void)
+{
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	struct sockaddr_un addr;
+	int rc;
+
+	if (fd < 0)
+		return 0;
+	memset(&addr, 0, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, "/data/krux/camd.sock", sizeof(addr.sun_path) - 1);
+	rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+	close(fd);
+	return rc == 0;
+}
+
+static int camd_launcher(int argc, char **argv)
+{
+	int sfd;
+	struct sockaddr_un addr;
+
+	mkdir("/data/krux", 0755);
+	unlink(CAMD_LAUNCH_SOCKET);
+	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (sfd < 0) { perror("[launcher] socket"); return 1; }
+	memset(&addr, 0, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, CAMD_LAUNCH_SOCKET, sizeof(addr.sun_path) - 1);
+	if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		perror("[launcher] bind");
+		close(sfd);
+		return 1;
+	}
+	listen(sfd, 4);
+	chmod(CAMD_LAUNCH_SOCKET, 0600);
+	printf("[launcher] ready -- waiting for a camera page\n");
+	fflush(stdout);
+
+	for (;;) {
+		int cfd = accept(sfd, NULL, NULL);
+		pid_t child;
+
+		if (cfd < 0)
+			continue;
+		close(cfd);	/* the connect is only a wake-up */
+		/* Let a quiescing child finish unlinking its sockets. */
+		usleep(100 * 1000);
+		if (camd_is_live())
+			continue;	/* a page reconnecting, not a new session */
+
+		child = fork();
+		if (child == 0) {
+			setenv("CAMD_REAL", "1", 1);
+			execv("/proc/self/exe", argv);
+			_exit(127);
+		}
+		if (child > 0) {
+			int status;
+			waitpid(child, &status, 0);
+			printf("[launcher] camera child exited (status=%d) -- idle\n",
+			       status);
+			fflush(stdout);
+		}
+	}
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	pthread_t server, client;
 	int wh[2] = { 640, 480 };
+
+	/* init-stub's camd is the launcher; only a re-exec'd child with
+	 * CAMD_REAL set owns the camera hardware. */
+	if (getenv("CAMD_REAL") == NULL)
+		return camd_launcher(argc, argv);
+
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGUSR2, quiesce_cancel_handler);   /* quiesce cancel */
 
