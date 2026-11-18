@@ -184,6 +184,26 @@ The final image is the delivered one:
 `artifacts/built/boot-final-sealed.img`, flashed to the recovery partition.
 A power-off from Krux, TWRP or `reboot -p` is the real test.
 
+### Testing caveat: do not `fastboot boot` the sealed image
+
+The sealed image is meant to be **flashed to recovery**, not launched with
+`fastboot boot`.  Booting it with `fastboot boot` still works for a smoke
+test, but a shutdown/power-off from it takes the wipe path:
+`sys_reboot(LINUX_REBOOT_CMD_POWER_OFF)` writes the marker at `0x100F0000`
+and asks the bootloader to restart into **recovery**.  That restart happens,
+but the recovery partition holds whatever image was flashed there, not our
+kernel — so nothing consumes the marker and it stays pending in persistent
+RAM (which survives a warm reset).
+
+The consequence is on the **next** boot of one of our wipe-capable images:
+`mem_init()` sees the marker, runs the RAM wipe and powers off from
+`kernel_init`, before userspace.  That power-off is expected, not a failed
+image.  Each `fastboot boot` smoke test of the sealed image leaves one
+pending marker, so the following boot appears to "die" on USB and must be
+repeated.  A full cold power-off also clears it (the marker is RAM only).
+Testing the wipe itself should flash the sealed image to recovery so the
+recovery boot runs the same kernel and the wipe completes in one cycle.
+
 ## Implementation map
 
 Kernel:
