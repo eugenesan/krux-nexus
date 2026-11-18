@@ -10,6 +10,7 @@ history in the git log.
 |---|---|
 | build the firmware from scratch | the top-level [README.md](../README.md), then [build-guide.md](build-guide.md) |
 | know what works right now | the top-level README; the camera detail is [cam-state.md](cam-state.md) |
+| work on the opt-in idle quiesce (stop/restart) | [cam-idle-quiesce.md](cam-idle-quiesce.md) — port of the working kern-nexus solution |
 | build the kernel / understand the air gap | [build-kernel.md](build-kernel.md) |
 | understand the RAM wipe on power-off | [memory-wipe-state.md](memory-wipe-state.md) |
 | work on packaging (the three delivery modes) | [packaging-plan.md](packaging-plan.md) |

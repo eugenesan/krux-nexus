@@ -10,6 +10,11 @@ is the current one.
 
 This document was `milestone-2026-11-10-snapshot2.md`; it took the name
 of `cam-state.md` so that there is exactly one canonical camera document.
+
+**2026-11-17:** an opt-in idle quiesce (clean full-pipeline teardown and
+fresh daemon) has been ported from kern-nexus on the
+`camera/idle-quiesce-port` branch.  It is default-off and not yet
+device-verified; see [cam-idle-quiesce.md](cam-idle-quiesce.md).
 The previous `cam-state.md` is in [archive/](archive/cam-state-2026-11-05.md).
 
 ## The idle loop gives the CPU back (2026-11-12)

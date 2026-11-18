@@ -7,6 +7,11 @@ entropy capture passes.  The next change (stopping the stream when no
 client is watching) touches the fragile ISP/CPP start path, so this
 records exactly what to restore if it goes wrong.
 
+**2026-11-17:** the idle-quiesce port is on branch `camera/idle-quiesce-port`
+and is default-off; the kernel branch `airgap/cam-xz-wipe` now also carries
+the CPP NULL-frame guard commit (`1d2a76cd835`).  Verification plan and
+rollback details: [cam-idle-quiesce.md](cam-idle-quiesce.md).
+
 ## Git revert points
 
 | tree | commit / tag |

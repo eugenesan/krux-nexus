@@ -1545,6 +1545,25 @@ static volatile int cpp_input_index = 0;
  * moving, the capture thread skips the expensive downscale/AF work so an
  * idle camera page does not keep a core busy. */
 static volatile unsigned frame_requests;
+
+/* ---- idle quiesce (opt-in, default off) -------------------------------
+ * A full pipeline teardown and a fresh daemon is the only stop/restart
+ * sequence proven clean on this kernel.  See docs/cam-state.md.  The
+ * persistent idle_stop_after knob (seconds, 0 = disabled) gates it; the
+ * supervisor in rootfs/init-stub.c restarts the daemon on the next page.
+ */
+static int krux_capture_fd = -1;        /* capture node fd, for STREAMOFF */
+static volatile int cam_clients;        /* live frame-socket clients */
+static int idle_stop_after;             /* seconds; 0 disables (default) */
+static volatile int quiescing;
+static volatile sig_atomic_t cam_quiesce_cancel;
+static void quiesce_cancel_handler(int sig)
+{
+	(void)sig;
+	cam_quiesce_cancel = 1;
+}
+static void krux_camera_quiesce(void);
+
 /* The ISP consumes capture buffers in the order they were queued, so the
  * buffer it is about to fill is the head of this FIFO.  Guessing from the
  * last dequeue instead made every other frame read an unwritten buffer. */
@@ -2675,6 +2694,7 @@ static void *client_thread(void *arg)
 		printf("[client] open %s: %s\n", cam->sensor_node, strerror(errno));
 		return NULL;
 	}
+	krux_capture_fd = fd;
 	printf("[client] open %s SUCCEEDED -- the handshake completed\n",
 	       cam->sensor_node);
 	fflush(stdout);
@@ -2852,6 +2872,15 @@ static void *client_thread(void *arg)
 				idle = 0;
 			}
 		}
+		/* Full quiesce after a long idle period: tear the pipeline
+		 * down in the only order this kernel recovers from, then
+		 * exit.  The supervisor starts a fresh daemon for the next
+		 * camera page.  Requires at least one past request and zero
+		 * live clients, so an open page can never be torn down. */
+		if (idle_stop_after > 0 && idle > 3 && frame_requests > 0 &&
+		    cam_clients == 0 &&
+		    time(NULL) - last_request_at >= idle_stop_after)
+			krux_camera_quiesce();
 		/*
 		 * No request for a while: stretch the frame to the slowest
 		 * the sensor can produce.  Nothing else changes -- the
@@ -4137,6 +4166,12 @@ static void *socket_thread(void *arg)
 	for (;;) {
 		cfd = accept(sfd, NULL, NULL);
 		if (cfd < 0) continue;
+		cam_clients++;
+		printf("[stream] client connect (count=%d)\n", cam_clients);
+		fflush(stdout);
+		/* A page opening during the grace window cancels quiesce. */
+		if (quiescing)
+			cam_quiesce_cancel = 1;
 		for (;;) {
 			int r = read(cfd, buf, 1);
 			if (r <= 0) break;
@@ -4342,6 +4377,13 @@ static void *socket_thread(void *arg)
 					}
 					write(cfd, rc == 0 ? "OK" : "ER", 2);
 				}
+			} else if (buf[0] == 'U') {
+				/* Cancel a quiesce in progress: the page that
+				 * asked for it is back. */
+				cam_quiesce_cancel = 1;
+				note_frame_request();
+				frame_requests++;
+				write(cfd, "OK", 2);
 			} else if (buf[0] == 'Q' || buf[0] == 'S') {
 				write(cfd, "OK", 2);
 				/* The init supervisor starts a fresh camd for every
@@ -4351,6 +4393,10 @@ static void *socket_thread(void *arg)
 					_exit(0);
 			}
 		}
+		if (cam_clients > 0)
+			cam_clients--;
+		printf("[stream] client close (count=%d)\n", cam_clients);
+		fflush(stdout);
 		close(cfd);
 	}
 	return NULL;
@@ -4360,6 +4406,74 @@ static void *socket_thread(void *arg)
  * socket is held open by the firmware for the whole session, so a host
  * client that connects to it would block in accept().  This socket only
  * sets the same flags and returns immediately. */
+/* Full pipeline teardown, then exit.  The init-stub supervisor starts a
+ * fresh daemon on the next camera page.  All ioctls stay on the capture
+ * (client) thread, which owns the pipeline.  Keep this order: it is the
+ * only sequence proven to leave this kernel clean for a cold init. */
+static void krux_camera_quiesce(void)
+{
+	static volatile int quiescing_here;
+	unsigned int type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	struct msm_vfe_axi_stream_cfg_cmd ccmd;
+	struct msm_isp_buf_request brel;
+	struct msm_vfe_axi_stream_release_cmd srel;
+
+	if (quiescing_here)
+		return;
+	quiescing_here = 1;
+	quiescing = 1;
+	printf("[stream] quiesce begin h=%u\n", isp_stream_handle);
+	fflush(stdout);
+
+	cam_quiesce_cancel = 0;
+	/* Grace window: a camera page connecting or sending 'U' during this
+	 * time cancels the teardown, leaving the live pipeline untouched. */
+	for (int i = 0; i < 150; i++) {
+		if (cam_quiesce_cancel) {
+			printf("[stream] quiesce cancelled\n");
+			fflush(stdout);
+			quiescing = 0;
+			quiescing_here = 0;
+			/* Give the returning client a full idle window. */
+			last_request_at = time(NULL);
+			frame_requests++;
+			return;
+		}
+		usleep(100000);
+	}
+
+	memset(&ccmd, 0, sizeof(ccmd));
+	ccmd.num_streams = 1;
+	ccmd.stream_handle[0] = isp_stream_handle;
+	ccmd.cmd = STOP_STREAM;
+	printf("[stream] quiesce CFG_STREAM rc=%d\n",
+	       ioctl(isp_fd, VIDIOC_MSM_ISP_CFG_STREAM, &ccmd));
+	if (krux_capture_fd >= 0)
+		printf("[stream] quiesce STREAMOFF rc=%d\n",
+		       ioctl(krux_capture_fd, VIDIOC_STREAMOFF, &type));
+	sensor_write_regs(stream_off_regs, 1);
+	printf("[stream] quiesce sensor off done\n");
+
+	memset(&brel, 0, sizeof(brel));
+	brel.handle = isp_buf_handle;
+	brel.buf_type = ISP_SHARE_BUF;
+	printf("[stream] quiesce RELEASE_BUF rc=%d\n",
+	       ioctl(isp_fd, VIDIOC_MSM_ISP_RELEASE_BUF, &brel));
+
+	memset(&srel, 0, sizeof(srel));
+	srel.stream_handle = isp_stream_handle;
+	printf("[stream] quiesce RELEASE_STREAM rc=%d\n",
+	       ioctl(isp_fd, VIDIOC_MSM_ISP_RELEASE_STREAM, &srel));
+
+	/* Make a quick re-open see dead sockets rather than a child that is
+	 * about to exit (the supervisor recreates them). */
+	unlink("/data/krux/camd.sock");
+	unlink("/data/krux/camd-ctl.sock");
+	printf("[stream] quiesce complete, exiting\n");
+	fflush(stdout);
+	_exit(0);
+}
+
 static void *ctl_thread(void *arg)
 {
 	int sfd, cfd;
@@ -4435,6 +4549,10 @@ static void *ctl_thread(void *arg)
 				refocus_full = 0;
 				refocus_request = 1;
 				write(cfd, "OK", 2);
+			} else if (c == '0') {
+				/* Manual quiesce (diagnostics). */
+				krux_camera_quiesce();
+				write(cfd, "OK", 2);
 			} else if (c == 'C') {
 				/* A QR retry: the rectangle is in preview
 				 * pixels; publish it 1:1 from the last
@@ -4465,6 +4583,7 @@ int main(int argc, char **argv)
 	pthread_t server, client;
 	int wh[2] = { 640, 480 };
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGUSR2, quiesce_cancel_handler);   /* quiesce cancel */
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	cpp_msg_load();
@@ -4561,6 +4680,8 @@ int main(int argc, char **argv)
 		isp_stream_src = PIX_VIEWFINDER;
 		printf("[mode] ISP stream: PIX_VIEWFINDER (processed)\n");
 	}
+	idle_stop_after = state_read_persist("idle_stop_after", 0, 0, 3600);
+	printf("[stream] idle stop after %ds (0 disables)\n", idle_stop_after);
 	idle_vts = state_read_persist("idle_vts", 0, 0, 0xFFFF);
 	idle_after = state_read_persist("idle_after", 5, 0, 3600);
 	last_request_at = time(NULL);

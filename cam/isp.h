@@ -215,6 +215,10 @@ struct msm_isp_buf_request {
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 4, struct msm_vfe_axi_stream_request_cmd)
 #define VIDIOC_MSM_ISP_CFG_STREAM \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 5, struct msm_vfe_axi_stream_cfg_cmd)
+struct msm_vfe_axi_stream_release_cmd {
+	uint32_t stream_handle;
+};
+
 #define VIDIOC_MSM_ISP_RELEASE_STREAM \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 6, struct msm_vfe_axi_stream_release_cmd)
 #define VIDIOC_MSM_ISP_INPUT_CFG \
