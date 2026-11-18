@@ -1,9 +1,9 @@
 # Idle quiesce for camd — port from kern-nexus (2026-11-17)
 
 **Status:** code ported to this branch (`camera/idle-quiesce-port`),
-**verified on hardware 2026-11-17**, including a clean teardown with no
-kernel error messages.  The feature is default-off; the shipped
-continuous-stream behaviour is unchanged unless the knob is set.
+**verified on hardware 2026-11-17** with `idle_stop_after=15` enabled,
+including automatic quiesce, respawn and clean dmesg.  The knob still
+ships at 0 (absent) unless explicitly enabled.
 
 ## What this is
 
@@ -154,6 +154,39 @@ branch `airgap/cam-xz-wipe` commit `d10a28ee249`:
 
 No functional change to the live path; verified with a manual quiesce:
 clean dmesg, fresh daemon, working camera page.
+
+## AE/focus inspection and idle-quiesce client lifecycle
+
+With the camera working, focusing could still take several attempts:
+the AF sweep is gated on `picture_settled()`, and a scene whose P95
+sits just outside the dead band kept the AE trimming in small steps,
+so the sweep was postponed repeatedly.  Two small changes:
+
+* `krux/src/krux/pages/qr_capture.py`: after twice the normal unread
+  wait (`no_decode_frames >= 30`) ask for a focus sweep even if
+  `picture_settled()` is still false.  The normal settle gate is
+  unchanged; this is only a bounded fallback so fine AE steps cannot
+  starve the sweep.  QR detection was verified after this change.
+* `krux/src/krux/camera.py`: on hammerhead `stop_sensor()` now closes
+  **only the client socket** (`sensor.close()`).  It previously left
+  the socket connected on page exit, so camd's "zero frame clients"
+  gate never became true and automatic quiesce never fired.  The
+  daemon is not stopped; the next page's `sensor.reset()` reconnects
+  (or survives a respawn).
+
+The brief colour-inversion flicker was not reproduced in the captured
+frames; it is most likely a transient during the VTS/exposure register
+change at page open, and is left as an observation rather than a fix.
+
+### Verification with `idle_stop_after=15`
+
+| test | result |
+|---|---|
+| QR scan with the sweep fallback | `QR detected` / `QR exit complete=True parsed=1 total=1` |
+| leave camera page → auto quiesce | `quiesce complete, exiting`, fresh camd (214 → 327) |
+| dmesg after auto quiesce | only the boot-time `msm_cci_probe ... device id = -1` line, no teardown errors |
+| reopen camera page after respawn | `Camera exposure mean=132 exposure=0x09c8 gain=0x00ff`, camera usable |
+| knob | left at 15 on the device for further testing; ships as 0 |
 
 ## Verification plan (before enabling by default)
 
